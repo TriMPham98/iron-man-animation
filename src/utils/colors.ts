@@ -1,13 +1,21 @@
+/** Mark III–inspired titanium-gold alloy palette */
 export const COLORS = {
-  red: 0xb01020,
-  redDeep: 0x6a0a12,
-  gold: 0xc9a227,
-  goldBright: 0xe8c547,
-  dark: 0x1a1a1e,
-  core: 0x0c0c10,
-  reactor: 0x7ee8ff,
-  reactorCore: 0xd4fbff,
-  eye: 0xfff0a8,
+  // Candy-apple armor red (film-adjacent, not flat)
+  red: 0xa50f18,
+  redDeep: 0x5c0a10,
+  redHighlight: 0xd4202c,
+  // Gold alloy trim
+  gold: 0xd4a82a,
+  goldBright: 0xf0c94a,
+  goldDeep: 0x8a6a18,
+  // Under-suit / joint carbon-titanium
+  dark: 0x121216,
+  darkMetal: 0x1e1e24,
+  core: 0x0a0a0e,
+  // Arc reactor / HUD
+  reactor: 0x6ee7ff,
+  reactorCore: 0xe8fcff,
+  eye: 0xfff3b0,
   fog: 0x050508,
   bg: 0x050508,
 } as const;

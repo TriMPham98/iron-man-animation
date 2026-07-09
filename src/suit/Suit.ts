@@ -1,42 +1,42 @@
 import * as THREE from 'three';
-import {
-  createArmorPieces,
-  type ArmorPiece,
-  type PieceWave,
-} from './createPieces';
-import { createCoreBody } from './createCoreBody';
-import { createSuitMaterials, type SuitMaterials } from './materials';
+import type { ArmorPiece, PieceWave } from './createPieces';
+import { loadSuitModel } from './loadSuitModel';
 
 export class Suit {
   readonly group = new THREE.Group();
-  readonly materials: SuitMaterials;
-  readonly pieces: ArmorPiece[];
-  readonly reactorGroup: THREE.Group;
-  readonly eyeMeshes: THREE.Mesh[];
-  readonly coreBody: THREE.Group;
-
+  pieces: ArmorPiece[] = [];
   private power = 0;
+  private emissiveMats: THREE.MeshStandardMaterial[] = [];
 
-  constructor() {
+  private constructor() {
     this.group.name = 'suit';
-    this.materials = createSuitMaterials();
-    this.coreBody = createCoreBody(this.materials);
-    this.group.add(this.coreBody);
+  }
 
-    const { pieces, reactorGroup, eyeMeshes } = createArmorPieces(
-      this.materials,
-    );
-    this.pieces = pieces;
-    this.reactorGroup = reactorGroup;
-    this.eyeMeshes = eyeMeshes;
+  static async create(onProgress?: (r: number) => void): Promise<Suit> {
+    const suit = new Suit();
+    const loaded = await loadSuitModel(onProgress);
+    suit.group.add(loaded.group);
+    suit.pieces = loaded.pieces;
 
-    for (const p of pieces) {
-      this.group.add(p.mesh);
-    }
+    // Collect materials that can take emissive pulse (bright / named glow)
+    const seen = new Set<THREE.Material>();
+    suit.group.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const mat of mats) {
+        if (!mat || seen.has(mat)) continue;
+        seen.add(mat);
+        const m = mat as THREE.MeshStandardMaterial;
+        if ('emissive' in m) {
+          suit.emissiveMats.push(m);
+        }
+      }
+    });
 
-    // Slight heroic stance: lean back a hair
-    this.group.rotation.x = -0.04;
-    this.group.position.y = 0;
+    // Slight heroic lean
+    suit.group.rotation.x = -0.03;
+    return suit;
   }
 
   piecesInWave(wave: PieceWave): ArmorPiece[] {
@@ -54,25 +54,27 @@ export class Suit {
     }
   }
 
-  /** 0 = off, 1 = full power */
+  /** 0 = off, 1 = full power — boosts emissive on suit materials */
   setPowered(amount: number): void {
     this.power = THREE.MathUtils.clamp(amount, 0, 1);
-    this.materials.reactorCore.emissiveIntensity = this.power * 3.5;
-    this.materials.reactorRing.emissiveIntensity = this.power * 1.8;
-    this.materials.eye.emissiveIntensity = this.power * 2.8;
+    for (const m of this.emissiveMats) {
+      // Soft cyan/white glow that bloom can pick up on bright textured areas
+      m.emissive = new THREE.Color(0x1a3040);
+      m.emissiveIntensity = this.power * 0.55;
+      m.needsUpdate = true;
+    }
   }
 
   getPower(): number {
     return this.power;
   }
 
-  /** Subtle idle pulse after assembly */
   updateIdle(time: number): void {
     if (this.power < 0.5) return;
     const pulse = 1 + Math.sin(time * 3.2) * 0.12;
-    this.materials.reactorCore.emissiveIntensity = this.power * 3.5 * pulse;
-    this.materials.reactorRing.emissiveIntensity =
-      this.power * 1.8 * (0.9 + Math.sin(time * 2.4) * 0.1);
+    for (const m of this.emissiveMats) {
+      m.emissiveIntensity = this.power * 0.55 * pulse;
+    }
   }
 
   dispose(): void {
@@ -80,8 +82,11 @@ export class Suit {
       if ((obj as THREE.Mesh).isMesh) {
         const mesh = obj as THREE.Mesh;
         mesh.geometry?.dispose();
+        const mats = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material];
+        for (const m of mats) m?.dispose?.();
       }
     });
-    this.materials.dispose();
   }
 }

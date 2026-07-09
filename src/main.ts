@@ -15,14 +15,13 @@ async function boot(): Promise<void> {
   if (!canvas) throw new Error('Canvas not found');
 
   const ui = createOverlay();
-  ui.setLoadingProgress(0.1);
+  ui.setLoadingProgress(0.05);
+  ui.setStatus('LOADING SUIT MESH…');
 
   const renderer = createRenderer(canvas);
   const scene = new THREE.Scene();
   const camera = createCamera();
   const lookTarget = new THREE.Vector3(0, 0.95, 0);
-
-  ui.setLoadingProgress(0.25);
 
   createEnvironment(scene);
   const lights = createLights();
@@ -42,12 +41,14 @@ async function boot(): Promise<void> {
   scene.environment = envMap;
   pmrem.dispose();
 
-  ui.setLoadingProgress(0.45);
+  ui.setLoadingProgress(0.15);
 
-  const suit = new Suit();
+  const suit = await Suit.create((r) => {
+    ui.setLoadingProgress(0.15 + r * 0.55);
+  });
   scene.add(suit.group);
 
-  ui.setLoadingProgress(0.65);
+  ui.setLoadingProgress(0.75);
 
   const post = createPostProcessing(renderer, scene, camera, true);
 
@@ -64,39 +65,33 @@ async function boot(): Promise<void> {
   controls.autoRotate = false;
   controls.autoRotateSpeed = 0.6;
 
-  ui.setLoadingProgress(0.8);
+  ui.setLoadingProgress(0.9);
 
   let assemblyComplete = false;
   let clockStart = 0;
   const clock = new THREE.Clock();
 
-  const assembly = createAssemblyTimeline(
-    suit,
-    camera,
-    lights,
-    lookTarget,
-    {
-      onStatus: (text) => {
-        const online = text.includes('ONLINE') || text.includes('STABLE');
-        ui.setStatus(text, online);
-      },
-      onProgress: (t) => {
-        const pct = Math.round(t * 100);
-        ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
-      },
-      onComplete: () => {
-        assemblyComplete = true;
-        controls.target.copy(lookTarget);
-        controls.enabled = true;
-        controls.autoRotate = true;
-        ui.setReplayEnabled(true);
-        ui.setHintVisible(true);
-        ui.fadeTitle(true);
-        ui.setIntegrity('INTEGRITY 100%');
-        ui.setStatus('SYSTEMS ONLINE', true);
-      },
+  const assembly = createAssemblyTimeline(suit, camera, lights, lookTarget, {
+    onStatus: (text) => {
+      const online = text.includes('ONLINE') || text.includes('STABLE');
+      ui.setStatus(text, online);
     },
-  );
+    onProgress: (t) => {
+      const pct = Math.round(t * 100);
+      ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
+    },
+    onComplete: () => {
+      assemblyComplete = true;
+      controls.target.copy(lookTarget);
+      controls.enabled = true;
+      controls.autoRotate = true;
+      ui.setReplayEnabled(true);
+      ui.setHintVisible(true);
+      ui.fadeTitle(true);
+      ui.setIntegrity('INTEGRITY 100%');
+      ui.setStatus('SYSTEMS ONLINE', true);
+    },
+  });
 
   const startSequence = () => {
     assemblyComplete = false;
@@ -122,7 +117,6 @@ async function boot(): Promise<void> {
     }
   });
 
-  // User grab disables auto-rotate until sequence restarts
   controls.addEventListener('start', () => {
     if (assemblyComplete) controls.autoRotate = false;
   });
@@ -159,23 +153,15 @@ async function boot(): Promise<void> {
       controls.update();
       lookTarget.copy(controls.target);
       suit.updateIdle(t);
-      // Gentle reactor light pulse
       lights.reactor.intensity = 3.4 + Math.sin(t * 3.2) * 0.45;
     }
 
     ui.updateClock(Math.max(0, t - clockStart));
-
-    // Keep controls target synced during cinematic
-    if (!controls.enabled) {
-      // camera driven by GSAP
-    }
-
     post.render(delta);
   };
 
   ui.setLoadingProgress(1);
 
-  // Warm first frame then reveal
   post.render();
   await new Promise((r) => setTimeout(r, 280));
 

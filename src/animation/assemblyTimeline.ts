@@ -31,8 +31,7 @@ const WAVE_START: Record<string, number> = {
   power: 8.8,
 };
 
-const PIECE_DURATION = 0.85;
-const STAGGER = 0.12;
+const PIECE_DURATION = 0.7;
 
 export function createAssemblyTimeline(
   suit: Suit,
@@ -43,6 +42,12 @@ export function createAssemblyTimeline(
 ): AssemblyController {
   let tl: gsap.core.Timeline | null = null;
   let playing = false;
+
+  /** Keep total assembly ~10–12s even with many GLB shards. */
+  const staggerFor = (count: number) => {
+    if (count <= 1) return 0;
+    return Math.min(0.14, Math.max(0.02, 0.9 / count));
+  };
 
   const cameraProxy = {
     x: camera.position.x,
@@ -104,8 +109,10 @@ export function createAssemblyTimeline(
         waveStart,
       );
 
+      const stagger = staggerFor(pieces.length);
+
       pieces.forEach((piece, i) => {
-        const t = waveStart + i * STAGGER;
+        const t = waveStart + i * stagger;
         const mesh = piece.mesh;
 
         timeline.set(mesh, { visible: true }, t);

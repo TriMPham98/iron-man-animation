@@ -29,16 +29,18 @@ npm run preview  # serve dist locally
 ## Stack
 
 - [Vite](https://vitejs.dev/) + TypeScript
-- [three.js](https://threejs.org/) — WebGL scene, materials, bloom
+- [three.js](https://threejs.org/) — WebGL scene, glTF loader, bloom
 - [GSAP](https://gsap.com/) — assembly timeline and camera path
+- Free textured **Iron Man GLB** (see `public/models/ATTRIBUTION.md`)
 
 ## Project layout
 
 ```
+public/models/ironman.glb # free community suit mesh + textures
 src/
   main.ts                 # bootstrap + render loop
   scene/                  # renderer, camera, lights, env, post-FX
-  suit/                   # procedural modular armor
+  suit/                   # glTF load, spatial mesh split, assembly pieces
   animation/              # GSAP assembly timeline
   ui/                     # HUD overlay
   utils/                  # colors, scatter helpers
@@ -46,6 +48,7 @@ src/
 
 ## Notes
 
-- Geometry is **procedural** (no external 3D models) so the repo stays small and license-clean.
+- The suit mesh is a **free fan-art GLB** loaded at runtime, then split into spatial shards for the fly-in assembly sequence.
 - Bloom is disabled automatically on software renderers.
 - Pixel ratio is clamped for performance on high-DPI displays.
+- See `public/models/ATTRIBUTION.md` for model credit and IP notes.
