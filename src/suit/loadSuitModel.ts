@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { scatterRotation, scatterStart } from '../utils/easeHelpers';
 import {
-  sortShardsBottomUp,
+  sortShardsInsideOut,
   splitMeshIntoShards,
   type MeshShard,
 } from './splitMesh';
@@ -11,25 +11,52 @@ import type { ArmorPiece, PieceWave } from './createPieces';
 
 const MODEL_URL = '/models/ironman.glb';
 
-const WAVE_BY_HEIGHT: PieceWave[] = [
-  'boots',
-  'calves',
-  'thighs',
-  'hips',
-  'torso',
-  'shoulders',
-  'arms',
-  'gauntlets',
-  'helmet',
-  'power',
-];
+/**
+ * Map a shard to a body region for inside-out assembly.
+ * Uses height (y) + radial distance from spine so extremities (hands, feet)
+ * only fire after their parent limb band exists.
+ */
+function classifyWave(
+  c: THREE.Vector3,
+  minY: number,
+  yRange: number,
+  maxRadial: number,
+): PieceWave {
+  const yNorm = (c.y - minY) / yRange;
+  const radial = Math.hypot(c.x, c.z);
+  const rNorm = radial / Math.max(maxRadial, 1e-4);
 
-function assignWave(yNorm: number): PieceWave {
-  const idx = Math.min(
-    WAVE_BY_HEIGHT.length - 1,
-    Math.floor(yNorm * WAVE_BY_HEIGHT.length),
-  );
-  return WAVE_BY_HEIGHT[idx];
+  // Head
+  if (yNorm > 0.88) return 'helmet';
+
+  // Feet — lowest band
+  if (yNorm < 0.1) return 'boots';
+
+  // Hands / gauntlets — mid-low, far from spine (after arms)
+  if (yNorm >= 0.22 && yNorm < 0.52 && rNorm > 0.55) return 'gauntlets';
+
+  // Arms — mid height, lateral (shoulders already placed)
+  if (yNorm >= 0.45 && yNorm < 0.82 && rNorm > 0.42) return 'arms';
+
+  // Shoulders — high, moderately lateral
+  if (yNorm >= 0.72 && yNorm < 0.9 && rNorm > 0.28) return 'shoulders';
+
+  // Lower legs
+  if (yNorm >= 0.1 && yNorm < 0.28) return 'calves';
+
+  // Upper legs
+  if (yNorm >= 0.28 && yNorm < 0.48) return 'thighs';
+
+  // Hips / waist
+  if (yNorm >= 0.45 && yNorm < 0.58 && rNorm < 0.45) return 'hips';
+
+  // Chest / back / abs core
+  if (yNorm >= 0.5 && yNorm < 0.88) return 'torso';
+
+  // Fallbacks by height
+  if (yNorm < 0.35) return 'thighs';
+  if (rNorm > 0.5) return 'arms';
+  return 'torso';
 }
 
 /**
@@ -149,18 +176,28 @@ export async function loadSuitModel(
     allShards.push(...shards);
   }
 
-  const sorted = sortShardsBottomUp(allShards);
   let minY = Infinity;
   let maxY = -Infinity;
-  for (const s of sorted) {
+  let maxRadial = 0;
+  for (const s of allShards) {
     minY = Math.min(minY, s.centroid.y);
     maxY = Math.max(maxY, s.centroid.y);
+    maxRadial = Math.max(maxRadial, Math.hypot(s.centroid.x, s.centroid.z));
   }
   const yRange = Math.max(1e-4, maxY - minY);
 
+  // Classify by body region, then order inside-out within each band
+  const tagged = allShards.map((shard) => ({
+    shard,
+    wave: classifyWave(shard.centroid, minY, yRange, maxRadial),
+  }));
+  const sorted = sortShardsInsideOut(tagged.map((t) => t.shard));
+  const waveByShard = new Map(
+    tagged.map((t) => [t.shard, t.wave] as const),
+  );
+
   const pieces: ArmorPiece[] = sorted.map((shard, i) => {
-    const yNorm = (shard.centroid.y - minY) / yRange;
-    const wave = assignWave(yNorm);
+    const wave = waveByShard.get(shard) ?? 'torso';
     const id = `shard-${i}-${wave}`;
 
     // Clone material so shards never share glow state with the final mesh

@@ -26,7 +26,15 @@ export class Suit {
   }
 
   piecesInWave(wave: PieceWave): ArmorPiece[] {
-    return this.pieces.filter((p) => p.wave === wave);
+    const list = this.pieces.filter((p) => p.wave === wave);
+    // Within a wave: attach from body outward, proximal to distal
+    return list.sort((a, b) => {
+      const ra = Math.hypot(a.restPosition.x, a.restPosition.z);
+      const rb = Math.hypot(b.restPosition.x, b.restPosition.z);
+      if (Math.abs(ra - rb) > 0.015) return ra - rb;
+      // Upper segments before lower (arms/legs chain)
+      return b.restPosition.y - a.restPosition.y;
+    });
   }
 
   /** Fly-in shards visible; seamless mesh hidden. */

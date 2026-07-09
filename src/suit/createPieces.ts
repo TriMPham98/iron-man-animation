@@ -917,28 +917,32 @@ export function createArmorPieces(mats: SuitMaterials): {
   return { pieces, reactorGroup, eyeMeshes };
 }
 
+/**
+ * Inside-out assembly: core first, then proximal limbs, extremities last.
+ * Hands only after arms; boots only after legs have structure to attach to.
+ */
 export const WAVE_ORDER: PieceWave[] = [
-  'boots',
-  'calves',
-  'thighs',
-  'hips',
   'torso',
+  'hips',
   'shoulders',
+  'thighs',
   'arms',
+  'calves',
   'gauntlets',
+  'boots',
   'helmet',
   'power',
 ];
 
 export const WAVE_STATUS: Record<PieceWave, string> = {
-  boots: 'DEPLOYING FOOT UNITS…',
-  calves: 'LOCKING LOWER LEG PLATES…',
-  thighs: 'SECURING FEMORAL ARMOR…',
+  torso: 'CORE PLATES ALIGNING…',
   hips: 'WAIST MODULE ENGAGED…',
-  torso: 'CHEST PLATES ALIGNING…',
   shoulders: 'SHOULDER PODS ATTACHING…',
+  thighs: 'FEMORAL ARMOR LOCKING…',
   arms: 'ARM SERVOS CALIBRATING…',
-  gauntlets: 'GAUNTLETS ONLINE…',
+  calves: 'LOWER LEG PLATES SECURING…',
+  gauntlets: 'GAUNTLETS DOCKING…',
+  boots: 'FOOT UNITS DEPLOYING…',
   helmet: 'HELMET SEALING…',
   power: 'ARC CORE IGNITION…',
 };

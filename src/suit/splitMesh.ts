@@ -178,7 +178,13 @@ export function splitMeshIntoShards(
   return shards;
 }
 
-/** Order shards bottom-to-top for a classic suit-up sequence. */
-export function sortShardsBottomUp(shards: MeshShard[]): MeshShard[] {
-  return [...shards].sort((a, b) => a.centroid.y - b.centroid.y);
+/** Proximal-first within a limb band: closer to body center, then higher. */
+export function sortShardsInsideOut(shards: MeshShard[]): MeshShard[] {
+  return [...shards].sort((a, b) => {
+    const ra = Math.hypot(a.centroid.x, a.centroid.z);
+    const rb = Math.hypot(b.centroid.x, b.centroid.z);
+    if (Math.abs(ra - rb) > 0.02) return ra - rb;
+    // Prefer proximal (higher on legs/arms chain handled by wave); within band, higher first
+    return b.centroid.y - a.centroid.y;
+  });
 }
