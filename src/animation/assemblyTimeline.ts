@@ -18,21 +18,25 @@ export interface AssemblyController {
   rebuild: () => void;
 }
 
-/** Mark III bottom→top timing: legs → torso → arms → helmet → power */
+/**
+ * Mark III bottom→top timing — slowed for a more mechanical, deliberate suit-up.
+ * Total sequence ≈ 18–20s (was ~12s).
+ */
 const WAVE_START: Record<string, number> = {
-  boots: 0.3,
-  calves: 1.1,
-  thighs: 1.9,
-  hips: 2.7,
-  torso: 3.5,
-  shoulders: 4.6,
-  arms: 5.5,
-  gauntlets: 6.5,
-  helmet: 7.6,
-  power: 8.8,
+  boots: 0.45,
+  calves: 1.7,
+  thighs: 3.1,
+  hips: 4.5,
+  torso: 5.8,
+  shoulders: 7.6,
+  arms: 9.1,
+  gauntlets: 10.8,
+  helmet: 12.6,
+  power: 14.4,
 };
 
-const PIECE_DURATION = 0.7;
+/** Longer plate travel = heavier, more mechanical feel */
+const PIECE_DURATION = 1.15;
 
 export function createAssemblyTimeline(
   suit: Suit,
@@ -44,10 +48,11 @@ export function createAssemblyTimeline(
   let tl: gsap.core.Timeline | null = null;
   let playing = false;
 
-  /** Keep total assembly ~10–12s even with many GLB shards. */
+  /** Wider spacing between plate locks for clank readability */
   const staggerFor = (count: number) => {
     if (count <= 1) return 0;
-    return Math.min(0.14, Math.max(0.02, 0.9 / count));
+    // Aim ~1.1–1.4s of stagger window per wave, clamp per-piece delay
+    return Math.min(0.2, Math.max(0.045, 1.25 / count));
   };
 
   const cameraProxy = {
@@ -72,10 +77,10 @@ export function createAssemblyTimeline(
     powerProxy.v = 0;
     lights.reactor.intensity = 0;
 
-    // Opening camera
-    cameraProxy.x = 2.8;
-    cameraProxy.y = 1.6;
-    cameraProxy.z = 5.8;
+    // Opening camera — closer for detail
+    cameraProxy.x = 1.85;
+    cameraProxy.y = 1.35;
+    cameraProxy.z = 4.15;
     cameraProxy.lx = 0;
     cameraProxy.ly = 0.95;
     cameraProxy.lz = 0;
@@ -118,6 +123,7 @@ export function createAssemblyTimeline(
 
         timeline.set(mesh, { visible: true }, t);
 
+        // Slightly heavier eases — less snappy, more hydraulic
         timeline.fromTo(
           mesh.position,
           {
@@ -130,7 +136,7 @@ export function createAssemblyTimeline(
             y: piece.restPosition.y,
             z: piece.restPosition.z,
             duration: PIECE_DURATION,
-            ease: 'power3.out',
+            ease: 'power2.inOut',
           },
           t,
         );
@@ -147,7 +153,7 @@ export function createAssemblyTimeline(
             y: piece.restRotation.y,
             z: piece.restRotation.z,
             duration: PIECE_DURATION,
-            ease: 'power2.out',
+            ease: 'power2.inOut',
           },
           t,
         );
@@ -163,97 +169,96 @@ export function createAssemblyTimeline(
             x: piece.restScale.x,
             y: piece.restScale.y,
             z: piece.restScale.z,
-            duration: PIECE_DURATION * 0.9,
-            ease: 'back.out(1.6)',
+            duration: PIECE_DURATION * 0.95,
+            ease: 'back.out(1.25)',
           },
           t,
         );
 
-        // Lock punch
+        // Lock punch — slightly slower, more weight
         timeline.to(
           mesh.scale,
           {
-            x: piece.restScale.x * 1.06,
-            y: piece.restScale.y * 1.06,
-            z: piece.restScale.z * 1.06,
-            duration: 0.08,
+            x: piece.restScale.x * 1.05,
+            y: piece.restScale.y * 1.05,
+            z: piece.restScale.z * 1.05,
+            duration: 0.1,
             yoyo: true,
             repeat: 1,
             ease: 'power1.inOut',
           },
-          t + PIECE_DURATION * 0.92,
+          t + PIECE_DURATION * 0.94,
         );
       });
     }
 
-    // Camera path
+    // Camera path — closer orbit / hero shots (synced to slower waves)
     timeline.to(
       cameraProxy,
       {
-        x: 1.2,
-        y: 1.1,
-        z: 4.2,
-        ly: 0.85,
-        duration: 2.8,
+        x: 0.9,
+        y: 0.95,
+        z: 3.15,
+        ly: 0.75,
+        duration: 4.2,
         ease: 'power2.inOut',
         onUpdate: applyCamera,
       },
-      0.2,
+      0.3,
     );
 
     timeline.to(
       cameraProxy,
       {
-        x: -0.6,
-        y: 1.35,
-        z: 3.4,
-        ly: 1.15,
-        duration: 2.4,
+        x: -0.55,
+        y: 1.2,
+        z: 2.65,
+        ly: 1.1,
+        duration: 3.6,
         ease: 'power2.inOut',
         onUpdate: applyCamera,
       },
-      3.2,
+      5.2,
     );
 
     // Hero close on chest / reactor
     timeline.to(
       cameraProxy,
       {
-        x: 0.35,
-        y: 1.3,
-        z: 2.35,
-        ly: 1.25,
+        x: 0.28,
+        y: 1.2,
+        z: 1.85,
+        ly: 1.22,
         lx: 0,
-        duration: 1.8,
+        duration: 2.8,
         ease: 'power2.inOut',
         onUpdate: applyCamera,
       },
-      7.2,
+      11.8,
     );
 
-    // Swap to seamless mesh before power-up so glow isn't grid-shaped
+    // Swap to seamless mesh before power-up
     timeline.call(
       () => {
         suit.showFinal();
         callbacks.onStatus?.('ARMOR LOCKED');
       },
       undefined,
-      8.6,
+      14.0,
     );
 
-    // Power-up — reactor point light only (no full-body emissive squares)
     timeline.to(
       powerProxy,
       {
         v: 1,
-        duration: 1.4,
+        duration: 2.0,
         ease: 'power2.out',
         onUpdate: () => {
           suit.setPowered(powerProxy.v);
           lights.reactor.intensity = powerProxy.v * 4.5;
         },
       },
-      8.9,
+      14.4,
     );
 
     timeline.call(
@@ -261,24 +266,24 @@ export function createAssemblyTimeline(
         callbacks.onStatus?.('ARC REACTOR STABLE');
       },
       undefined,
-      9.6,
+      15.6,
     );
 
-    // Pull back to hero presentation
+    // Pull back to hero presentation — still closer than before
     timeline.to(
       cameraProxy,
       {
-        x: 1.8,
-        y: 1.45,
-        z: 4.6,
+        x: 1.15,
+        y: 1.2,
+        z: 3.35,
         lx: 0,
-        ly: 1.0,
+        ly: 0.95,
         lz: 0,
-        duration: 2.2,
+        duration: 3.0,
         ease: 'power3.inOut',
         onUpdate: applyCamera,
       },
-      10.2,
+      16.2,
     );
 
     timeline.call(
@@ -286,7 +291,7 @@ export function createAssemblyTimeline(
         callbacks.onStatus?.('SYSTEMS ONLINE');
       },
       undefined,
-      11.6,
+      18.4,
     );
 
     return timeline;

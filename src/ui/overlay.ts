@@ -46,6 +46,7 @@ export function createOverlay(): OverlayHandles {
     showHud: () => {
       hudTop.classList.remove('hidden');
       hudBottom.classList.remove('hidden');
+      // status lives inside top bar — no floating overlay over the suit
       hudCenter.classList.remove('hidden');
     },
     setStatus: (text: string, online = false) => {
@@ -72,8 +73,13 @@ export function createOverlay(): OverlayHandles {
       clock.textContent = `${String(m).padStart(2, '0')}:${String(whole).padStart(2, '0')}.${String(frac).padStart(2, '0')}`;
     },
     fadeTitle: (hide: boolean) => {
+      // Collapse title so only status remains in the top bar (still off the suit)
       title.style.opacity = hide ? '0' : '1';
-      title.style.transition = 'opacity 0.8s ease';
+      title.style.maxHeight = hide ? '0' : '2rem';
+      title.style.marginBottom = hide ? '0' : '0.2rem';
+      title.style.overflow = 'hidden';
+      title.style.transition =
+        'opacity 0.8s ease, max-height 0.8s ease, margin 0.8s ease';
     },
   };
 }

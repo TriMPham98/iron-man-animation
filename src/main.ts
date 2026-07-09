@@ -64,8 +64,8 @@ async function boot(): Promise<void> {
   controls.enableDamping = true;
   controls.dampingFactor = 0.06;
   controls.enablePan = false;
-  controls.minDistance = 2.2;
-  controls.maxDistance = 8;
+  controls.minDistance = 1.8;
+  controls.maxDistance = 6.5;
   controls.minPolarAngle = 0.35;
   controls.maxPolarAngle = Math.PI * 0.55;
   controls.target.copy(lookTarget);

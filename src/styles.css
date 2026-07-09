@@ -150,8 +150,7 @@ body {
   transition: opacity 0.5s ease;
 }
 
-.hud.hidden,
-.hud-center.hidden {
+.hud.hidden {
   opacity: 0;
   pointer-events: none;
 }
@@ -159,16 +158,25 @@ body {
 .hud-top {
   top: 0;
   border-bottom: 1px solid rgba(201, 162, 39, 0.18);
-  background: linear-gradient(to bottom, rgba(5, 5, 8, 0.65), transparent);
+  background: linear-gradient(to bottom, rgba(5, 5, 8, 0.72), transparent);
+  /* 3-column: brand | status | clock — status never over the suit */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+  padding-top: 0.9rem;
+  padding-bottom: 0.9rem;
 }
 
 .hud-brand {
   color: var(--gold);
   font-weight: 600;
+  justify-self: start;
 }
 
 .hud-clock {
   font-variant-numeric: tabular-nums;
+  justify-self: end;
 }
 
 .hud-bottom {
@@ -195,32 +203,37 @@ body {
   opacity: 0.7;
 }
 
+/* Center column of top bar — always above the viewport figure */
 .hud-center {
-  position: absolute;
-  top: 22%;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
+  justify-self: center;
   text-align: center;
   pointer-events: none;
-  transition: opacity 0.8s ease;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .title {
-  font-size: clamp(0.85rem, 2vw, 1.1rem);
+  font-size: clamp(0.62rem, 1.2vw, 0.78rem);
   font-weight: 600;
-  letter-spacing: 0.42em;
+  letter-spacing: 0.28em;
   color: var(--gold-bright);
-  margin-bottom: 0.75rem;
-  text-shadow: 0 0 24px rgba(201, 162, 39, 0.35);
+  margin: 0 0 0.2rem;
+  text-shadow: 0 0 16px rgba(201, 162, 39, 0.3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status {
-  font-size: 0.68rem;
-  letter-spacing: 0.22em;
+  font-size: clamp(0.55rem, 1vw, 0.62rem);
+  letter-spacing: 0.16em;
   color: var(--muted);
-  min-height: 1.2em;
+  min-height: 1.1em;
+  margin: 0;
   transition: color 0.3s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status.online {
@@ -275,11 +288,24 @@ body {
     display: none;
   }
 
-  .hud-center {
-    top: 18%;
+  .hud-top {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 0.35rem;
+  }
+
+  .hud-brand,
+  .hud-clock {
+    justify-self: center;
   }
 
   .title {
-    letter-spacing: 0.22em;
+    letter-spacing: 0.14em;
+    font-size: 0.58rem;
+  }
+
+  .status {
+    font-size: 0.52rem;
+    letter-spacing: 0.1em;
   }
 }
