@@ -221,14 +221,14 @@ export function createAssemblyTimeline(
       5.2,
     );
 
-    // Hero close on chest / reactor
+    // Bust / reactor hero shot — close, but pulled back enough to keep the head in frame
     timeline.to(
       cameraProxy,
       {
-        x: 0.28,
-        y: 1.2,
-        z: 1.85,
-        ly: 1.22,
+        x: 0.32,
+        y: 1.38,
+        z: 2.35,
+        ly: 1.38,
         lx: 0,
         duration: 2.8,
         ease: 'power2.inOut',
