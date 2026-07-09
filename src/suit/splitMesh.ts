@@ -179,8 +179,8 @@ export function splitMeshIntoShards(
 }
 
 /**
- * Global hybrid pre-sort (spine + height). Final attach order is still
- * computed per-wave in assemblyOrder.sortPiecesInWave.
+ * Global pre-sort (bottom→top, then spine). Final attach order is still
+ * computed per-wave in assemblyOrder.sortPiecesInWave (neighbor growth).
  */
 export function sortShardsInsideOut(shards: MeshShard[]): MeshShard[] {
   let minY = Infinity;
@@ -194,15 +194,15 @@ export function sortShardsInsideOut(shards: MeshShard[]): MeshShard[] {
   const yRange = Math.max(1e-4, maxY - minY);
   maxR = Math.max(maxR, 1e-4);
 
-  const WR = 0.65;
-  const WY = 0.35;
+  // Prefer height so IDs loosely match structural build; radial is secondary
+  const WR = 0.35;
+  const WY = 0.65;
 
   return [...shards].sort((a, b) => {
     const score = (s: MeshShard) => {
       const rNorm = Math.hypot(s.centroid.x, s.centroid.z) / maxR;
-      // Soft bottom→top globally as secondary (limbs refined per-wave later)
       const yNorm = (s.centroid.y - minY) / yRange;
-      return WR * rNorm + WY * yNorm;
+      return WY * yNorm + WR * rNorm;
     };
     return score(a) - score(b);
   });

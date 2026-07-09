@@ -1,9 +1,9 @@
 import type { ArmorPiece, PieceWave } from './createPieces';
 
-/** Spine-distance weight — keep inside-out dominant. */
-export const WEIGHT_RADIAL = 0.65;
-/** Height / limb-axis weight — grow along the limb & soft bottom-up on core. */
-export const WEIGHT_AXIS = 0.35;
+/** Spine-distance weight — used for seed / tie-break only. */
+export const WEIGHT_RADIAL = 0.35;
+/** Height / limb-axis weight — primary structural preference for seeds. */
+export const WEIGHT_AXIS = 0.65;
 
 export interface OrderPoint {
   x: number;
@@ -12,9 +12,21 @@ export interface OrderPoint {
 }
 
 /**
- * Limb-like waves grow from joint → tip (proximal high Y → distal low Y).
- * Core waves use mild bottom→top as a secondary sweep.
+ * Lower body + core grow bottom → top (plant feet, stack plates upward).
+ * Upper limbs grow proximal → distal (shoulder → hand).
  */
+function growsUpward(wave: PieceWave): boolean {
+  return (
+    wave === 'boots' ||
+    wave === 'calves' ||
+    wave === 'thighs' ||
+    wave === 'hips' ||
+    wave === 'torso' ||
+    wave === 'helmet' ||
+    wave === 'power'
+  );
+}
+
 function isLimbWave(wave: PieceWave): boolean {
   return (
     wave === 'shoulders' ||
@@ -31,13 +43,12 @@ function clamp01(v: number): number {
 }
 
 /**
- * Hybrid assembly score — lower attaches first.
+ * Hybrid seed / tie-break score — lower prefers earlier.
  *
- * score = wR * radialNorm + wY * axisNorm
- *
+ * Not the sole attach order (see sortPiecesInWave neighbor growth).
  * - radialNorm: 0 at spine, 1 at farthest piece in the set
- * - axisNorm (limbs): 0 at proximal (high Y), 1 at distal (low Y)
- * - axisNorm (core): 0 at bottom of band, 1 at top (soft bottom→top)
+ * - axisNorm (upward waves): 0 at bottom, 1 at top
+ * - axisNorm (downward limbs): 0 at proximal (high Y), 1 at distal (low Y)
  */
 export function assemblyScore(
   point: OrderPoint,
@@ -56,13 +67,13 @@ export function assemblyScore(
   const radialNorm = clamp01(radial / maxR);
 
   let axisNorm: number;
-  if (isLimbWave(wave)) {
-    // Proximal (high Y) first → low score; distal (low Y) later
+  if (growsUpward(wave)) {
+    // Bottom first → stack onto hips / lower plates
+    axisNorm = clamp01((point.y - bounds.minY) / yRange);
+  } else {
+    // Proximal (high Y) first → grow out the arm
     const yFromTop = (bounds.maxY - point.y) / yRange;
     axisNorm = clamp01(yFromTop);
-  } else {
-    // Core / helmet: mild bottom→top within the band
-    axisNorm = clamp01((point.y - bounds.minY) / yRange);
   }
 
   return wR * radialNorm + wY * axisNorm;
@@ -87,7 +98,74 @@ export function boundsFromPoints(points: OrderPoint[]): {
   return { minY, maxY, maxRadial: Math.max(maxRadial, 1e-4) };
 }
 
-/** Sort armor pieces in a single wave by hybrid spine + limb/height score. */
+function distSq(
+  a: { x: number; y: number; z: number },
+  b: { x: number; y: number; z: number },
+): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
+  return dx * dx + dy * dy + dz * dz;
+}
+
+/**
+ * Structural seeds: where this wave connects to the already-built suit.
+ * - Upward waves: lowest band (ankles → knees → hips → chest → crown)
+ * - Downward limbs: highest band (shoulder → elbow → hand)
+ * Bilateral waves also seed the opposite X side so L/R grow together.
+ */
+function pickSeeds(
+  pieces: ArmorPiece[],
+  wave: PieceWave,
+  bounds: { minY: number; maxY: number; maxRadial: number },
+): ArmorPiece[] {
+  const scored = pieces
+    .map((p) => ({
+      piece: p,
+      score: assemblyScore(
+        {
+          x: p.restPosition.x,
+          y: p.restPosition.y,
+          z: p.restPosition.z,
+        },
+        wave,
+        bounds,
+      ),
+    }))
+    .sort((a, b) => {
+      if (Math.abs(a.score - b.score) > 1e-6) return a.score - b.score;
+      return a.piece.id.localeCompare(b.piece.id);
+    });
+
+  const seeds: ArmorPiece[] = [scored[0].piece];
+
+  // Second seed on the opposite side so paired limbs / chest flanks build together
+  if (isLimbWave(wave) || wave === 'torso' || wave === 'hips') {
+    const first = scored[0].piece;
+    const firstSign = Math.sign(first.restPosition.x) || 1;
+    const opposite = scored.find((s) => {
+      const x = s.piece.restPosition.x;
+      return (
+        s.piece !== first &&
+        Math.abs(x) > 0.04 &&
+        Math.sign(x) === -firstSign
+      );
+    });
+    if (opposite) seeds.push(opposite.piece);
+  }
+
+  return seeds;
+}
+
+/**
+ * Sort armor pieces so each plate attaches onto already-placed structure.
+ *
+ * 1. Seed at the wave’s connection root (bottom of core / proximal limb)
+ * 2. Repeatedly attach the nearest remaining piece to the built set
+ * 3. Tie-break with assemblyScore (axis-first, then spine)
+ *
+ * Macro wave order (legs → core → arms → helmet) stays in WAVE_ORDER.
+ */
 export function sortPiecesInWave(
   pieces: ArmorPiece[],
   wave: PieceWave,
@@ -102,30 +180,58 @@ export function sortPiecesInWave(
     })),
   );
 
-  return [...pieces].sort((a, b) => {
-    const sa = assemblyScore(
-      {
-        x: a.restPosition.x,
-        y: a.restPosition.y,
-        z: a.restPosition.z,
-      },
-      wave,
-      bounds,
-    );
-    const sb = assemblyScore(
-      {
-        x: b.restPosition.x,
-        y: b.restPosition.y,
-        z: b.restPosition.z,
-      },
-      wave,
-      bounds,
-    );
-    if (Math.abs(sa - sb) > 1e-6) return sa - sb;
-    // Stable-ish tie-break: left-to-right, then id
-    if (Math.abs(a.restPosition.x - b.restPosition.x) > 1e-4) {
-      return a.restPosition.x - b.restPosition.x;
+  const remaining = new Set(pieces);
+  const ordered: ArmorPiece[] = [];
+
+  for (const seed of pickSeeds(pieces, wave, bounds)) {
+    if (!remaining.has(seed)) continue;
+    ordered.push(seed);
+    remaining.delete(seed);
+  }
+
+  while (remaining.size > 0) {
+    let best: ArmorPiece | null = null;
+    let bestDist = Infinity;
+    let bestTie = Infinity;
+    let bestId = '';
+
+    for (const candidate of remaining) {
+      let minD = Infinity;
+      for (const placed of ordered) {
+        const d = distSq(candidate.restPosition, placed.restPosition);
+        if (d < minD) minD = d;
+      }
+
+      const tie = assemblyScore(
+        {
+          x: candidate.restPosition.x,
+          y: candidate.restPosition.y,
+          z: candidate.restPosition.z,
+        },
+        wave,
+        bounds,
+      );
+
+      const closer = minD < bestDist - 1e-8;
+      const sameDist = Math.abs(minD - bestDist) <= 1e-8;
+      const betterTie = sameDist && tie < bestTie - 1e-8;
+      const betterId =
+        sameDist &&
+        Math.abs(tie - bestTie) <= 1e-8 &&
+        (best === null || candidate.id.localeCompare(bestId) < 0);
+
+      if (best === null || closer || betterTie || betterId) {
+        best = candidate;
+        bestDist = minD;
+        bestTie = tie;
+        bestId = candidate.id;
+      }
     }
-    return a.id.localeCompare(b.id);
-  });
+
+    if (!best) break;
+    ordered.push(best);
+    remaining.delete(best);
+  }
+
+  return ordered;
 }

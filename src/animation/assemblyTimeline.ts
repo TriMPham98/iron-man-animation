@@ -20,19 +20,36 @@ export interface AssemblyController {
 /**
  * Mark III bottom→top timing — deliberate suit-up with a slower helmet
  * close (movie faceplate beat) and sequenced systems ignition.
+ *
+ * These are *earliest* start times. Actual start is also gated so each wave
+ * waits until the previous wave is mostly locked — plates always have
+ * something physical to clamp onto.
  */
-const WAVE_START: Record<string, number> = {
+const WAVE_EARLIEST: Record<string, number> = {
   boots: 0.45,
-  calves: 1.7,
-  thighs: 3.1,
-  hips: 4.5,
-  torso: 5.8,
-  shoulders: 8.2,
-  arms: 9.8,
-  gauntlets: 11.5,
+  calves: 1.55,
+  thighs: 2.9,
+  hips: 4.2,
+  torso: 5.5,
+  shoulders: 7.8,
+  arms: 9.4,
+  gauntlets: 11.0,
   // Extra pause before the helmet — faceplate is the hero beat
-  helmet: 13.6,
-  power: 18.2,
+  helmet: 13.2,
+  power: 17.5,
+};
+
+/**
+ * How early the next wave may begin before the previous wave’s last plate
+ * finishes locking. Small overlap keeps the suit-up fluid; large enough
+ * foundations still exist before the next region clamps on.
+ */
+const WAVE_OVERLAP = 0.28;
+
+/** Extra hold after a wave before the next may start (helmet hero beat). */
+const WAVE_PAD_AFTER: Partial<Record<string, number>> = {
+  gauntlets: 0.35,
+  helmet: 0.15,
 };
 
 /** Default plate travel */
@@ -120,10 +137,24 @@ export function createAssemblyTimeline(
 
     /** When each wave's last plate finishes locking */
     const waveLockEnd: Partial<Record<string, number>> = {};
+    /** Actual scheduled start per wave (after foundation gating) */
+    const waveStartAt: Partial<Record<string, number>> = {};
+
+    let prevLockEnd = 0;
+    let prevWave: string | null = null;
 
     for (const wave of WAVE_ORDER) {
       const pieces = suit.piecesInWave(wave);
-      const waveStart = WAVE_START[wave] ?? 0;
+      const earliest = WAVE_EARLIEST[wave] ?? 0;
+      // Don't start a region until the previous one is almost locked —
+      // collar / shoulders can't float before the torso stack exists.
+      const afterPrev =
+        prevLockEnd > 0
+          ? prevLockEnd - WAVE_OVERLAP + (WAVE_PAD_AFTER[prevWave ?? ''] ?? 0)
+          : 0;
+      const waveStart = Math.max(earliest, afterPrev);
+      waveStartAt[wave] = waveStart;
+
       const isHelmet = wave === 'helmet';
       const duration = isHelmet ? HELMET_PIECE_DURATION : PIECE_DURATION;
       const stagger = staggerFor(pieces.length, isHelmet);
@@ -217,6 +248,8 @@ export function createAssemblyTimeline(
       });
 
       waveLockEnd[wave] = lastEnd;
+      prevLockEnd = lastEnd;
+      prevWave = wave;
     }
 
     // ── Sequenced systems ──────────────────────────────────────────
@@ -347,7 +380,7 @@ export function createAssemblyTimeline(
         ease: 'power3.inOut',
         onUpdate: applyCamera,
       },
-      (WAVE_START.helmet ?? 13.6) - 0.4,
+      (waveStartAt.helmet ?? WAVE_EARLIEST.helmet ?? 13.2) - 0.4,
     );
 
     // Hold on the eyes a moment, then pull back to hero
