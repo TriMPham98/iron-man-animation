@@ -1,6 +1,6 @@
 import gsap from 'gsap';
 import * as THREE from 'three';
-import type { SceneLights } from '../scene/createLights';
+import { setSystemsPower, type SceneLights } from '../scene/createLights';
 import type { Suit } from '../suit/Suit';
 import { WAVE_ORDER, WAVE_STATUS } from '../suit/createPieces';
 
@@ -75,7 +75,7 @@ export function createAssemblyTimeline(
   const build = (): gsap.core.Timeline => {
     suit.resetToStart();
     powerProxy.v = 0;
-    lights.reactor.intensity = 0;
+    setSystemsPower(lights, 0);
 
     // Opening camera — closer for detail
     cameraProxy.x = 1.85;
@@ -247,6 +247,7 @@ export function createAssemblyTimeline(
       14.0,
     );
 
+    // Ignite arc reactor, face-mask eyes, hand & foot repulsors
     timeline.to(
       powerProxy,
       {
@@ -255,7 +256,7 @@ export function createAssemblyTimeline(
         ease: 'power2.out',
         onUpdate: () => {
           suit.setPowered(powerProxy.v);
-          lights.reactor.intensity = powerProxy.v * 4.5;
+          setSystemsPower(lights, powerProxy.v);
         },
       },
       14.4,

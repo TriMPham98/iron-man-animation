@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createAssemblyTimeline } from './animation/assemblyTimeline';
 import { createCamera, updateCameraAspect } from './scene/createCamera';
 import { createEnvironment } from './scene/createEnvironment';
-import { createLights } from './scene/createLights';
+import { createLights, setSystemsPower } from './scene/createLights';
 import { createPostProcessing } from './scene/postProcessing';
 import { createRenderer } from './scene/createRenderer';
 import { Suit } from './suit/Suit';
@@ -162,7 +162,9 @@ async function boot(): Promise<void> {
       controls.update();
       lookTarget.copy(controls.target);
       suit.updateIdle(t);
-      lights.reactor.intensity = 3.5 + Math.sin(t * 3.2) * 0.4;
+      // Soft pulse on reactor / eyes / repulsor spill lights
+      const pulse = 0.92 + Math.sin(t * 3.2) * 0.08;
+      setSystemsPower(lights, pulse);
     }
 
     ui.updateClock(Math.max(0, t - clockStart));

@@ -64,12 +64,12 @@ export function createPostProcessing(
   const renderPass = new RenderPass(scene, camera);
   composer.addPass(renderPass);
 
-  // Very restrained bloom — only soft reactor/specular glints
+  // Very restrained bloom — soft glint on powered systems only
   const bloom = new UnrealBloomPass(
     new THREE.Vector2(size.x, size.y),
-    0.18,
-    0.75,
-    0.95,
+    0.12,
+    0.4,
+    0.94,
   );
   composer.addPass(bloom);
 
