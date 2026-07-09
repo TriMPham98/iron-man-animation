@@ -8,10 +8,12 @@ export function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
     powerPreference: 'high-performance',
   });
 
-  renderer.setClearColor(0x050508, 1);
+  renderer.setClearColor(0x0a0e18, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // Tone mapping handled in OutputPass when composer is active; keep a
+  // bright baseline for the no-bloom fallback path.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.35;
+  renderer.toneMappingExposure = 2.15;
   renderer.shadowMap.enabled = false;
 
   const setSize = () => {

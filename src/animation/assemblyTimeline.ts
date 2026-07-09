@@ -230,7 +230,17 @@ export function createAssemblyTimeline(
       7.2,
     );
 
-    // Power-up
+    // Swap to seamless mesh before power-up so glow isn't grid-shaped
+    timeline.call(
+      () => {
+        suit.showFinal();
+        callbacks.onStatus?.('ARMOR LOCKED');
+      },
+      undefined,
+      8.6,
+    );
+
+    // Power-up — reactor point light only (no full-body emissive squares)
     timeline.to(
       powerProxy,
       {
@@ -239,7 +249,7 @@ export function createAssemblyTimeline(
         ease: 'power2.out',
         onUpdate: () => {
           suit.setPowered(powerProxy.v);
-          lights.reactor.intensity = powerProxy.v * 4.0;
+          lights.reactor.intensity = powerProxy.v * 4.5;
         },
       },
       8.9,

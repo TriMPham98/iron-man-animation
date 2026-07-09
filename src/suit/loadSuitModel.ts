@@ -41,14 +41,20 @@ function enhanceMaterials(root: THREE.Object3D): void {
       if (!mat) continue;
       const m = mat as THREE.MeshStandardMaterial;
       if ('metalness' in m) {
-        m.metalness = Math.max(m.metalness ?? 0, 0.72);
-        m.roughness = Math.min(m.roughness ?? 0.5, 0.38);
-        m.envMapIntensity = 1.5;
+        // Dark armor textures + high metalness crush to black. Prefer readable
+        // painted metal: some metal, more diffuse, brighter albedo multiply.
+        m.metalness = 0.42;
+        m.roughness = 0.45;
+        m.envMapIntensity = 2.4;
+        // HDR-style color boost (values > 1 are valid and brighten the map)
+        if (m.color) {
+          m.color.setRGB(1.55, 1.55, 1.55);
+        }
+        if ('emissiveIntensity' in m) {
+          m.emissiveIntensity = 0;
+          m.emissive = new THREE.Color(0x000000);
+        }
         m.needsUpdate = true;
-      }
-      // Boost emissive bits (eyes / reactor painted bright in texture)
-      if ('emissive' in m && m.map) {
-        // leave map-driven look; slight emissive for glow zones via bloom on bright albedo
       }
     }
   });
@@ -58,13 +64,11 @@ function enhanceMaterials(root: THREE.Object3D): void {
  * Normalize model orientation/scale so it stands ~1.85m on y=0, facing camera.
  */
 function normalizeModel(root: THREE.Object3D): void {
-  // Merge transforms
   root.updateMatrixWorld(true);
 
   let box = new THREE.Box3().setFromObject(root);
   let size = box.getSize(new THREE.Vector3());
 
-  // If model is lying on its side (height not on Y), rotate into Y-up
   if (size.z > size.y * 1.25 && size.z > size.x) {
     root.rotation.x = -Math.PI / 2;
     root.updateMatrixWorld(true);
@@ -92,6 +96,8 @@ function normalizeModel(root: THREE.Object3D): void {
 
 export interface LoadedSuitModel {
   group: THREE.Group;
+  /** Seamless full suit — shown after assembly completes */
+  finalModel: THREE.Group;
   pieces: ArmorPiece[];
   sourceMeshes: THREE.Mesh[];
 }
@@ -124,22 +130,25 @@ export async function loadSuitModel(
   enhanceMaterials(model);
   normalizeModel(model);
 
-  // Bake world transforms into a working group
-  const wrapper = new THREE.Group();
-  wrapper.add(model);
-  wrapper.updateMatrixWorld(true);
+  // Seamless finished suit (hidden until assembly ends)
+  const finalModel = new THREE.Group();
+  finalModel.name = 'finalSuit';
+  finalModel.add(model);
+  finalModel.visible = false;
+  group.add(finalModel);
+
+  finalModel.updateMatrixWorld(true);
 
   const sourceMeshes: THREE.Mesh[] = [];
-  wrapper.traverse((obj) => {
+  model.traverse((obj) => {
     if ((obj as THREE.Mesh).isMesh) {
       sourceMeshes.push(obj as THREE.Mesh);
     }
   });
 
-  // Split into spatial shards for assembly
+  // Split into spatial shards for fly-in only (clones of materials, no emissive)
   const allShards: MeshShard[] = [];
   for (const mesh of sourceMeshes) {
-    // denser grid on larger meshes
     const shards = splitMeshIntoShards(mesh, { x: 3, y: 7, z: 3 });
     allShards.push(...shards);
   }
@@ -157,6 +166,19 @@ export async function loadSuitModel(
     const yNorm = (shard.centroid.y - minY) / yRange;
     const wave = assignWave(yNorm);
     const id = `shard-${i}-${wave}`;
+
+    // Clone material so shards never share glow state with the final mesh
+    const srcMat = Array.isArray(shard.mesh.material)
+      ? shard.mesh.material[0]
+      : shard.mesh.material;
+    if (srcMat) {
+      const cloned = (srcMat as THREE.Material).clone() as THREE.MeshStandardMaterial;
+      if ('emissiveIntensity' in cloned) {
+        cloned.emissiveIntensity = 0;
+        cloned.emissive = new THREE.Color(0x000000);
+      }
+      shard.mesh.material = cloned;
+    }
 
     const restPosition = shard.restPosition.clone();
     const restRotation = shard.restRotation.clone();
@@ -184,13 +206,8 @@ export async function loadSuitModel(
     };
   });
 
-  // Hide original continuous meshes (we animate shards instead)
-  for (const mesh of sourceMeshes) {
-    mesh.visible = false;
-  }
-
   onProgress?.(1);
   draco.dispose();
 
-  return { group, pieces, sourceMeshes };
+  return { group, finalModel, pieces, sourceMeshes };
 }

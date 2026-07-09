@@ -27,18 +27,23 @@ async function boot(): Promise<void> {
   const lights = createLights();
   scene.add(lights.group);
 
-  // Soft environment reflections for metals
+  // Bright cool studio environment for metal reflections
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envScene = new THREE.Scene();
-  envScene.add(new THREE.HemisphereLight(0xaabbdd, 0x332222, 1.6));
-  const envLight = new THREE.DirectionalLight(0xfff5ee, 2.0);
-  envLight.position.set(2, 4, 3);
-  envScene.add(envLight);
-  const envFill = new THREE.DirectionalLight(0xccddff, 1.0);
-  envFill.position.set(-3, 2, -2);
+  envScene.background = new THREE.Color(0x1a2438);
+  envScene.add(new THREE.HemisphereLight(0xd0e8ff, 0x404050, 3.5));
+  const envKey = new THREE.DirectionalLight(0xffffff, 4.5);
+  envKey.position.set(2.5, 6, 4);
+  envScene.add(envKey);
+  const envRim = new THREE.DirectionalLight(0x88e8ff, 3.0);
+  envRim.position.set(-4, 3, -2.5);
+  envScene.add(envRim);
+  const envFill = new THREE.DirectionalLight(0xffffff, 2.5);
+  envFill.position.set(0, 2, 5);
   envScene.add(envFill);
-  const envMap = pmrem.fromScene(envScene, 0.04).texture;
+  const envMap = pmrem.fromScene(envScene, 0.02).texture;
   scene.environment = envMap;
+  scene.environmentIntensity = 1.35;
   pmrem.dispose();
 
   ui.setLoadingProgress(0.15);
@@ -82,6 +87,7 @@ async function boot(): Promise<void> {
     },
     onComplete: () => {
       assemblyComplete = true;
+      suit.showFinal(); // seamless mesh — no grid-shard square blooms
       controls.target.copy(lookTarget);
       controls.enabled = true;
       controls.autoRotate = true;
@@ -153,7 +159,7 @@ async function boot(): Promise<void> {
       controls.update();
       lookTarget.copy(controls.target);
       suit.updateIdle(t);
-      lights.reactor.intensity = 3.4 + Math.sin(t * 3.2) * 0.45;
+      lights.reactor.intensity = 3.5 + Math.sin(t * 3.2) * 0.4;
     }
 
     ui.updateClock(Math.max(0, t - clockStart));

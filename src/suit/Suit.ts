@@ -5,8 +5,9 @@ import { loadSuitModel } from './loadSuitModel';
 export class Suit {
   readonly group = new THREE.Group();
   pieces: ArmorPiece[] = [];
+  private finalModel: THREE.Group | null = null;
   private power = 0;
-  private emissiveMats: THREE.MeshStandardMaterial[] = [];
+  private assemblyMode = true;
 
   private constructor() {
     this.group.name = 'suit';
@@ -17,22 +18,7 @@ export class Suit {
     const loaded = await loadSuitModel(onProgress);
     suit.group.add(loaded.group);
     suit.pieces = loaded.pieces;
-
-    // Collect materials that can take emissive pulse (bright / named glow)
-    const seen = new Set<THREE.Material>();
-    suit.group.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const mat of mats) {
-        if (!mat || seen.has(mat)) continue;
-        seen.add(mat);
-        const m = mat as THREE.MeshStandardMaterial;
-        if ('emissive' in m) {
-          suit.emissiveMats.push(m);
-        }
-      }
-    });
+    suit.finalModel = loaded.finalModel;
 
     // Slight heroic lean
     suit.group.rotation.x = -0.03;
@@ -43,9 +29,28 @@ export class Suit {
     return this.pieces.filter((p) => p.wave === wave);
   }
 
+  /** Fly-in shards visible; seamless mesh hidden. */
+  showAssembly(): void {
+    this.assemblyMode = true;
+    if (this.finalModel) this.finalModel.visible = false;
+    for (const p of this.pieces) {
+      p.mesh.visible = false;
+    }
+  }
+
+  /** Seamless full suit; hide grid shards so bloom can't square-blob them. */
+  showFinal(): void {
+    this.assemblyMode = false;
+    for (const p of this.pieces) {
+      p.mesh.visible = false;
+    }
+    if (this.finalModel) this.finalModel.visible = true;
+  }
+
   resetToStart(): void {
     this.power = 0;
     this.setPowered(0);
+    this.showAssembly();
     for (const p of this.pieces) {
       p.mesh.visible = false;
       p.mesh.position.copy(p.startPosition);
@@ -54,27 +59,24 @@ export class Suit {
     }
   }
 
-  /** 0 = off, 1 = full power — boosts emissive on suit materials */
+  /**
+   * Power-up uses reactor light only (see timeline) — no full-body emissive.
+   * Full-body emissive + bloom turned every spatial shard into a glowing square.
+   */
   setPowered(amount: number): void {
     this.power = THREE.MathUtils.clamp(amount, 0, 1);
-    for (const m of this.emissiveMats) {
-      // Soft cyan/white glow that bloom can pick up on bright textured areas
-      m.emissive = new THREE.Color(0x1a3040);
-      m.emissiveIntensity = this.power * 0.55;
-      m.needsUpdate = true;
-    }
   }
 
   getPower(): number {
     return this.power;
   }
 
-  updateIdle(time: number): void {
-    if (this.power < 0.5) return;
-    const pulse = 1 + Math.sin(time * 3.2) * 0.12;
-    for (const m of this.emissiveMats) {
-      m.emissiveIntensity = this.power * 0.55 * pulse;
-    }
+  updateIdle(_time: number): void {
+    // Soft idle handled by reactor point light in main.ts
+  }
+
+  isAssemblyMode(): boolean {
+    return this.assemblyMode;
   }
 
   dispose(): void {
