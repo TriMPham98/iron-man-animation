@@ -944,6 +944,6 @@ export const WAVE_STATUS: Record<PieceWave, string> = {
   shoulders: 'SHOULDER PODS ATTACHING…',
   arms: 'ARM SERVOS CALIBRATING…',
   gauntlets: 'GAUNTLETS CLAMPING…',
-  helmet: 'HELMET SEALING…',
+  helmet: 'HELMET SEALING — FACEPLATE CLOSING…',
   power: 'SYSTEMS ONLINE — ARC STABLE…',
 };

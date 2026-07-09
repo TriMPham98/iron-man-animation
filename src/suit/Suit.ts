@@ -2,16 +2,18 @@ import * as THREE from 'three';
 import { sortPiecesInWave } from './assemblyOrder';
 import type { ArmorPiece, PieceWave } from './createPieces';
 import { loadSuitModel, type GlowMaterial } from './loadSuitModel';
-
-/** Mild boost so systems read as lit without blowing out bloom. */
-const POWER_EMISSIVE_BOOST = 1.05;
+import {
+  applySystemUniforms,
+  type SuitSystem,
+  type SystemPowers,
+} from './systemsGlow';
 
 export class Suit {
   readonly group = new THREE.Group();
   pieces: ArmorPiece[] = [];
   private finalModel: THREE.Group | null = null;
   private glowMaterials: GlowMaterial[] = [];
-  private power = 0;
+  private powers: SystemPowers = { reactor: 0, eyes: 0, repulsors: 0 };
   private assemblyMode = true;
 
   private constructor() {
@@ -32,8 +34,6 @@ export class Suit {
   }
 
   piecesInWave(wave: PieceWave): ArmorPiece[] {
-    // Mark III waves are bottom→top; within each wave still hybrid
-    // (spine + proximal→distal) so arms grow shoulder→hand, legs hip→boot.
     return sortPiecesInWave(
       this.pieces.filter((p) => p.wave === wave),
       wave,
@@ -59,8 +59,8 @@ export class Suit {
   }
 
   resetToStart(): void {
-    this.power = 0;
-    this.setPowered(0);
+    this.powers = { reactor: 0, eyes: 0, repulsors: 0 };
+    this.applySystems();
     this.showAssembly();
     for (const p of this.pieces) {
       p.mesh.visible = false;
@@ -70,33 +70,48 @@ export class Suit {
     }
   }
 
+  /** Set one system 0–1 (reactor / eyes / repulsors). */
+  setSystemPower(system: SuitSystem, amount: number): void {
+    this.powers[system] = THREE.MathUtils.clamp(amount, 0, 1);
+    this.applySystems();
+  }
+
+  /** Set all systems at once (suit emissive only — scene lights unchanged). */
+  setSystemsPower(powers: Partial<SystemPowers>): void {
+    if (powers.reactor !== undefined) {
+      this.powers.reactor = THREE.MathUtils.clamp(powers.reactor, 0, 1);
+    }
+    if (powers.eyes !== undefined) {
+      this.powers.eyes = THREE.MathUtils.clamp(powers.eyes, 0, 1);
+    }
+    if (powers.repulsors !== undefined) {
+      this.powers.repulsors = THREE.MathUtils.clamp(powers.repulsors, 0, 1);
+    }
+    this.applySystems();
+  }
+
   /**
-   * 0 = dark, 1 = systems online.
-   * Only the seamless final mesh uses the GLB emissive map (arc reactor,
-   * face-mask eye slits, hand & foot repulsors). Fly-in shards stay dark so
-   * bloom never turns them into glowing squares.
+   * @deprecated Prefer setSystemPower / setSystemsPower for sequenced ignition.
    */
   setPowered(amount: number): void {
-    this.power = THREE.MathUtils.clamp(amount, 0, 1);
-    this.applyEmissive(1);
+    const a = THREE.MathUtils.clamp(amount, 0, 1);
+    this.powers = { reactor: a, eyes: a, repulsors: a };
+    this.applySystems();
+  }
+
+  getSystemPowers(): SystemPowers {
+    return { ...this.powers };
   }
 
   getPower(): number {
-    return this.power;
+    return Math.max(this.powers.reactor, this.powers.eyes, this.powers.repulsors);
   }
 
-  /** Soft arc-reactor pulse after systems online. */
-  updateIdle(time: number): void {
-    if (this.power < 0.01) return;
-    const pulse = 1 + Math.sin(time * 3.2) * 0.08;
-    this.applyEmissive(pulse);
-  }
+  /** No-op — systems hold steady once online (no idle flicker). */
+  updateIdle(_time: number): void {}
 
-  private applyEmissive(pulse: number): void {
-    for (const { material, baseIntensity } of this.glowMaterials) {
-      material.emissiveIntensity =
-        this.power * baseIntensity * POWER_EMISSIVE_BOOST * pulse;
-    }
+  private applySystems(): void {
+    applySystemUniforms(this.glowMaterials, this.powers, 1);
   }
 
   isAssemblyMode(): boolean {

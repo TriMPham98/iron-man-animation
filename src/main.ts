@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createAssemblyTimeline } from './animation/assemblyTimeline';
 import { createCamera, updateCameraAspect } from './scene/createCamera';
 import { createEnvironment } from './scene/createEnvironment';
-import { createLights, setSystemsPower } from './scene/createLights';
+import { createLights } from './scene/createLights';
 import { createPostProcessing } from './scene/postProcessing';
 import { createRenderer } from './scene/createRenderer';
 import { Suit } from './suit/Suit';
@@ -79,7 +79,7 @@ async function boot(): Promise<void> {
   let clockStart = 0;
   const clock = new THREE.Clock();
 
-  const assembly = createAssemblyTimeline(suit, camera, lights, lookTarget, {
+  const assembly = createAssemblyTimeline(suit, camera, lookTarget, {
     onStatus: (text) => {
       const online = text.includes('ONLINE') || text.includes('STABLE');
       ui.setStatus(text, online);
@@ -161,10 +161,7 @@ async function boot(): Promise<void> {
     if (assemblyComplete) {
       controls.update();
       lookTarget.copy(controls.target);
-      suit.updateIdle(t);
-      // Soft pulse on reactor / eyes / repulsor spill lights
-      const pulse = 0.92 + Math.sin(t * 3.2) * 0.08;
-      setSystemsPower(lights, pulse);
+      // Suit systems stay at steady emissive once online (no light pulse)
     }
 
     ui.updateClock(Math.max(0, t - clockStart));

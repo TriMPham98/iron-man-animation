@@ -8,8 +8,16 @@ import {
   type MeshShard,
 } from './splitMesh';
 import type { ArmorPiece, PieceWave } from './createPieces';
+import {
+  attachSystemsShader,
+  darkenAlbedoGlowRegions,
+  packSystemsEmissiveMap,
+  type GlowMaterial,
+} from './systemsGlow';
 
 const MODEL_URL = '/models/ironman.glb';
+
+export type { GlowMaterial } from './systemsGlow';
 
 /**
  * Map a shard to a body region for Mark III–style waves.
@@ -83,78 +91,10 @@ function enhanceMaterials(root: THREE.Object3D): void {
   });
 }
 
-export interface GlowMaterial {
-  material: THREE.MeshStandardMaterial;
-  /** Full-power emissive intensity once systems come online. */
-  baseIntensity: number;
-}
-
 /**
- * The albedo paints reactor / eyes / repulsors as bright cyan even when
- * emissive is off — so they look "powered" during fly-in. Darken those texels
- * (using the emissive map as a mask) so systems read as cold metal until
- * power-up lights them via emissive only.
- */
-function darkenAlbedoGlowRegions(material: THREE.MeshStandardMaterial): void {
-  const map = material.map;
-  const emap = material.emissiveMap;
-  if (!map?.image || !emap?.image) return;
-
-  const baseImg = map.image as CanvasImageSource & { width?: number; height?: number };
-  const emImg = emap.image as CanvasImageSource & { width?: number; height?: number };
-  const w = Number(baseImg.width) || 0;
-  const h = Number(baseImg.height) || 0;
-  if (w < 2 || h < 2) return;
-
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
-
-    ctx.drawImage(baseImg, 0, 0, w, h);
-    const baseData = ctx.getImageData(0, 0, w, h);
-
-    const eCanvas = document.createElement('canvas');
-    eCanvas.width = w;
-    eCanvas.height = h;
-    const ectx = eCanvas.getContext('2d', { willReadFrequently: true });
-    if (!ectx) return;
-    ectx.drawImage(emImg, 0, 0, w, h);
-    const emData = ectx.getImageData(0, 0, w, h);
-
-    // Cold unpowered glass / socket (near-black, slight cool metal)
-    const darkR = 10;
-    const darkG = 12;
-    const darkB = 16;
-
-    for (let i = 0; i < baseData.data.length; i += 4) {
-      const elum =
-        Math.max(emData.data[i], emData.data[i + 1], emData.data[i + 2]) / 255;
-      if (elum < 0.06) continue;
-      // Full darken on bright emissive texels so reactor never reads "on"
-      const t = Math.min(1, elum * 1.55);
-      baseData.data[i] = Math.round(baseData.data[i] * (1 - t) + darkR * t);
-      baseData.data[i + 1] = Math.round(
-        baseData.data[i + 1] * (1 - t) + darkG * t,
-      );
-      baseData.data[i + 2] = Math.round(
-        baseData.data[i + 2] * (1 - t) + darkB * t,
-      );
-    }
-
-    ctx.putImageData(baseData, 0, 0);
-    map.image = canvas;
-    map.needsUpdate = true;
-  } catch {
-    // CORS / tainted canvas — leave albedo as-is
-  }
-}
-
-/**
- * Capture glow materials, darken painted-on systems in the albedo, and start
- * emissive at 0 so nothing ignites until armor lock + power-up.
+ * Capture glow materials, darken baked-on systems in the albedo, pack the
+ * emissive atlas into R/G/B (reactor / eyes / repulsors), and attach the
+ * sequenced systems shader. All systems start at power 0.
  */
 function prepareGlowMaterials(root: THREE.Object3D): GlowMaterial[] {
   const seen = new Set<THREE.Material>();
@@ -175,7 +115,6 @@ function prepareGlowMaterials(root: THREE.Object3D): GlowMaterial[] {
         typeof m.emissiveIntensity === 'number' && m.emissiveIntensity > 0;
       if (!hasMap && !hasStrength) continue;
 
-      // Moderate full-power glow (bloom stays subtle)
       const authored = hasStrength ? m.emissiveIntensity : 0;
       const base = THREE.MathUtils.clamp(
         Math.max(authored, hasMap ? 2.0 : 1.4),
@@ -183,29 +122,16 @@ function prepareGlowMaterials(root: THREE.Object3D): GlowMaterial[] {
         2.4,
       );
 
-      // Kill baked "already on" look in the color map
+      // Cold sockets until each system ignites
       darkenAlbedoGlowRegions(m);
-
-      // Emissive map still drives shape; intensity stays 0 until setPowered
-      if (hasMap && m.emissive.getHex() === 0) {
-        m.emissive.setRGB(1, 1, 1);
-      }
-      m.emissiveIntensity = 0;
-      m.needsUpdate = true;
+      packSystemsEmissiveMap(root, m);
+      attachSystemsShader(m);
 
       glow.push({ material: m, baseIntensity: base });
     }
   });
 
   return glow;
-}
-
-/** Assembly shards must never carry glow — strip emissive completely. */
-function stripShardEmissive(mat: THREE.MeshStandardMaterial): void {
-  mat.emissiveMap = null;
-  mat.emissive.setRGB(0, 0, 0);
-  mat.emissiveIntensity = 0;
-  mat.needsUpdate = true;
 }
 
 /**
@@ -299,7 +225,9 @@ export async function loadSuitModel(
     }
   });
 
-  // Split into spatial shards for fly-in only (clones of materials, no emissive)
+  // Split into spatial shards for fly-in — share prepared materials so
+  // sequenced system glow (reactor / eyes) lights the correct UV islands
+  // as soon as each body region locks (not only after showFinal).
   const allShards: MeshShard[] = [];
   for (const mesh of sourceMeshes) {
     const shards = splitMeshIntoShards(mesh, { x: 3, y: 7, z: 3 });
@@ -330,18 +258,7 @@ export async function loadSuitModel(
     const wave = waveByShard.get(shard) ?? 'torso';
     const id = `shard-${i}-${wave}`;
 
-    // Clone material so shards never share glow state with the final mesh
-    const srcMat = Array.isArray(shard.mesh.material)
-      ? shard.mesh.material[0]
-      : shard.mesh.material;
-    if (srcMat) {
-      const cloned = (srcMat as THREE.Material).clone() as THREE.MeshStandardMaterial;
-      if ('emissive' in cloned) {
-        stripShardEmissive(cloned);
-      }
-      shard.mesh.material = cloned;
-    }
-
+    // Keep shared systems material (packed emissive + shader uniforms)
     const restPosition = shard.restPosition.clone();
     const restRotation = shard.restRotation.clone();
     const restScale = shard.restScale.clone();

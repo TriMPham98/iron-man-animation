@@ -1,6 +1,5 @@
 import gsap from 'gsap';
 import * as THREE from 'three';
-import { setSystemsPower, type SceneLights } from '../scene/createLights';
 import type { Suit } from '../suit/Suit';
 import { WAVE_ORDER, WAVE_STATUS } from '../suit/createPieces';
 
@@ -19,8 +18,8 @@ export interface AssemblyController {
 }
 
 /**
- * Mark III bottom→top timing — slowed for a more mechanical, deliberate suit-up.
- * Total sequence ≈ 18–20s (was ~12s).
+ * Mark III bottom→top timing — deliberate suit-up with a slower helmet
+ * close (movie faceplate beat) and sequenced systems ignition.
  */
 const WAVE_START: Record<string, number> = {
   boots: 0.45,
@@ -28,30 +27,34 @@ const WAVE_START: Record<string, number> = {
   thighs: 3.1,
   hips: 4.5,
   torso: 5.8,
-  shoulders: 7.6,
-  arms: 9.1,
-  gauntlets: 10.8,
-  helmet: 12.6,
-  power: 14.4,
+  shoulders: 8.2,
+  arms: 9.8,
+  gauntlets: 11.5,
+  // Extra pause before the helmet — faceplate is the hero beat
+  helmet: 13.6,
+  power: 18.2,
 };
 
-/** Longer plate travel = heavier, more mechanical feel */
+/** Default plate travel */
 const PIECE_DURATION = 1.15;
+/** Helmet / faceplate — heavier, more movie-like hydraulic close */
+const HELMET_PIECE_DURATION = 1.95;
 
 export function createAssemblyTimeline(
   suit: Suit,
   camera: THREE.PerspectiveCamera,
-  lights: SceneLights,
   lookTarget: THREE.Vector3,
   callbacks: TimelineCallbacks = {},
 ): AssemblyController {
   let tl: gsap.core.Timeline | null = null;
   let playing = false;
 
-  /** Wider spacing between plate locks for clank readability */
-  const staggerFor = (count: number) => {
+  const staggerFor = (count: number, helmet = false) => {
     if (count <= 1) return 0;
-    // Aim ~1.1–1.4s of stagger window per wave, clamp per-piece delay
+    if (helmet) {
+      // Wider gaps so each head plate reads as a separate clamp
+      return Math.min(0.28, Math.max(0.08, 1.6 / count));
+    }
     return Math.min(0.2, Math.max(0.045, 1.25 / count));
   };
 
@@ -64,7 +67,10 @@ export function createAssemblyTimeline(
     lz: lookTarget.z,
   };
 
-  const powerProxy = { v: 0 };
+  // Independent system ramps
+  const reactorProxy = { v: 0 };
+  const eyesProxy = { v: 0 };
+  const repulsorsProxy = { v: 0 };
 
   const applyCamera = () => {
     camera.position.set(cameraProxy.x, cameraProxy.y, cameraProxy.z);
@@ -72,10 +78,20 @@ export function createAssemblyTimeline(
     camera.lookAt(lookTarget);
   };
 
+  /** Suit emissive only — scene lights stay constant. */
+  const syncSystems = () => {
+    suit.setSystemsPower({
+      reactor: reactorProxy.v,
+      eyes: eyesProxy.v,
+      repulsors: repulsorsProxy.v,
+    });
+  };
+
   const build = (): gsap.core.Timeline => {
     suit.resetToStart();
-    powerProxy.v = 0;
-    setSystemsPower(lights, 0);
+    reactorProxy.v = 0;
+    eyesProxy.v = 0;
+    repulsorsProxy.v = 0;
 
     // Opening camera — closer for detail
     cameraProxy.x = 1.85;
@@ -102,9 +118,15 @@ export function createAssemblyTimeline(
       callbacks.onStatus?.('ASSEMBLY SEQUENCE INITIATED');
     }, undefined, 0);
 
+    /** When each wave's last plate finishes locking */
+    const waveLockEnd: Partial<Record<string, number>> = {};
+
     for (const wave of WAVE_ORDER) {
       const pieces = suit.piecesInWave(wave);
       const waveStart = WAVE_START[wave] ?? 0;
+      const isHelmet = wave === 'helmet';
+      const duration = isHelmet ? HELMET_PIECE_DURATION : PIECE_DURATION;
+      const stagger = staggerFor(pieces.length, isHelmet);
 
       timeline.call(
         () => {
@@ -115,15 +137,18 @@ export function createAssemblyTimeline(
         waveStart,
       );
 
-      const stagger = staggerFor(pieces.length);
+      let lastEnd = waveStart;
 
       pieces.forEach((piece, i) => {
         const t = waveStart + i * stagger;
         const mesh = piece.mesh;
+        lastEnd = t + duration;
 
         timeline.set(mesh, { visible: true }, t);
 
-        // Slightly heavier eases — less snappy, more hydraulic
+        const ease = isHelmet ? 'power3.inOut' : 'power2.inOut';
+        const scaleEase = isHelmet ? 'power2.out' : 'back.out(1.25)';
+
         timeline.fromTo(
           mesh.position,
           {
@@ -135,8 +160,8 @@ export function createAssemblyTimeline(
             x: piece.restPosition.x,
             y: piece.restPosition.y,
             z: piece.restPosition.z,
-            duration: PIECE_DURATION,
-            ease: 'power2.inOut',
+            duration,
+            ease,
           },
           t,
         );
@@ -152,8 +177,8 @@ export function createAssemblyTimeline(
             x: piece.restRotation.x,
             y: piece.restRotation.y,
             z: piece.restRotation.z,
-            duration: PIECE_DURATION,
-            ease: 'power2.inOut',
+            duration,
+            ease,
           },
           t,
         );
@@ -169,30 +194,116 @@ export function createAssemblyTimeline(
             x: piece.restScale.x,
             y: piece.restScale.y,
             z: piece.restScale.z,
-            duration: PIECE_DURATION * 0.95,
-            ease: 'back.out(1.25)',
+            duration: duration * (isHelmet ? 0.98 : 0.95),
+            ease: scaleEase,
           },
           t,
         );
 
-        // Lock punch — slightly slower, more weight
+        // Lock punch — softer / longer on helmet
         timeline.to(
           mesh.scale,
           {
-            x: piece.restScale.x * 1.05,
-            y: piece.restScale.y * 1.05,
-            z: piece.restScale.z * 1.05,
-            duration: 0.1,
+            x: piece.restScale.x * (isHelmet ? 1.03 : 1.05),
+            y: piece.restScale.y * (isHelmet ? 1.03 : 1.05),
+            z: piece.restScale.z * (isHelmet ? 1.03 : 1.05),
+            duration: isHelmet ? 0.14 : 0.1,
             yoyo: true,
             repeat: 1,
             ease: 'power1.inOut',
           },
-          t + PIECE_DURATION * 0.94,
+          t + duration * 0.94,
         );
       });
+
+      waveLockEnd[wave] = lastEnd;
     }
 
-    // Camera path — closer orbit / hero shots (synced to slower waves)
+    // ── Sequenced systems ──────────────────────────────────────────
+    // Arc reactor after torso + shoulders are fully locked (chest reads complete)
+    // — same “wait for the plates” idea as the faceplate/eyes beat.
+    const chestLocked = Math.max(
+      waveLockEnd.torso ?? 7.2,
+      waveLockEnd.shoulders ?? 9.5,
+    );
+    const reactorT = chestLocked + 0.45;
+    timeline.call(
+      () => {
+        callbacks.onStatus?.('ARC REACTOR IGNITION…');
+      },
+      undefined,
+      reactorT,
+    );
+    timeline.to(
+      reactorProxy,
+      {
+        v: 1,
+        duration: 1.45,
+        ease: 'power2.inOut',
+        onUpdate: syncSystems,
+      },
+      reactorT,
+    );
+    timeline.call(
+      () => {
+        callbacks.onStatus?.('ARC REACTOR ONLINE');
+      },
+      undefined,
+      reactorT + 1.3,
+    );
+
+    // Hand & foot repulsors after gauntlets clamp
+    const handsT = (waveLockEnd.gauntlets ?? 12.5) + 0.1;
+    timeline.to(
+      repulsorsProxy,
+      {
+        v: 1,
+        duration: 0.85,
+        ease: 'power2.out',
+        onUpdate: syncSystems,
+      },
+      handsT,
+    );
+
+    // Face-mask eyes after helmet seals (slower, dramatic)
+    const eyesT = (waveLockEnd.helmet ?? 16.0) + 0.28;
+    timeline.call(
+      () => {
+        callbacks.onStatus?.('HELMET SEALED — HUD ONLINE…');
+      },
+      undefined,
+      eyesT,
+    );
+    timeline.to(
+      eyesProxy,
+      {
+        v: 1,
+        duration: 1.55,
+        ease: 'power2.inOut',
+        onUpdate: syncSystems,
+      },
+      eyesT,
+    );
+
+    // Seamless mesh once head systems are lit
+    timeline.call(
+      () => {
+        suit.showFinal();
+        callbacks.onStatus?.('ARMOR LOCKED');
+      },
+      undefined,
+      eyesT + 1.2,
+    );
+
+    timeline.call(
+      () => {
+        callbacks.onStatus?.('SYSTEMS ONLINE');
+      },
+      undefined,
+      eyesT + 1.9,
+    );
+
+    // ── Camera path ────────────────────────────────────────────────
     timeline.to(
       cameraProxy,
       {
@@ -207,70 +318,39 @@ export function createAssemblyTimeline(
       0.3,
     );
 
+    // Favor chest as shoulders lock and reactor ignites
     timeline.to(
       cameraProxy,
       {
-        x: -0.55,
-        y: 1.2,
-        z: 2.65,
-        ly: 1.1,
-        duration: 3.6,
-        ease: 'power2.inOut',
-        onUpdate: applyCamera,
-      },
-      5.2,
-    );
-
-    // Bust / reactor hero shot — close, but pulled back enough to keep the head in frame
-    timeline.to(
-      cameraProxy,
-      {
-        x: 0.32,
-        y: 1.38,
-        z: 2.35,
-        ly: 1.38,
+        x: 0.45,
+        y: 1.25,
+        z: 2.55,
+        ly: 1.22,
         lx: 0,
-        duration: 2.8,
+        duration: 2.6,
         ease: 'power2.inOut',
         onUpdate: applyCamera,
       },
-      11.8,
+      reactorT - 1.0,
     );
 
-    // Swap to seamless mesh before power-up
-    timeline.call(
-      () => {
-        suit.showFinal();
-        callbacks.onStatus?.('ARMOR LOCKED');
-      },
-      undefined,
-      14.0,
-    );
-
-    // Ignite arc reactor, face-mask eyes, hand & foot repulsors
+    // Slow push-in on the helmet / faceplate beat
     timeline.to(
-      powerProxy,
+      cameraProxy,
       {
-        v: 1,
-        duration: 2.0,
-        ease: 'power2.out',
-        onUpdate: () => {
-          suit.setPowered(powerProxy.v);
-          setSystemsPower(lights, powerProxy.v);
-        },
+        x: 0.22,
+        y: 1.48,
+        z: 2.15,
+        ly: 1.55,
+        lx: 0,
+        duration: 3.4,
+        ease: 'power3.inOut',
+        onUpdate: applyCamera,
       },
-      14.4,
+      (WAVE_START.helmet ?? 13.6) - 0.4,
     );
 
-    timeline.call(
-      () => {
-        callbacks.onStatus?.('ARC REACTOR STABLE');
-      },
-      undefined,
-      15.6,
-    );
-
-    // Pull back to hero presentation — still closer than before
+    // Hold on the eyes a moment, then pull back to hero
     timeline.to(
       cameraProxy,
       {
@@ -280,19 +360,11 @@ export function createAssemblyTimeline(
         lx: 0,
         ly: 0.95,
         lz: 0,
-        duration: 3.0,
+        duration: 3.2,
         ease: 'power3.inOut',
         onUpdate: applyCamera,
       },
-      16.2,
-    );
-
-    timeline.call(
-      () => {
-        callbacks.onStatus?.('SYSTEMS ONLINE');
-      },
-      undefined,
-      18.4,
+      eyesT + 1.4,
     );
 
     return timeline;
