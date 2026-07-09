@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mark Suit — Assembly Sequence</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene-canvas"></canvas>
+
+      <div id="vignette" aria-hidden="true"></div>
+      <div id="scanlines" aria-hidden="true"></div>
+
+      <div id="loading" class="panel">
+        <div class="loading-inner">
+          <div class="loading-mark">◆</div>
+          <p class="loading-label">INITIALIZING SUIT SYSTEMS…</p>
+          <div class="loading-bar">
+            <div id="loading-fill" class="loading-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <header id="hud-top" class="hud hud-top hidden">
+        <span class="hud-brand">MARK SUIT // PROTO</span>
+        <span id="hud-clock" class="hud-clock">00:00.00</span>
+      </header>
+
+      <div id="hud-center" class="hud-center hidden">
+        <h1 id="title" class="title">ASSEMBLY SEQUENCE</h1>
+        <p id="status" class="status">STAND BY</p>
+      </div>
+
+      <footer id="hud-bottom" class="hud hud-bottom hidden">
+        <div class="hud-left">
+          <span id="integrity">INTEGRITY — — —</span>
+          <span id="hint" class="hint">Drag to orbit · R to replay</span>
+        </div>
+        <button id="replay-btn" type="button" class="replay-btn" disabled>
+          REPLAY
+        </button>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
