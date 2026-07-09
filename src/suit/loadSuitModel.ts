@@ -32,6 +32,10 @@ function assignWave(yNorm: number): PieceWave {
   return WAVE_BY_HEIGHT[idx];
 }
 
+/**
+ * Keep the GLB's original colors / maps / metalness / roughness.
+ * Only nudge env reflection strength so the current lighting can show shine.
+ */
 function enhanceMaterials(root: THREE.Object3D): void {
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
@@ -40,22 +44,14 @@ function enhanceMaterials(root: THREE.Object3D): void {
     for (const mat of mats) {
       if (!mat) continue;
       const m = mat as THREE.MeshStandardMaterial;
-      if ('metalness' in m) {
-        // Dark armor textures + high metalness crush to black. Prefer readable
-        // painted metal: some metal, more diffuse, brighter albedo multiply.
-        m.metalness = 0.42;
-        m.roughness = 0.45;
-        m.envMapIntensity = 2.4;
-        // HDR-style color boost (values > 1 are valid and brighten the map)
-        if (m.color) {
-          m.color.setRGB(1.55, 1.55, 1.55);
-        }
-        if ('emissiveIntensity' in m) {
-          m.emissiveIntensity = 0;
-          m.emissive = new THREE.Color(0x000000);
-        }
-        m.needsUpdate = true;
+      if (!('metalness' in m)) continue;
+
+      // Preserve authored color & texture; do not recolor or rebuild materials
+      // Slight env boost so studio lights / env map read as gloss on metal
+      if (typeof m.envMapIntensity === 'number') {
+        m.envMapIntensity = Math.max(m.envMapIntensity, 1.35);
       }
+      m.needsUpdate = true;
     }
   });
 }

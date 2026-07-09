@@ -78,7 +78,7 @@ export function createPostProcessing(
 
   // Restore exposure used by OutputPass via renderer state it reads
   renderer.toneMapping = previousToneMapping;
-  renderer.toneMappingExposure = Math.max(previousExposure, 2.15);
+  renderer.toneMappingExposure = Math.max(previousExposure, 1.7);
 
   return {
     composer,

@@ -27,23 +27,26 @@ async function boot(): Promise<void> {
   const lights = createLights();
   scene.add(lights.group);
 
-  // Bright cool studio environment for metal reflections
+  // Studio env with warm keys so gold metal keeps color in reflections
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envScene = new THREE.Scene();
-  envScene.background = new THREE.Color(0x1a2438);
-  envScene.add(new THREE.HemisphereLight(0xd0e8ff, 0x404050, 3.5));
-  const envKey = new THREE.DirectionalLight(0xffffff, 4.5);
-  envKey.position.set(2.5, 6, 4);
+  envScene.background = new THREE.Color(0x0a0e18);
+  envScene.add(new THREE.HemisphereLight(0xc0d4f0, 0x1a1018, 1.8));
+  const envKey = new THREE.DirectionalLight(0xfff2dc, 4.0);
+  envKey.position.set(3, 8, 2);
   envScene.add(envKey);
-  const envRim = new THREE.DirectionalLight(0x88e8ff, 3.0);
-  envRim.position.set(-4, 3, -2.5);
+  const envKey2 = new THREE.DirectionalLight(0xffe8c8, 2.4);
+  envKey2.position.set(-2, 4, 5);
+  envScene.add(envKey2);
+  const envRim = new THREE.DirectionalLight(0x66d0e8, 2.2);
+  envRim.position.set(-5, 3, -3);
   envScene.add(envRim);
-  const envFill = new THREE.DirectionalLight(0xffffff, 2.5);
-  envFill.position.set(0, 2, 5);
-  envScene.add(envFill);
+  const envHot = new THREE.DirectionalLight(0xfff0e0, 2.8);
+  envHot.position.set(0, 2, 6);
+  envScene.add(envHot);
   const envMap = pmrem.fromScene(envScene, 0.02).texture;
   scene.environment = envMap;
-  scene.environmentIntensity = 1.35;
+  scene.environmentIntensity = 1.15;
   pmrem.dispose();
 
   ui.setLoadingProgress(0.15);

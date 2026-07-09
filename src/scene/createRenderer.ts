@@ -8,12 +8,14 @@ export function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
     powerPreference: 'high-performance',
   });
 
-  renderer.setClearColor(0x0a0e18, 1);
+  // Match page shell so WebGL never flashes white on first frame
+  renderer.setClearColor(0x050508, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // Tone mapping handled in OutputPass when composer is active; keep a
   // bright baseline for the no-bloom fallback path.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 2.15;
+  // High enough to read dark metal; low enough that gold doesn't clip white
+  renderer.toneMappingExposure = 1.7;
   renderer.shadowMap.enabled = false;
 
   const setSize = () => {

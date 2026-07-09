@@ -13,50 +13,46 @@ export interface SceneLights {
 }
 
 /**
- * Bright cool hangar lighting — armor must read clearly, not crush to black.
+ * Readable dark metal with warm keys so gold specular stays gold (not pure white).
  */
 export function createLights(): SceneLights {
   const group = new THREE.Group();
   group.name = 'lights';
 
-  // Strong cool ambient — lifts black metal textures out of the void
-  const ambient = new THREE.AmbientLight(0x6a7a98, 2.4);
+  const ambient = new THREE.AmbientLight(0x4a5570, 1.25);
   group.add(ambient);
 
-  const hemi = new THREE.HemisphereLight(0xb0d0ff, 0x3a2030, 2.8);
+  const hemi = new THREE.HemisphereLight(0xa8c4e8, 0x2a1820, 1.55);
   group.add(hemi);
 
-  // Main key — bright cool daylight
-  const key = new THREE.DirectionalLight(0xffffff, 5.5);
-  key.position.set(3.2, 7, 5);
+  // Warm-white key — gold F0 * warm light keeps yellow specular
+  const key = new THREE.DirectionalLight(0xfff0dd, 3.6);
+  key.position.set(4, 7.5, 3.5);
   group.add(key);
 
-  // Cyan rim
-  const rim = new THREE.DirectionalLight(0x88e0ff, 3.2);
-  rim.position.set(-5, 3.5, -3.5);
+  // Cool cyan rim for red plate edges (lower so it doesn't bleach gold)
+  const rim = new THREE.DirectionalLight(0x7ad4f0, 2.2);
+  rim.position.set(-5, 3.8, -3.2);
   group.add(rim);
 
-  // Soft violet fill
-  const fill = new THREE.DirectionalLight(0xc0b0ff, 2.0);
-  fill.position.set(-3, 2, 4);
+  const fill = new THREE.DirectionalLight(0xb0a0e0, 1.15);
+  fill.position.set(-2.8, 1.8, 3.5);
   group.add(fill);
 
-  // Front plate — primary readability light
-  const front = new THREE.DirectionalLight(0xffffff, 4.5);
-  front.position.set(0, 2.5, 6);
+  // Soft warm front — readable face/chest without white clipping
+  const front = new THREE.DirectionalLight(0xfff5ea, 2.6);
+  front.position.set(0.4, 2.8, 5.5);
   group.add(front);
 
-  // Second front-side light
-  const frontSide = new THREE.DirectionalLight(0xe8f4ff, 2.8);
-  frontSide.position.set(2.5, 1.5, 4);
+  const frontSide = new THREE.DirectionalLight(0xffe8d0, 1.6);
+  frontSide.position.set(3.2, 2, 4.5);
   group.add(frontSide);
 
-  // Floor bounce
-  const kick = new THREE.DirectionalLight(0x80e8ff, 1.4);
-  kick.position.set(0, -2, 3);
+  const kick = new THREE.DirectionalLight(0x5ec8d8, 0.7);
+  kick.position.set(0.2, -1.8, 2.8);
   group.add(kick);
 
-  const reactor = new THREE.PointLight(0x9ef0ff, 0, 12, 1.4);
+  const reactor = new THREE.PointLight(0x9ef0ff, 0, 11, 1.5);
   reactor.position.set(0, 1.25, 0.5);
   group.add(reactor);
 
