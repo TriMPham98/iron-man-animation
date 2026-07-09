@@ -18,18 +18,18 @@ export interface AssemblyController {
   rebuild: () => void;
 }
 
-/** Inside-out timing: core → limbs → extremities → helmet → power */
+/** Mark III bottom→top timing: legs → torso → arms → helmet → power */
 const WAVE_START: Record<string, number> = {
-  torso: 0.3,
-  hips: 1.2,
-  shoulders: 2.1,
-  thighs: 3.0,
-  arms: 4.0,
-  calves: 5.0,
-  gauntlets: 6.0,
-  boots: 6.9,
-  helmet: 7.8,
-  power: 8.9,
+  boots: 0.3,
+  calves: 1.1,
+  thighs: 1.9,
+  hips: 2.7,
+  torso: 3.5,
+  shoulders: 4.6,
+  arms: 5.5,
+  gauntlets: 6.5,
+  helmet: 7.6,
+  power: 8.8,
 };
 
 const PIECE_DURATION = 0.7;

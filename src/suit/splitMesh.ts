@@ -178,13 +178,32 @@ export function splitMeshIntoShards(
   return shards;
 }
 
-/** Proximal-first within a limb band: closer to body center, then higher. */
+/**
+ * Global hybrid pre-sort (spine + height). Final attach order is still
+ * computed per-wave in assemblyOrder.sortPiecesInWave.
+ */
 export function sortShardsInsideOut(shards: MeshShard[]): MeshShard[] {
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let maxR = 0;
+  for (const s of shards) {
+    minY = Math.min(minY, s.centroid.y);
+    maxY = Math.max(maxY, s.centroid.y);
+    maxR = Math.max(maxR, Math.hypot(s.centroid.x, s.centroid.z));
+  }
+  const yRange = Math.max(1e-4, maxY - minY);
+  maxR = Math.max(maxR, 1e-4);
+
+  const WR = 0.65;
+  const WY = 0.35;
+
   return [...shards].sort((a, b) => {
-    const ra = Math.hypot(a.centroid.x, a.centroid.z);
-    const rb = Math.hypot(b.centroid.x, b.centroid.z);
-    if (Math.abs(ra - rb) > 0.02) return ra - rb;
-    // Prefer proximal (higher on legs/arms chain handled by wave); within band, higher first
-    return b.centroid.y - a.centroid.y;
+    const score = (s: MeshShard) => {
+      const rNorm = Math.hypot(s.centroid.x, s.centroid.z) / maxR;
+      // Soft bottom→top globally as secondary (limbs refined per-wave later)
+      const yNorm = (s.centroid.y - minY) / yRange;
+      return WR * rNorm + WY * yNorm;
+    };
+    return score(a) - score(b);
   });
 }

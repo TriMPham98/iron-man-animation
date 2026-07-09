@@ -918,31 +918,32 @@ export function createArmorPieces(mats: SuitMaterials): {
 }
 
 /**
- * Inside-out assembly: core first, then proximal limbs, extremities last.
- * Hands only after arms; boots only after legs have structure to attach to.
+ * Mark III–style suit-up (Iron Man 2008): workshop clamp order, bottom → top.
+ * Boots/legs first, then hips → torso → shoulders → arms → gauntlets → helmet,
+ * systems/power last (faceplate slam + reactor online beat).
  */
 export const WAVE_ORDER: PieceWave[] = [
-  'torso',
-  'hips',
-  'shoulders',
-  'thighs',
-  'arms',
-  'calves',
-  'gauntlets',
   'boots',
+  'calves',
+  'thighs',
+  'hips',
+  'torso',
+  'shoulders',
+  'arms',
+  'gauntlets',
   'helmet',
   'power',
 ];
 
 export const WAVE_STATUS: Record<PieceWave, string> = {
-  torso: 'CORE PLATES ALIGNING…',
+  boots: 'DEPLOYING FOOT UNITS…',
+  calves: 'LOCKING LOWER LEG PLATES…',
+  thighs: 'SECURING FEMORAL ARMOR…',
   hips: 'WAIST MODULE ENGAGED…',
+  torso: 'CHEST PLATES ALIGNING…',
   shoulders: 'SHOULDER PODS ATTACHING…',
-  thighs: 'FEMORAL ARMOR LOCKING…',
   arms: 'ARM SERVOS CALIBRATING…',
-  calves: 'LOWER LEG PLATES SECURING…',
-  gauntlets: 'GAUNTLETS DOCKING…',
-  boots: 'FOOT UNITS DEPLOYING…',
+  gauntlets: 'GAUNTLETS CLAMPING…',
   helmet: 'HELMET SEALING…',
-  power: 'ARC CORE IGNITION…',
+  power: 'SYSTEMS ONLINE — ARC STABLE…',
 };

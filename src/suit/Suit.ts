@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { sortPiecesInWave } from './assemblyOrder';
 import type { ArmorPiece, PieceWave } from './createPieces';
 import { loadSuitModel } from './loadSuitModel';
 
@@ -26,15 +27,12 @@ export class Suit {
   }
 
   piecesInWave(wave: PieceWave): ArmorPiece[] {
-    const list = this.pieces.filter((p) => p.wave === wave);
-    // Within a wave: attach from body outward, proximal to distal
-    return list.sort((a, b) => {
-      const ra = Math.hypot(a.restPosition.x, a.restPosition.z);
-      const rb = Math.hypot(b.restPosition.x, b.restPosition.z);
-      if (Math.abs(ra - rb) > 0.015) return ra - rb;
-      // Upper segments before lower (arms/legs chain)
-      return b.restPosition.y - a.restPosition.y;
-    });
+    // Mark III waves are bottom→top; within each wave still hybrid
+    // (spine + proximal→distal) so arms grow shoulder→hand, legs hip→boot.
+    return sortPiecesInWave(
+      this.pieces.filter((p) => p.wave === wave),
+      wave,
+    );
   }
 
   /** Fly-in shards visible; seamless mesh hidden. */

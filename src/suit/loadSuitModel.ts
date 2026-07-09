@@ -12,9 +12,9 @@ import type { ArmorPiece, PieceWave } from './createPieces';
 const MODEL_URL = '/models/ironman.glb';
 
 /**
- * Map a shard to a body region for inside-out assembly.
- * Uses height (y) + radial distance from spine so extremities (hands, feet)
- * only fire after their parent limb band exists.
+ * Map a shard to a body region for Mark III–style waves.
+ * Uses height (y) + radial distance from spine so hands classify as gauntlets
+ * (after arms) and feet as boots (early, with the legs).
  */
 function classifyWave(
   c: THREE.Vector3,
