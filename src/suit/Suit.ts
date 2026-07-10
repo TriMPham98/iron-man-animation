@@ -1,5 +1,9 @@
 import * as THREE from 'three';
-import { sortPiecesInWave } from './assemblyOrder';
+import {
+  planWaveOrder,
+  selectFoundation,
+  type WaveOrderResult,
+} from './assemblyOrder';
 import type { ArmorPiece, PieceWave } from './createPieces';
 import { loadSuitModel, type GlowMaterial } from './loadSuitModel';
 import {
@@ -35,14 +39,22 @@ export class Suit {
 
   /**
    * Pieces in a wave, ordered to attach onto existing structure.
-   * Pass `foundation` (earlier waves) so extremities seed from the stump
-   * (e.g. gauntlets grow from the arm, not from floating fingertips).
+   * Pass `built` (all earlier waves) — foundation stumps are selected
+   * per-wave so arms seed from shoulders, helmet from collar, etc.
    */
   piecesInWave(
     wave: PieceWave,
-    foundation: ArmorPiece[] = [],
+    built: ArmorPiece[] = [],
   ): ArmorPiece[] {
-    return sortPiecesInWave(
+    return this.planWave(wave, built).ordered;
+  }
+
+  /**
+   * Ordered pieces + seed count for lock-gated launch scheduling.
+   */
+  planWave(wave: PieceWave, built: ArmorPiece[] = []): WaveOrderResult {
+    const foundation = selectFoundation(wave, built);
+    return planWaveOrder(
       this.pieces.filter((p) => p.wave === wave),
       wave,
       foundation,

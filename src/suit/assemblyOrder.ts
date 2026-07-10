@@ -12,6 +12,25 @@ export interface OrderPoint {
 }
 
 /**
+ * Which already-built waves a new wave may clamp onto.
+ *
+ * Critical: arms seed only from shoulders (never thighs — same height band),
+ * and helmet seeds from collar (shoulders + upper torso), never gauntlets.
+ */
+export const FOUNDATION_WAVES: Record<PieceWave, PieceWave[]> = {
+  boots: [],
+  calves: ['boots'],
+  thighs: ['calves', 'boots'],
+  hips: ['thighs', 'calves'],
+  torso: ['hips', 'thighs'],
+  shoulders: ['torso', 'hips'],
+  arms: ['shoulders'],
+  gauntlets: ['arms'],
+  helmet: ['shoulders', 'torso'],
+  power: ['torso', 'shoulders'],
+};
+
+/**
  * Lower body + core grow bottom → top (plant feet, stack plates upward).
  * Upper limbs grow proximal → distal (shoulder → hand).
  */
@@ -40,16 +59,7 @@ function isLimbWave(wave: PieceWave): boolean {
 
 /** Extremities that must clamp onto a prior wave’s stump (wrist, shoulder…). */
 function needsFoundation(wave: PieceWave): boolean {
-  return (
-    wave === 'shoulders' ||
-    wave === 'arms' ||
-    wave === 'gauntlets' ||
-    wave === 'calves' ||
-    wave === 'thighs' ||
-    wave === 'hips' ||
-    wave === 'torso' ||
-    wave === 'helmet'
-  );
+  return FOUNDATION_WAVES[wave].length > 0;
 }
 
 function clamp01(v: number): number {
@@ -112,7 +122,7 @@ export function boundsFromPoints(points: OrderPoint[]): {
   return { minY, maxY, maxRadial: Math.max(maxRadial, 1e-4) };
 }
 
-function distSq(
+export function distSq(
   a: { x: number; y: number; z: number },
   b: { x: number; y: number; z: number },
 ): number {
@@ -122,7 +132,7 @@ function distSq(
   return dx * dx + dy * dy + dz * dz;
 }
 
-function minDistSqToSet(
+export function minDistSqToSet(
   point: { x: number; y: number; z: number },
   set: OrderPoint[],
 ): number {
@@ -132,6 +142,27 @@ function minDistSqToSet(
     if (d < minD) minD = d;
   }
   return minD;
+}
+
+export function restPoint(p: ArmorPiece): OrderPoint {
+  return {
+    x: p.restPosition.x,
+    y: p.restPosition.y,
+    z: p.restPosition.z,
+  };
+}
+
+/**
+ * Filter already-built pieces down to the structural stumps this wave
+ * is allowed to grow from.
+ */
+export function selectFoundation(
+  wave: PieceWave,
+  built: ArmorPiece[],
+): ArmorPiece[] {
+  const allowed = new Set(FOUNDATION_WAVES[wave]);
+  if (allowed.size === 0) return [];
+  return built.filter((p) => allowed.has(p.wave));
 }
 
 /**
@@ -149,11 +180,7 @@ function pickSeeds(
 ): ArmorPiece[] {
   const scored = pieces
     .map((p) => {
-      const point = {
-        x: p.restPosition.x,
-        y: p.restPosition.y,
-        z: p.restPosition.z,
-      };
+      const point = restPoint(p);
       const foundationDist =
         foundation.length > 0 ? minDistSqToSet(point, foundation) : 0;
       const axisScore = assemblyScore(point, wave, bounds);
@@ -192,6 +219,12 @@ function pickSeeds(
   return seeds;
 }
 
+export interface WaveOrderResult {
+  ordered: ArmorPiece[];
+  /** Number of structural seeds at the front of `ordered` (1 or 2). */
+  seedCount: number;
+}
+
 /**
  * Sort armor pieces so each plate attaches onto already-placed structure.
  *
@@ -208,25 +241,28 @@ export function sortPiecesInWave(
   wave: PieceWave,
   foundation: OrderPoint[] | ArmorPiece[] = [],
 ): ArmorPiece[] {
-  if (pieces.length <= 1) return pieces;
+  return planWaveOrder(pieces, wave, foundation).ordered;
+}
+
+/**
+ * Same as sortPiecesInWave but also reports how many leading seeds were
+ * chosen — used by the timeline so opposite limbs can launch in parallel
+ * without waiting on each other.
+ */
+export function planWaveOrder(
+  pieces: ArmorPiece[],
+  wave: PieceWave,
+  foundation: OrderPoint[] | ArmorPiece[] = [],
+): WaveOrderResult {
+  if (pieces.length <= 1) {
+    return { ordered: pieces.slice(), seedCount: pieces.length };
+  }
 
   const foundationPts: OrderPoint[] = foundation.map((f) =>
-    'restPosition' in f
-      ? {
-          x: f.restPosition.x,
-          y: f.restPosition.y,
-          z: f.restPosition.z,
-        }
-      : f,
+    'restPosition' in f ? restPoint(f as ArmorPiece) : (f as OrderPoint),
   );
 
-  const bounds = boundsFromPoints(
-    pieces.map((p) => ({
-      x: p.restPosition.x,
-      y: p.restPosition.y,
-      z: p.restPosition.z,
-    })),
-  );
+  const bounds = boundsFromPoints(pieces.map(restPoint));
 
   const remaining = new Set(pieces);
   const ordered: ArmorPiece[] = [];
@@ -236,16 +272,19 @@ export function sortPiecesInWave(
   const useFoundation =
     foundationPts.length > 0 && needsFoundation(wave);
 
-  for (const seed of pickSeeds(
+  const seeds = pickSeeds(
     pieces,
     wave,
     bounds,
     useFoundation ? foundationPts : [],
-  )) {
+  );
+
+  for (const seed of seeds) {
     if (!remaining.has(seed)) continue;
     ordered.push(seed);
     remaining.delete(seed);
   }
+  const seedCount = ordered.length;
 
   while (remaining.size > 0) {
     let best: ArmorPiece | null = null;
@@ -266,15 +305,7 @@ export function sortPiecesInWave(
         if (fd < minD) minD = fd;
       }
 
-      const tie = assemblyScore(
-        {
-          x: candidate.restPosition.x,
-          y: candidate.restPosition.y,
-          z: candidate.restPosition.z,
-        },
-        wave,
-        bounds,
-      );
+      const tie = assemblyScore(restPoint(candidate), wave, bounds);
 
       const closer = minD < bestDist - 1e-8;
       const sameDist = Math.abs(minD - bestDist) <= 1e-8;
@@ -297,5 +328,93 @@ export function sortPiecesInWave(
     remaining.delete(best);
   }
 
-  return ordered;
+  return { ordered, seedCount };
+}
+
+/**
+ * Schedule launch times so no plate flies before its structural parent
+ * is mostly locked.
+ *
+ * - Seeds attach to the prior-wave foundation (ready at `foundationReady`)
+ * - Opposite-side seeds may launch in parallel (both only need foundation)
+ * - Later pieces wait until the nearest already-scheduled neighbor is
+ *   ~PARENT_READY_FRAC through its travel
+ */
+export function planPieceStartTimes(
+  ordered: ArmorPiece[],
+  seedCount: number,
+  opts: {
+    waveStart: number;
+    duration: number;
+    foundationReady: number;
+    foundationPts: OrderPoint[];
+    minStagger: number;
+    /** Fraction of parent travel that must complete before child launches. */
+    parentReadyFrac?: number;
+    /** Small continuous-motion lead (seconds). */
+    childLead?: number;
+  },
+): number[] {
+  const {
+    waveStart,
+    duration,
+    foundationReady,
+    foundationPts,
+    minStagger,
+    parentReadyFrac = 0.55,
+    childLead = 0.05,
+  } = opts;
+
+  const starts: number[] = [];
+  const n = ordered.length;
+  if (n === 0) return starts;
+
+  for (let i = 0; i < n; i++) {
+    const piece = ordered[i];
+    const pt = restPoint(piece);
+
+    let readyAt = Math.max(waveStart, foundationReady);
+
+    if (i < seedCount) {
+      // Seeds only need the prior-wave stump — launch together (tiny stagger)
+      readyAt = Math.max(waveStart, foundationReady);
+      if (i > 0) {
+        readyAt = Math.max(readyAt, starts[0] + Math.min(minStagger, 0.08));
+      }
+    } else {
+      // Nearest already-scheduled piece in this wave
+      let nearestJ = 0;
+      let nearestD = Infinity;
+      for (let j = 0; j < i; j++) {
+        const d = distSq(pt, restPoint(ordered[j]));
+        if (d < nearestD) {
+          nearestD = d;
+          nearestJ = j;
+        }
+      }
+
+      const foundationD =
+        foundationPts.length > 0
+          ? minDistSqToSet(pt, foundationPts)
+          : Infinity;
+
+      // Prefer foundation if this plate is still closer to prior structure
+      // than to anything placed this wave (second limb / chest flank).
+      if (foundationPts.length > 0 && foundationD <= nearestD * 1.05) {
+        readyAt = Math.max(waveStart, foundationReady);
+      } else {
+        const parentReady =
+          starts[nearestJ] + duration * parentReadyFrac - childLead;
+        readyAt = Math.max(waveStart, foundationReady, parentReady);
+      }
+
+      // Mild floor so we never launch before the previous slot by much
+      const staggerFloor = starts[i - 1] + minStagger * 0.25;
+      readyAt = Math.max(readyAt, staggerFloor);
+    }
+
+    starts.push(readyAt);
+  }
+
+  return starts;
 }

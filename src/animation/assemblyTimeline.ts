@@ -42,8 +42,7 @@ const WAVE_EARLIEST: Record<string, number> = {
 
 /**
  * How early the next wave may begin before the previous wave’s last plate
- * finishes locking. Small overlap keeps the suit-up fluid; large enough
- * foundations still exist before the next region clamps on.
+ * finishes locking. Small overlap keeps the suit-up fluid.
  */
 const WAVE_OVERLAP = 0.28;
 
@@ -223,16 +222,16 @@ export function createAssemblyTimeline(
     /** Actual scheduled start per wave (after foundation gating) */
     const waveStartAt: Partial<Record<string, number>> = {};
     /**
-     * Immediate prior wave only — hands seed from wrists/arms, not from
-     * nearby thighs that hang at the same height.
+     * All plates from completed waves — foundation stumps are selected
+     * per-wave (arms←shoulders only, helmet←collar, never gauntlets).
      */
-    let foundation: typeof suit.pieces = [];
+    let built: typeof suit.pieces = [];
 
     let prevLockEnd = 0;
     let prevWave: string | null = null;
 
     for (const wave of WAVE_ORDER) {
-      const pieces = suit.piecesInWave(wave, foundation);
+      const { ordered: pieces } = suit.planWave(wave, built);
       // Hands fold into the arm wave; skip empty bands (e.g. gauntlets).
       if (pieces.length === 0 && wave !== 'power') {
         waveLockEnd[wave] = prevLockEnd;
@@ -421,10 +420,9 @@ export function createAssemblyTimeline(
       waveLockEnd[wave] = lastEnd;
       prevLockEnd = lastEnd;
       prevWave = wave;
-      // Next wave grows from this stump (arms → hands, torso → shoulders…)
-      // Keep last non-empty wave if a band has no shards.
+      // Accumulate built structure for later foundation selection
       if (pieces.length > 0) {
-        foundation = pieces;
+        built = built.concat(pieces);
         // Shake when the last plate of this wave clamps home
         addWaveShake(timeline, lastEnd - 0.02, wave);
       }

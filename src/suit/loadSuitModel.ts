@@ -44,9 +44,14 @@ function classifyWave(
   const OUTER_LIMB_RNORM = 0.7;
   // Moderate lateral above the hips — upper arm / elbow
   const ARM_RNORM = 0.38;
+  // Skull is narrower than pauldrons — keep crown/face out of shoulder wave
+  const HEAD_RNORM = 0.42;
 
-  // Head
-  if (yNorm > 0.88) return 'helmet';
+  // ── Head first (before shoulder band steals crown / faceplate shards) ──
+  // Previous threshold (0.88) left the gold crown in "shoulders", so it flew
+  // in mid-shoulder-wave with nothing under it.
+  if (yNorm > 0.82 && rNorm <= HEAD_RNORM) return 'helmet';
+  if (yNorm > 0.86) return 'helmet';
 
   // Feet
   if (yNorm < 0.1) return 'boots';
@@ -58,6 +63,7 @@ function classifyWave(
   // Hands hang at hip/thigh height but far outside the body; body thigh
   // plates top out ~0.54 rNorm on this mesh.
   if (rNorm >= OUTER_LIMB_RNORM) {
+    if (yNorm >= 0.84) return 'helmet'; // stray high outer = helmet flare
     if (yNorm < 0.78) return 'arms'; // forearm + hand (distal end of arm wave)
     return 'shoulders';
   }
@@ -78,14 +84,14 @@ function classifyWave(
   // Soft core strip before arms dominate
   if (yNorm < 0.66 && rNorm < ARM_RNORM) return 'torso';
 
-  // Upper arms
-  if (yNorm >= 0.62 && yNorm < 0.82 && rNorm > ARM_RNORM) return 'arms';
+  // Upper arms (below true shoulder / collar band)
+  if (yNorm >= 0.62 && yNorm < 0.78 && rNorm > ARM_RNORM) return 'arms';
 
-  // Shoulders
-  if (yNorm >= 0.72 && yNorm < 0.9 && rNorm > 0.28) return 'shoulders';
+  // Shoulders / pauldrons — lateral collar only (not skull)
+  if (yNorm >= 0.72 && yNorm <= 0.86 && rNorm > 0.3) return 'shoulders';
 
-  // Chest / back / abs
-  if (yNorm >= 0.55 && yNorm < 0.88) return 'torso';
+  // Chest / back / abs / collar core
+  if (yNorm >= 0.55 && yNorm <= 0.86) return 'torso';
 
   // Fallbacks
   if (yNorm < 0.62) return 'thighs';
