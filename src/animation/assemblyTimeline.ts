@@ -177,8 +177,10 @@ export function createAssemblyTimeline(
 
         timeline.set(mesh, { visible: true }, t);
 
-        const ease = isHelmet ? 'power3.inOut' : 'power2.inOut';
-        const scaleEase = isHelmet ? 'power2.out' : 'back.out(1.25)';
+        // Plates: power3.out travel seats hard into the socket; power2.out scale
+        // grows in without overshoot. Helmet keeps slower hydraulic inOut.
+        const travelEase = isHelmet ? 'power3.inOut' : 'power3.out';
+        const scaleEase = isHelmet ? 'power3.inOut' : 'power2.out';
 
         timeline.fromTo(
           mesh.position,
@@ -192,7 +194,7 @@ export function createAssemblyTimeline(
             y: piece.restPosition.y,
             z: piece.restPosition.z,
             duration,
-            ease,
+            ease: travelEase,
           },
           t,
         );
@@ -209,11 +211,15 @@ export function createAssemblyTimeline(
             y: piece.restRotation.y,
             z: piece.restRotation.z,
             duration,
-            ease,
+            ease: travelEase,
           },
           t,
         );
 
+        // Scale seats into rest over the last ~20% of travel for a firm clamp
+        // without back/bounce overshoot past 1.
+        const scaleSeat = isHelmet ? 0 : duration * 0.2;
+        const scaleDur = duration - scaleSeat;
         timeline.fromTo(
           mesh.scale,
           {
@@ -222,29 +228,27 @@ export function createAssemblyTimeline(
             z: piece.startScale.z,
           },
           {
-            x: piece.restScale.x,
-            y: piece.restScale.y,
-            z: piece.restScale.z,
-            duration: duration * (isHelmet ? 0.98 : 0.95),
+            x: piece.restScale.x * (isHelmet ? 1 : 0.92),
+            y: piece.restScale.y * (isHelmet ? 1 : 0.92),
+            z: piece.restScale.z * (isHelmet ? 1 : 0.92),
+            duration: scaleDur,
             ease: scaleEase,
           },
           t,
         );
-
-        // Lock punch — softer / longer on helmet
-        timeline.to(
-          mesh.scale,
-          {
-            x: piece.restScale.x * (isHelmet ? 1.03 : 1.05),
-            y: piece.restScale.y * (isHelmet ? 1.03 : 1.05),
-            z: piece.restScale.z * (isHelmet ? 1.03 : 1.05),
-            duration: isHelmet ? 0.14 : 0.1,
-            yoyo: true,
-            repeat: 1,
-            ease: 'power1.inOut',
-          },
-          t + duration * 0.94,
-        );
+        if (!isHelmet) {
+          timeline.to(
+            mesh.scale,
+            {
+              x: piece.restScale.x,
+              y: piece.restScale.y,
+              z: piece.restScale.z,
+              duration: scaleSeat,
+              ease: 'power3.out',
+            },
+            t + scaleDur,
+          );
+        }
       });
 
       waveLockEnd[wave] = lastEnd;
