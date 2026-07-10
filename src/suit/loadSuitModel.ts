@@ -21,8 +21,14 @@ export type { GlowMaterial } from './systemsGlow';
 
 /**
  * Map a shard to a body region for Mark III–style waves.
- * Uses height (y) + radial distance from spine so hands classify as gauntlets
- * (after arms) and feet as boots (early, with the legs).
+ *
+ * Calibrated on this GLB’s envelope (after normalize):
+ *   - outer thigh / hip armor: rNorm ≤ ~0.54
+ *   - true outer limbs (forearm/hand): rNorm ≥ ~0.70
+ *
+ * Hands are classified as **arms** (not a separate early wave and never
+ * thighs). The arm wave grows proximal→distal so fingers clamp only after
+ * the arm stump exists. Outer-thigh armor stays in leg waves.
  */
 function classifyWave(
   c: THREE.Vector3,
@@ -34,35 +40,55 @@ function classifyWave(
   const radial = Math.hypot(c.x, c.z);
   const rNorm = radial / Math.max(maxRadial, 1e-4);
 
+  // Beyond body armor envelope — forearm + hand (was wrongly thigh at 0.77)
+  const OUTER_LIMB_RNORM = 0.7;
+  // Moderate lateral above the hips — upper arm / elbow
+  const ARM_RNORM = 0.38;
+
   // Head
   if (yNorm > 0.88) return 'helmet';
 
-  // Feet — lowest band
+  // Feet
   if (yNorm < 0.1) return 'boots';
 
-  // Hands / gauntlets — mid-low, far from spine (after arms)
-  if (yNorm >= 0.22 && yNorm < 0.52 && rNorm > 0.55) return 'gauntlets';
+  // Lower legs
+  if (yNorm < 0.28) return 'calves';
 
-  // Arms — mid height, lateral (shoulders already placed)
-  if (yNorm >= 0.45 && yNorm < 0.82 && rNorm > 0.42) return 'arms';
+  // ── Outer limb chain first (hands must never join thigh wave) ────
+  // Hands hang at hip/thigh height but far outside the body; body thigh
+  // plates top out ~0.54 rNorm on this mesh.
+  if (rNorm >= OUTER_LIMB_RNORM) {
+    if (yNorm < 0.78) return 'arms'; // forearm + hand (distal end of arm wave)
+    return 'shoulders';
+  }
 
-  // Shoulders — high, moderately lateral
+  // Thighs — body armor only (inner of OUTER_LIMB_RNORM)
+  if (yNorm < 0.52) {
+    if (yNorm >= 0.48 && rNorm <= 0.16) return 'hips';
+    return 'thighs';
+  }
+
+  // Hip / lower abdomen: core hips vs outer thigh guards vs lower arm
+  if (yNorm < 0.62) {
+    if (rNorm >= 0.58) return 'arms';
+    if (rNorm <= 0.16) return 'hips';
+    return 'thighs';
+  }
+
+  // Soft core strip before arms dominate
+  if (yNorm < 0.66 && rNorm < ARM_RNORM) return 'torso';
+
+  // Upper arms
+  if (yNorm >= 0.62 && yNorm < 0.82 && rNorm > ARM_RNORM) return 'arms';
+
+  // Shoulders
   if (yNorm >= 0.72 && yNorm < 0.9 && rNorm > 0.28) return 'shoulders';
 
-  // Lower legs
-  if (yNorm >= 0.1 && yNorm < 0.28) return 'calves';
+  // Chest / back / abs
+  if (yNorm >= 0.55 && yNorm < 0.88) return 'torso';
 
-  // Upper legs
-  if (yNorm >= 0.28 && yNorm < 0.48) return 'thighs';
-
-  // Hips / waist
-  if (yNorm >= 0.45 && yNorm < 0.58 && rNorm < 0.45) return 'hips';
-
-  // Chest / back / abs core
-  if (yNorm >= 0.5 && yNorm < 0.88) return 'torso';
-
-  // Fallbacks by height
-  if (yNorm < 0.35) return 'thighs';
+  // Fallbacks
+  if (yNorm < 0.62) return 'thighs';
   if (rNorm > 0.5) return 'arms';
   return 'torso';
 }

@@ -38,6 +38,20 @@ function isLimbWave(wave: PieceWave): boolean {
   );
 }
 
+/** Extremities that must clamp onto a prior wave’s stump (wrist, shoulder…). */
+function needsFoundation(wave: PieceWave): boolean {
+  return (
+    wave === 'shoulders' ||
+    wave === 'arms' ||
+    wave === 'gauntlets' ||
+    wave === 'calves' ||
+    wave === 'thighs' ||
+    wave === 'hips' ||
+    wave === 'torso' ||
+    wave === 'helmet'
+  );
+}
+
 function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
 }
@@ -108,32 +122,53 @@ function distSq(
   return dx * dx + dy * dy + dz * dz;
 }
 
+function minDistSqToSet(
+  point: { x: number; y: number; z: number },
+  set: OrderPoint[],
+): number {
+  let minD = Infinity;
+  for (const f of set) {
+    const d = distSq(point, f);
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
 /**
  * Structural seeds: where this wave connects to the already-built suit.
- * - Upward waves: lowest band (ankles → knees → hips → chest → crown)
- * - Downward limbs: highest band (shoulder → elbow → hand)
- * Bilateral waves also seed the opposite X side so L/R grow together.
+ *
+ * When a foundation (prior waves) is provided, seed at the pieces nearest
+ * that structure so hands clamp onto wrists, arms onto shoulders, etc.
+ * Otherwise fall back to axis/radial score within the wave alone.
  */
 function pickSeeds(
   pieces: ArmorPiece[],
   wave: PieceWave,
   bounds: { minY: number; maxY: number; maxRadial: number },
+  foundation: OrderPoint[],
 ): ArmorPiece[] {
   const scored = pieces
-    .map((p) => ({
-      piece: p,
-      score: assemblyScore(
-        {
-          x: p.restPosition.x,
-          y: p.restPosition.y,
-          z: p.restPosition.z,
-        },
-        wave,
-        bounds,
-      ),
-    }))
+    .map((p) => {
+      const point = {
+        x: p.restPosition.x,
+        y: p.restPosition.y,
+        z: p.restPosition.z,
+      };
+      const foundationDist =
+        foundation.length > 0 ? minDistSqToSet(point, foundation) : 0;
+      const axisScore = assemblyScore(point, wave, bounds);
+      return { piece: p, foundationDist, axisScore };
+    })
     .sort((a, b) => {
-      if (Math.abs(a.score - b.score) > 1e-6) return a.score - b.score;
+      // Prefer pieces that touch the already-built suit
+      if (foundation.length > 0) {
+        if (Math.abs(a.foundationDist - b.foundationDist) > 1e-8) {
+          return a.foundationDist - b.foundationDist;
+        }
+      }
+      if (Math.abs(a.axisScore - b.axisScore) > 1e-6) {
+        return a.axisScore - b.axisScore;
+      }
       return a.piece.id.localeCompare(b.piece.id);
     });
 
@@ -160,17 +195,30 @@ function pickSeeds(
 /**
  * Sort armor pieces so each plate attaches onto already-placed structure.
  *
- * 1. Seed at the wave’s connection root (bottom of core / proximal limb)
+ * 1. Seed at the connection to prior waves (foundation) when available
  * 2. Repeatedly attach the nearest remaining piece to the built set
  * 3. Tie-break with assemblyScore (axis-first, then spine)
  *
  * Macro wave order (legs → core → arms → helmet) stays in WAVE_ORDER.
+ *
+ * @param foundation Rest positions (or pieces) already assembled from earlier waves
  */
 export function sortPiecesInWave(
   pieces: ArmorPiece[],
   wave: PieceWave,
+  foundation: OrderPoint[] | ArmorPiece[] = [],
 ): ArmorPiece[] {
   if (pieces.length <= 1) return pieces;
+
+  const foundationPts: OrderPoint[] = foundation.map((f) =>
+    'restPosition' in f
+      ? {
+          x: f.restPosition.x,
+          y: f.restPosition.y,
+          z: f.restPosition.z,
+        }
+      : f,
+  );
 
   const bounds = boundsFromPoints(
     pieces.map((p) => ({
@@ -183,7 +231,17 @@ export function sortPiecesInWave(
   const remaining = new Set(pieces);
   const ordered: ArmorPiece[] = [];
 
-  for (const seed of pickSeeds(pieces, wave, bounds)) {
+  // Virtual anchors: foundation points act as already-placed structure so
+  // growth starts at the stump (wrist, shoulder, hip…) rather than floating.
+  const useFoundation =
+    foundationPts.length > 0 && needsFoundation(wave);
+
+  for (const seed of pickSeeds(
+    pieces,
+    wave,
+    bounds,
+    useFoundation ? foundationPts : [],
+  )) {
     if (!remaining.has(seed)) continue;
     ordered.push(seed);
     remaining.delete(seed);
@@ -196,10 +254,16 @@ export function sortPiecesInWave(
     let bestId = '';
 
     for (const candidate of remaining) {
+      // Distance to already-placed pieces in this wave…
       let minD = Infinity;
       for (const placed of ordered) {
         const d = distSq(candidate.restPosition, placed.restPosition);
         if (d < minD) minD = d;
+      }
+      // …and to the prior-wave foundation (hands → wrist/arm stump)
+      if (useFoundation) {
+        const fd = minDistSqToSet(candidate.restPosition, foundationPts);
+        if (fd < minD) minD = fd;
       }
 
       const tie = assemblyScore(

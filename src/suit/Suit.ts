@@ -33,10 +33,19 @@ export class Suit {
     return suit;
   }
 
-  piecesInWave(wave: PieceWave): ArmorPiece[] {
+  /**
+   * Pieces in a wave, ordered to attach onto existing structure.
+   * Pass `foundation` (earlier waves) so extremities seed from the stump
+   * (e.g. gauntlets grow from the arm, not from floating fingertips).
+   */
+  piecesInWave(
+    wave: PieceWave,
+    foundation: ArmorPiece[] = [],
+  ): ArmorPiece[] {
     return sortPiecesInWave(
       this.pieces.filter((p) => p.wave === wave),
       wave,
+      foundation,
     );
   }
 

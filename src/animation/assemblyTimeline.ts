@@ -46,8 +46,19 @@ const WAVE_EARLIEST: Record<string, number> = {
  */
 const WAVE_OVERLAP = 0.28;
 
+/**
+ * Per-wave overlap override. Extremities need the prior stump fully locked
+ * (hands must wait for arms) — use 0 so the next wave cannot start early.
+ */
+const WAVE_OVERLAP_AFTER: Partial<Record<string, number>> = {
+  shoulders: 0.12,
+  arms: 0,
+  gauntlets: 0,
+};
+
 /** Extra hold after a wave before the next may start (helmet hero beat). */
 const WAVE_PAD_AFTER: Partial<Record<string, number>> = {
+  arms: 0.12,
   gauntlets: 0.35,
   helmet: 0.15,
 };
@@ -139,18 +150,34 @@ export function createAssemblyTimeline(
     const waveLockEnd: Partial<Record<string, number>> = {};
     /** Actual scheduled start per wave (after foundation gating) */
     const waveStartAt: Partial<Record<string, number>> = {};
+    /**
+     * Immediate prior wave only — hands seed from wrists/arms, not from
+     * nearby thighs that hang at the same height.
+     */
+    let foundation: typeof suit.pieces = [];
 
     let prevLockEnd = 0;
     let prevWave: string | null = null;
 
     for (const wave of WAVE_ORDER) {
-      const pieces = suit.piecesInWave(wave);
+      const pieces = suit.piecesInWave(wave, foundation);
+      // Hands fold into the arm wave; skip empty bands (e.g. gauntlets).
+      if (pieces.length === 0 && wave !== 'power') {
+        waveLockEnd[wave] = prevLockEnd;
+        waveStartAt[wave] = prevLockEnd;
+        continue;
+      }
+
       const earliest = WAVE_EARLIEST[wave] ?? 0;
       // Don't start a region until the previous one is almost locked —
-      // collar / shoulders can't float before the torso stack exists.
+      // collar / shoulders / hands can't float before their stump exists.
+      const overlap =
+        prevWave != null
+          ? (WAVE_OVERLAP_AFTER[prevWave] ?? WAVE_OVERLAP)
+          : WAVE_OVERLAP;
       const afterPrev =
         prevLockEnd > 0
-          ? prevLockEnd - WAVE_OVERLAP + (WAVE_PAD_AFTER[prevWave ?? ''] ?? 0)
+          ? prevLockEnd - overlap + (WAVE_PAD_AFTER[prevWave ?? ''] ?? 0)
           : 0;
       const waveStart = Math.max(earliest, afterPrev);
       waveStartAt[wave] = waveStart;
@@ -254,6 +281,9 @@ export function createAssemblyTimeline(
       waveLockEnd[wave] = lastEnd;
       prevLockEnd = lastEnd;
       prevWave = wave;
+      // Next wave grows from this stump (arms → hands, torso → shoulders…)
+      // Keep last non-empty wave if a band has no shards.
+      if (pieces.length > 0) foundation = pieces;
     }
 
     // ── Sequenced systems ──────────────────────────────────────────
