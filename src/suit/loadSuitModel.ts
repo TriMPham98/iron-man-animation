@@ -288,7 +288,7 @@ export async function loadSuitModel(
     const restPosition = shard.restPosition.clone();
     const restRotation = shard.restRotation.clone();
     const restScale = shard.restScale.clone();
-    const startPosition = scatterStart(restPosition, id, 3.5, 8.5);
+    const startPosition = scatterStart(restPosition, id, 3.5, 8.5, wave);
     const startRotation = scatterRotation(id);
     const startScale = new THREE.Vector3(0.08, 0.08, 0.08);
 

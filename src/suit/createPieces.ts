@@ -892,7 +892,7 @@ export function createArmorPieces(mats: SuitMaterials): {
     const restRotation = new THREE.Euler(...(def.rot ?? [0, 0, 0]));
     const restScale = new THREE.Vector3(...(def.scale ?? [1, 1, 1]));
 
-    const startPosition = scatterStart(restPosition, def.id);
+    const startPosition = scatterStart(restPosition, def.id, 4.5, 9.5, def.wave);
     const startRotation = scatterRotation(def.id);
     const startScale = new THREE.Vector3(0.12, 0.12, 0.12);
 

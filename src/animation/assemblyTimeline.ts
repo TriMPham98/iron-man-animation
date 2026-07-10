@@ -2,6 +2,7 @@ import gsap from 'gsap';
 import * as THREE from 'three';
 import type { Suit } from '../suit/Suit';
 import { WAVE_ORDER, WAVE_STATUS } from '../suit/createPieces';
+import { magneticPath } from '../utils/easeHelpers';
 
 export interface TimelineCallbacks {
   onStatus?: (text: string) => void;
@@ -26,17 +27,17 @@ export interface AssemblyController {
  * something physical to clamp onto.
  */
 const WAVE_EARLIEST: Record<string, number> = {
-  boots: 0.45,
-  calves: 1.55,
-  thighs: 2.9,
-  hips: 4.2,
-  torso: 5.5,
-  shoulders: 7.8,
-  arms: 9.4,
-  gauntlets: 11.0,
+  boots: 0.5,
+  calves: 1.75,
+  thighs: 3.25,
+  hips: 4.7,
+  torso: 6.15,
+  shoulders: 8.7,
+  arms: 10.5,
+  gauntlets: 12.3,
   // Extra pause before the helmet — faceplate is the hero beat
-  helmet: 13.2,
-  power: 17.5,
+  helmet: 14.7,
+  power: 19.5,
 };
 
 /**
@@ -63,10 +64,27 @@ const WAVE_PAD_AFTER: Partial<Record<string, number>> = {
   helmet: 0.15,
 };
 
+/** Camera micro-shake amplitude when a wave finishes locking. */
+const WAVE_SHAKE: Partial<Record<string, number>> = {
+  boots: 0.006,
+  calves: 0.007,
+  thighs: 0.008,
+  hips: 0.01,
+  torso: 0.016,
+  shoulders: 0.012,
+  arms: 0.009,
+  gauntlets: 0.01,
+  helmet: 0.02,
+};
+
 /** Default plate travel */
-const PIECE_DURATION = 1.15;
+const PIECE_DURATION = 1.35;
 /** Helmet / faceplate — heavier, more movie-like hydraulic close */
-const HELMET_PIECE_DURATION = 1.95;
+const HELMET_PIECE_DURATION = 2.25;
+
+/** Fraction of travel spent on the magnetic approach (rest is dock + clamp). */
+const APPROACH_FRAC = 0.78;
+const HELMET_APPROACH_FRAC = 0.82;
 
 export function createAssemblyTimeline(
   suit: Suit,
@@ -81,9 +99,9 @@ export function createAssemblyTimeline(
     if (count <= 1) return 0;
     if (helmet) {
       // Wider gaps so each head plate reads as a separate clamp
-      return Math.min(0.28, Math.max(0.08, 1.6 / count));
+      return Math.min(0.32, Math.max(0.1, 1.85 / count));
     }
-    return Math.min(0.2, Math.max(0.045, 1.25 / count));
+    return Math.min(0.24, Math.max(0.055, 1.45 / count));
   };
 
   const cameraProxy = {
@@ -95,13 +113,20 @@ export function createAssemblyTimeline(
     lz: lookTarget.z,
   };
 
+  /** Additive shake so path tweens stay stable while locks punch the frame. */
+  const shake = { x: 0, y: 0, z: 0 };
+
   // Independent system ramps
   const reactorProxy = { v: 0 };
   const eyesProxy = { v: 0 };
   const repulsorsProxy = { v: 0 };
 
   const applyCamera = () => {
-    camera.position.set(cameraProxy.x, cameraProxy.y, cameraProxy.z);
+    camera.position.set(
+      cameraProxy.x + shake.x,
+      cameraProxy.y + shake.y,
+      cameraProxy.z + shake.z,
+    );
     lookTarget.set(cameraProxy.lx, cameraProxy.ly, cameraProxy.lz);
     camera.lookAt(lookTarget);
   };
@@ -115,11 +140,58 @@ export function createAssemblyTimeline(
     });
   };
 
+  /**
+   * Short punchy camera shake when a wave’s last plate clamps.
+   * Stronger for torso / helmet so those beats land harder.
+   */
+  const addWaveShake = (
+    timeline: gsap.core.Timeline,
+    at: number,
+    wave: string,
+  ) => {
+    const amp = WAVE_SHAKE[wave];
+    if (!amp) return;
+
+    const pulses = wave === 'helmet' || wave === 'torso' ? 4 : 3;
+    const step = 0.028;
+    for (let i = 0; i < pulses; i++) {
+      const sign = i % 2 === 0 ? 1 : -1;
+      const decay = 1 - i / (pulses + 0.5);
+      timeline.to(
+        shake,
+        {
+          x: sign * amp * decay,
+          y: -sign * amp * 0.55 * decay,
+          z: sign * amp * 0.35 * decay,
+          duration: step,
+          ease: 'power2.out',
+          onUpdate: applyCamera,
+        },
+        at + i * step,
+      );
+    }
+    timeline.to(
+      shake,
+      {
+        x: 0,
+        y: 0,
+        z: 0,
+        duration: 0.06,
+        ease: 'power3.out',
+        onUpdate: applyCamera,
+      },
+      at + pulses * step,
+    );
+  };
+
   const build = (): gsap.core.Timeline => {
     suit.resetToStart();
     reactorProxy.v = 0;
     eyesProxy.v = 0;
     repulsorsProxy.v = 0;
+    shake.x = 0;
+    shake.y = 0;
+    shake.z = 0;
 
     // Opening camera — closer for detail
     cameraProxy.x = 1.85;
@@ -185,6 +257,7 @@ export function createAssemblyTimeline(
       const isHelmet = wave === 'helmet';
       const duration = isHelmet ? HELMET_PIECE_DURATION : PIECE_DURATION;
       const stagger = staggerFor(pieces.length, isHelmet);
+      const approachFrac = isHelmet ? HELMET_APPROACH_FRAC : APPROACH_FRAC;
 
       timeline.call(
         () => {
@@ -202,12 +275,25 @@ export function createAssemblyTimeline(
         const mesh = piece.mesh;
         lastEnd = t + duration;
 
+        const path = magneticPath(
+          piece.startPosition,
+          piece.restPosition,
+          piece.id,
+          { helmet: isHelmet },
+        );
+
+        const approachDur = duration * approachFrac;
+        const dockDur = duration - approachDur;
+        // Split dock: soft overshoot, then settle into socket
+        const slamDur = dockDur * (isHelmet ? 0.55 : 0.45);
+        const settleDur = dockDur - slamDur;
+
         timeline.set(mesh, { visible: true }, t);
 
-        // Plates: power3.out travel seats hard into the socket; power2.out scale
-        // grows in without overshoot. Helmet keeps slower hydraulic inOut.
-        const travelEase = isHelmet ? 'power3.inOut' : 'power3.out';
-        const scaleEase = isHelmet ? 'power3.inOut' : 'power2.out';
+        // ── Position: magnetic arc → approach → overshoot → rest ──
+        // Phase 1a: fly toward curved waypoint (magnetic pull-in)
+        const midApproach = approachDur * 0.62;
+        const nearApproach = approachDur - midApproach;
 
         timeline.fromTo(
           mesh.position,
@@ -217,15 +303,56 @@ export function createAssemblyTimeline(
             z: piece.startPosition.z,
           },
           {
-            x: piece.restPosition.x,
-            y: piece.restPosition.y,
-            z: piece.restPosition.z,
-            duration,
-            ease: travelEase,
+            x: path.waypoint.x,
+            y: path.waypoint.y,
+            z: path.waypoint.z,
+            duration: midApproach,
+            ease: isHelmet ? 'power2.inOut' : 'power2.in',
           },
           t,
         );
 
+        // Phase 1b: curve into the near-socket approach point
+        timeline.to(
+          mesh.position,
+          {
+            x: path.approach.x,
+            y: path.approach.y,
+            z: path.approach.z,
+            duration: nearApproach,
+            ease: isHelmet ? 'power3.inOut' : 'power3.in',
+          },
+          t + midApproach,
+        );
+
+        // Phase 2a: soft overshoot past the socket
+        timeline.to(
+          mesh.position,
+          {
+            x: path.overshoot.x,
+            y: path.overshoot.y,
+            z: path.overshoot.z,
+            duration: slamDur,
+            ease: isHelmet ? 'power2.in' : 'power2.in',
+          },
+          t + approachDur,
+        );
+
+        // Phase 2b: clamp settle into rest
+        timeline.to(
+          mesh.position,
+          {
+            x: piece.restPosition.x,
+            y: piece.restPosition.y,
+            z: piece.restPosition.z,
+            duration: settleDur,
+            ease: 'power3.out',
+          },
+          t + approachDur + slamDur,
+        );
+
+        // ── Rotation: mostly during approach, final align on dock ──
+        const travelEase = isHelmet ? 'power3.inOut' : 'power2.inOut';
         timeline.fromTo(
           mesh.rotation,
           {
@@ -237,16 +364,18 @@ export function createAssemblyTimeline(
             x: piece.restRotation.x,
             y: piece.restRotation.y,
             z: piece.restRotation.z,
-            duration,
+            duration: approachDur + slamDur * 0.5,
             ease: travelEase,
           },
           t,
         );
 
-        // Scale seats into rest over the last ~20% of travel for a firm clamp
-        // without back/bounce overshoot past 1.
-        const scaleSeat = isHelmet ? 0 : duration * 0.2;
-        const scaleDur = duration - scaleSeat;
+        // ── Scale: grow on approach, light clamp seat on lock ─────
+        const rs = piece.restScale;
+        const preLock = isHelmet ? 0.985 : 0.96;
+        const punch = isHelmet ? 1.008 : 1.02;
+
+        // Grow from tiny scatter scale → near rest during approach
         timeline.fromTo(
           mesh.scale,
           {
@@ -255,27 +384,38 @@ export function createAssemblyTimeline(
             z: piece.startScale.z,
           },
           {
-            x: piece.restScale.x * (isHelmet ? 1 : 0.92),
-            y: piece.restScale.y * (isHelmet ? 1 : 0.92),
-            z: piece.restScale.z * (isHelmet ? 1 : 0.92),
-            duration: scaleDur,
-            ease: scaleEase,
+            x: rs.x * preLock,
+            y: rs.y * preLock,
+            z: rs.z * preLock,
+            duration: approachDur,
+            ease: isHelmet ? 'power2.inOut' : 'power2.out',
           },
           t,
         );
-        if (!isHelmet) {
-          timeline.to(
-            mesh.scale,
-            {
-              x: piece.restScale.x,
-              y: piece.restScale.y,
-              z: piece.restScale.z,
-              duration: scaleSeat,
-              ease: 'power3.out',
-            },
-            t + scaleDur,
-          );
-        }
+
+        // Lock impact: slight punch past rest scale, then seat
+        timeline.to(
+          mesh.scale,
+          {
+            x: rs.x * punch,
+            y: rs.y * punch,
+            z: rs.z * punch,
+            duration: slamDur,
+            ease: 'power2.in',
+          },
+          t + approachDur,
+        );
+        timeline.to(
+          mesh.scale,
+          {
+            x: rs.x,
+            y: rs.y,
+            z: rs.z,
+            duration: settleDur,
+            ease: 'power4.out',
+          },
+          t + approachDur + slamDur,
+        );
       });
 
       waveLockEnd[wave] = lastEnd;
@@ -283,7 +423,11 @@ export function createAssemblyTimeline(
       prevWave = wave;
       // Next wave grows from this stump (arms → hands, torso → shoulders…)
       // Keep last non-empty wave if a band has no shards.
-      if (pieces.length > 0) foundation = pieces;
+      if (pieces.length > 0) {
+        foundation = pieces;
+        // Shake when the last plate of this wave clamps home
+        addWaveShake(timeline, lastEnd - 0.02, wave);
+      }
     }
 
     // ── Sequenced systems ──────────────────────────────────────────
