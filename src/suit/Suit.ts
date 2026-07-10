@@ -70,6 +70,15 @@ export class Suit {
     }
   }
 
+  /**
+   * Hide seamless mesh for timeline scrubbing without forcing every shard
+   * invisible — GSAP owns piece visibility after a re-applied progress.
+   */
+  resumeAssemblyVisuals(): void {
+    this.assemblyMode = true;
+    if (this.finalModel) this.finalModel.visible = false;
+  }
+
   /** Seamless full suit; hide grid shards so bloom can't square-blob them. */
   showFinal(): void {
     this.assemblyMode = false;

@@ -278,6 +278,187 @@ body {
   cursor: default;
 }
 
+/* —— debug scrubber —— */
+.debug-scrubber {
+  position: absolute;
+  left: 50%;
+  bottom: 4.75rem;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: min(560px, calc(100vw - 2rem));
+  padding: 0.55rem 0.75rem 0.5rem;
+  background: rgba(5, 5, 8, 0.78);
+  border: 1px solid rgba(201, 162, 39, 0.28);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+  transition: opacity 0.4s ease, visibility 0.4s ease;
+}
+
+.debug-scrubber.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.debug-scrubber-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.debug-active-piece {
+  font-size: 0.55rem;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 1.1em;
+  font-variant-numeric: tabular-nums;
+  padding-left: 0.1rem;
+}
+
+.debug-active-piece.has-active {
+  color: #7ee8ff;
+  text-shadow: 0 0 10px rgba(126, 232, 255, 0.25);
+}
+
+.debug-pause-btn {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  padding: 0.45rem 0.7rem;
+  min-width: 4.25rem;
+  height: 2rem;
+  color: var(--gold);
+  background: transparent;
+  border: 1px solid rgba(201, 162, 39, 0.45);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.debug-pause-btn:hover {
+  background: rgba(201, 162, 39, 0.12);
+  border-color: var(--gold-bright);
+  color: var(--gold-bright);
+}
+
+.debug-pause-btn.is-paused {
+  color: #7ee8ff;
+  border-color: rgba(126, 232, 255, 0.45);
+}
+
+.debug-pause-btn.is-paused:hover {
+  background: rgba(126, 232, 255, 0.1);
+  border-color: #7ee8ff;
+  color: #9ef0ff;
+}
+
+/* Range: transparent shell + explicit track/thumb so WebKit centers correctly */
+.debug-progress {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  height: 1.25rem;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.debug-progress:focus {
+  outline: none;
+}
+
+.debug-progress:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 2px rgba(5, 5, 8, 0.9),
+    0 0 0 4px rgba(232, 197, 71, 0.45),
+    0 0 10px rgba(201, 162, 39, 0.5);
+}
+
+.debug-progress::-webkit-slider-runnable-track {
+  -webkit-appearance: none;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(201, 162, 39, 0.28);
+  border: none;
+}
+
+.debug-progress::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5.5px; /* center 14px thumb on 3px track */
+  border-radius: 50%;
+  background: var(--gold-bright);
+  border: 1px solid rgba(5, 5, 8, 0.85);
+  box-shadow: 0 0 10px rgba(201, 162, 39, 0.55);
+  cursor: grab;
+}
+
+.debug-progress:active::-webkit-slider-thumb {
+  cursor: grabbing;
+}
+
+.debug-progress::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(201, 162, 39, 0.28);
+  border: none;
+}
+
+.debug-progress::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--gold-bright);
+  border: 1px solid rgba(5, 5, 8, 0.85);
+  box-shadow: 0 0 10px rgba(201, 162, 39, 0.55);
+  cursor: grab;
+}
+
+.debug-progress::-moz-range-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(232, 197, 71, 0.55);
+  border: none;
+}
+
+/* Hide default focus ring / fill quirks */
+.debug-progress::-ms-track {
+  height: 3px;
+  background: transparent;
+  border-color: transparent;
+  color: transparent;
+}
+
+.debug-progress-label {
+  flex: 0 0 auto;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.75rem;
+  text-align: right;
+  line-height: 1.25rem;
+}
+
 @media (max-width: 600px) {
   .hud {
     padding: 0.9rem 1rem;
@@ -292,6 +473,19 @@ body {
     grid-template-columns: 1fr;
     justify-items: center;
     gap: 0.35rem;
+  }
+
+  .debug-scrubber {
+    bottom: 4.25rem;
+    width: calc(100vw - 1.25rem);
+    gap: 0.5rem;
+    padding: 0.45rem 0.55rem;
+  }
+
+  .debug-pause-btn {
+    min-width: 3.75rem;
+    padding: 0.4rem 0.5rem;
+    font-size: 0.52rem;
   }
 
   .hud-brand,

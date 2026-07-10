@@ -4,17 +4,41 @@ import type { Suit } from '../suit/Suit';
 import { WAVE_ORDER, WAVE_STATUS } from '../suit/createPieces';
 import { magneticPath } from '../utils/easeHelpers';
 
+/** A plate currently mid-flight (between launch and lock). */
+export interface ActivePieceInfo {
+  id: string;
+  wave: string;
+  /** 0 at launch → 1 at lock */
+  localProgress: number;
+}
+
 export interface TimelineCallbacks {
   onStatus?: (text: string) => void;
   onProgress?: (t: number) => void;
   onComplete?: () => void;
   onWave?: (wave: string) => void;
+  /** Pieces whose travel tween is active at the current timeline time. */
+  onActivePieces?: (pieces: ActivePieceInfo[]) => void;
+}
+
+interface PieceMotionSpan {
+  id: string;
+  wave: string;
+  start: number;
+  end: number;
 }
 
 export interface AssemblyController {
   play: () => void;
+  pause: () => void;
+  resume: () => void;
+  /** Seek to normalized progress 0–1 (pauses). Scrubs plate/camera/systems state. */
+  seek: (progress01: number) => void;
+  getProgress: () => number;
+  getDuration: () => number;
   kill: () => void;
   isPlaying: () => boolean;
+  isPaused: () => boolean;
   rebuild: () => void;
 }
 
@@ -93,6 +117,30 @@ export function createAssemblyTimeline(
 ): AssemblyController {
   let tl: gsap.core.Timeline | null = null;
   let playing = false;
+  /** Timeline time when seamless final mesh swaps in (for scrub restore). */
+  let finalSwapTime = 0;
+  /** Launch→lock windows for every plate (rebuilt with the timeline). */
+  let motionSpans: PieceMotionSpan[] = [];
+
+  const reportActivePieces = (timeSec: number) => {
+    const active: ActivePieceInfo[] = [];
+    for (const span of motionSpans) {
+      if (timeSec + 1e-6 < span.start || timeSec > span.end + 1e-6) continue;
+      const dur = Math.max(span.end - span.start, 1e-6);
+      active.push({
+        id: span.id,
+        wave: span.wave,
+        localProgress: THREE.MathUtils.clamp(
+          (timeSec - span.start) / dur,
+          0,
+          1,
+        ),
+      });
+    }
+    // Prefer pieces further along their flight (nearest to clamp) first
+    active.sort((a, b) => b.localProgress - a.localProgress);
+    callbacks.onActivePieces?.(active);
+  };
 
   const staggerFor = (count: number, helmet = false) => {
     if (count <= 1) return 0;
@@ -191,6 +239,7 @@ export function createAssemblyTimeline(
     shake.x = 0;
     shake.y = 0;
     shake.z = 0;
+    motionSpans = [];
 
     // Opening camera — closer for detail
     cameraProxy.x = 1.85;
@@ -205,10 +254,12 @@ export function createAssemblyTimeline(
       paused: true,
       onUpdate: () => {
         callbacks.onProgress?.(timeline.progress());
+        reportActivePieces(timeline.time());
       },
       onComplete: () => {
         playing = false;
         callbacks.onStatus?.('SYSTEMS ONLINE');
+        callbacks.onActivePieces?.([]);
         callbacks.onComplete?.();
       },
     });
@@ -273,6 +324,12 @@ export function createAssemblyTimeline(
         const t = waveStart + i * stagger;
         const mesh = piece.mesh;
         lastEnd = t + duration;
+        motionSpans.push({
+          id: piece.id,
+          wave,
+          start: t,
+          end: t + duration,
+        });
 
         const path = magneticPath(
           piece.startPosition,
@@ -495,13 +552,14 @@ export function createAssemblyTimeline(
     );
 
     // Seamless mesh once head systems are lit
+    finalSwapTime = eyesT + 1.2;
     timeline.call(
       () => {
         suit.showFinal();
         callbacks.onStatus?.('ARMOR LOCKED');
       },
       undefined,
-      eyesT + 1.2,
+      finalSwapTime,
     );
 
     timeline.call(
@@ -579,20 +637,84 @@ export function createAssemblyTimeline(
     return timeline;
   };
 
+  const ensureTl = () => {
+    if (!tl) tl = build();
+    return tl;
+  };
+
+  const syncAfterSeek = (progress01: number) => {
+    const timeline = ensureTl();
+    const p = THREE.MathUtils.clamp(progress01, 0, 1);
+    // Apply all tween property states; suppress call()/onComplete so we
+    // control final-mesh swap and status ourselves while scrubbing.
+    timeline.progress(p, true);
+    applyCamera();
+    syncSystems();
+
+    const dur = Math.max(timeline.duration(), 1e-6);
+    const t = p * dur;
+    if (t >= finalSwapTime - 1e-4 || p >= 0.999) {
+      suit.showFinal();
+    } else {
+      // Hide seamless mesh without wiping shard visibility — then re-apply
+      // timeline so GSAP visibility/position state is correct after a prior
+      // showFinal() hid every piece.
+      suit.resumeAssemblyVisuals();
+      timeline.progress(p, true);
+      applyCamera();
+      syncSystems();
+    }
+
+    callbacks.onProgress?.(p);
+    reportActivePieces(t);
+  };
+
   tl = build();
 
   return {
     play: () => {
-      if (!tl) tl = build();
+      const timeline = ensureTl();
       playing = true;
-      tl.play(0);
+      timeline.play(0);
+    },
+    pause: () => {
+      const timeline = ensureTl();
+      timeline.pause();
+      playing = false;
+    },
+    resume: () => {
+      const timeline = ensureTl();
+      if (timeline.progress() >= 1) {
+        // At end — restart so resume always does something useful
+        playing = true;
+        timeline.play(0);
+        return;
+      }
+      playing = true;
+      timeline.paused(false);
+      timeline.play();
+    },
+    seek: (progress01: number) => {
+      const timeline = ensureTl();
+      timeline.pause();
+      playing = false;
+      syncAfterSeek(progress01);
+    },
+    getProgress: () => {
+      if (!tl) return 0;
+      return tl.progress();
+    },
+    getDuration: () => {
+      if (!tl) return 0;
+      return tl.duration();
     },
     kill: () => {
       tl?.kill();
       tl = null;
       playing = false;
     },
-    isPlaying: () => playing,
+    isPlaying: () => playing && !!tl && !tl.paused() && tl.progress() < 1,
+    isPaused: () => !!tl && (tl.paused() || !playing),
     rebuild: () => {
       tl?.kill();
       tl = build();

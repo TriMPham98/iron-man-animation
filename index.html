@@ -107,12 +107,34 @@
       <footer id="hud-bottom" class="hud hud-bottom hidden">
         <div class="hud-left">
           <span id="integrity">INTEGRITY — — —</span>
-          <span id="hint" class="hint">Drag to orbit · R to replay</span>
+          <span id="hint" class="hint">Drag to orbit · R to replay · Space pause</span>
         </div>
         <button id="replay-btn" type="button" class="replay-btn" disabled>
           REPLAY
         </button>
       </footer>
+
+      <div id="debug-scrubber" class="debug-scrubber hidden" aria-label="Assembly debug scrubber">
+        <div class="debug-scrubber-row">
+          <button id="debug-pause-btn" type="button" class="debug-pause-btn" title="Pause / play (Space)">
+            PAUSE
+          </button>
+          <input
+            id="debug-progress"
+            class="debug-progress"
+            type="range"
+            min="0"
+            max="1000"
+            value="0"
+            step="1"
+            aria-label="Assembly progress"
+          />
+          <span id="debug-progress-label" class="debug-progress-label">0%</span>
+        </div>
+        <div id="debug-active-piece" class="debug-active-piece" aria-live="polite">
+          MOVING — —
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

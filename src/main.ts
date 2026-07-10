@@ -79,6 +79,31 @@ async function boot(): Promise<void> {
   let clockStart = 0;
   const clock = new THREE.Clock();
 
+  const applyCompleteUi = () => {
+    assemblyComplete = true;
+    suit.showFinal(); // seamless mesh — no grid-shard square blooms
+    controls.target.copy(lookTarget);
+    controls.enabled = true;
+    controls.autoRotate = true;
+    ui.setReplayEnabled(true);
+    ui.setHintVisible(true);
+    ui.fadeTitle(true);
+    ui.setIntegrity('INTEGRITY 100%');
+    ui.setStatus('SYSTEMS ONLINE', true);
+    ui.setDebugProgress(1);
+    ui.setDebugPaused(true);
+    ui.setDebugActivePieces([]);
+  };
+
+  const applyAssemblyUi = () => {
+    assemblyComplete = false;
+    controls.enabled = false;
+    controls.autoRotate = false;
+    ui.setReplayEnabled(false);
+    ui.setHintVisible(false);
+    ui.fadeTitle(false);
+  };
+
   const assembly = createAssemblyTimeline(suit, camera, lookTarget, {
     onStatus: (text) => {
       const online = text.includes('ONLINE') || text.includes('STABLE');
@@ -87,42 +112,87 @@ async function boot(): Promise<void> {
     onProgress: (t) => {
       const pct = Math.round(t * 100);
       ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
+      ui.setDebugProgress(t);
+      if (t < 0.999 && assemblyComplete) {
+        // Scrubbed back from the end
+        applyAssemblyUi();
+      }
+    },
+    onActivePieces: (pieces) => {
+      ui.setDebugActivePieces(pieces);
     },
     onComplete: () => {
-      assemblyComplete = true;
-      suit.showFinal(); // seamless mesh — no grid-shard square blooms
-      controls.target.copy(lookTarget);
-      controls.enabled = true;
-      controls.autoRotate = true;
-      ui.setReplayEnabled(true);
-      ui.setHintVisible(true);
-      ui.fadeTitle(true);
-      ui.setIntegrity('INTEGRITY 100%');
-      ui.setStatus('SYSTEMS ONLINE', true);
+      applyCompleteUi();
+      ui.setDebugActivePieces([]);
     },
   });
 
   const startSequence = () => {
-    assemblyComplete = false;
-    controls.enabled = false;
-    controls.autoRotate = false;
-    ui.setReplayEnabled(false);
-    ui.setHintVisible(false);
-    ui.fadeTitle(false);
+    applyAssemblyUi();
     ui.setIntegrity('INTEGRITY   0%');
     ui.setStatus('ASSEMBLY SEQUENCE INITIATED');
+    ui.setDebugProgress(0);
+    ui.setDebugPaused(false);
     assembly.rebuild();
     assembly.play();
     clockStart = clock.getElapsedTime();
+  };
+
+  const syncDebugPauseLabel = () => {
+    ui.setDebugPaused(assembly.isPaused() || assemblyComplete);
   };
 
   ui.onReplay(() => {
     startSequence();
   });
 
+  ui.onDebugSeek((p) => {
+    assembly.seek(p);
+    syncDebugPauseLabel();
+    if (p >= 0.999) {
+      applyCompleteUi();
+    } else {
+      applyAssemblyUi();
+      const pct = Math.round(p * 100);
+      ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
+      ui.setStatus('DEBUG SCRUB', false);
+    }
+  });
+
+  ui.onDebugTogglePause(() => {
+    if (assembly.isPlaying()) {
+      assembly.pause();
+    } else if (assemblyComplete || assembly.getProgress() >= 0.999) {
+      // Restart from beginning when already finished
+      startSequence();
+      return;
+    } else {
+      applyAssemblyUi();
+      assembly.resume();
+    }
+    syncDebugPauseLabel();
+  });
+
   window.addEventListener('keydown', (e) => {
     if (e.key === 'r' || e.key === 'R') {
       startSequence();
+      return;
+    }
+    // Space — pause / resume (ignore when typing in inputs)
+    if (e.code === 'Space' || e.key === ' ') {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+      e.preventDefault();
+      if (assembly.isPlaying()) {
+        assembly.pause();
+      } else if (assemblyComplete || assembly.getProgress() >= 0.999) {
+        startSequence();
+        return;
+      } else {
+        applyAssemblyUi();
+        assembly.resume();
+      }
+      syncDebugPauseLabel();
     }
   });
 
@@ -175,6 +245,7 @@ async function boot(): Promise<void> {
 
   ui.hideLoading();
   ui.showHud();
+  ui.showDebugScrubber();
   await new Promise((r) => setTimeout(r, 400));
 
   clockStart = clock.getElapsedTime();
