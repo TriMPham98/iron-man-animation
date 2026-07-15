@@ -327,6 +327,23 @@ body {
   text-shadow: 0 0 10px rgba(126, 232, 255, 0.25);
 }
 
+.debug-picked-piece {
+  font-size: 0.55rem;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 1.1em;
+  font-variant-numeric: tabular-nums;
+  padding-left: 0.1rem;
+}
+
+.debug-picked-piece.has-pick {
+  color: var(--gold-bright);
+  text-shadow: 0 0 10px rgba(232, 197, 71, 0.28);
+}
+
 .debug-pause-btn {
   flex: 0 0 auto;
   font-family: var(--mono);

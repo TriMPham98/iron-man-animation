@@ -56,6 +56,15 @@ async function boot(): Promise<void> {
   });
   scene.add(suit.group);
 
+  // Fast raycast → piece lookup (mesh.uuid → piece)
+  const pieceByMeshUuid = new Map<string, (typeof suit.pieces)[number]>();
+  for (const piece of suit.pieces) {
+    piece.mesh.userData.pieceId = piece.id;
+    piece.mesh.traverse((obj) => {
+      pieceByMeshUuid.set(obj.uuid, piece);
+    });
+  }
+
   ui.setLoadingProgress(0.75);
 
   const post = createPostProcessing(renderer, scene, camera, true);
@@ -198,6 +207,94 @@ async function boot(): Promise<void> {
 
   controls.addEventListener('start', () => {
     if (assemblyComplete) controls.autoRotate = false;
+  });
+
+  // ── Debug raycast pick (click plate → show in scrubber) ─────────
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  /** Ignore picks after drag so orbit doesn't select. */
+  const CLICK_MAX_MOVE_PX = 5;
+  let pointerDownPos: { x: number; y: number } | null = null;
+
+  const resolvePiece = (
+    obj: THREE.Object3D,
+  ): (typeof suit.pieces)[number] | null => {
+    let cur: THREE.Object3D | null = obj;
+    while (cur) {
+      const hit = pieceByMeshUuid.get(cur.uuid);
+      if (hit) return hit;
+      cur = cur.parent;
+    }
+    return null;
+  };
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    pointerDownPos = { x: e.clientX, y: e.clientY };
+  });
+
+  canvas.addEventListener('pointerup', (e) => {
+    if (e.button !== 0 || !pointerDownPos) return;
+    const dx = e.clientX - pointerDownPos.x;
+    const dy = e.clientY - pointerDownPos.y;
+    pointerDownPos = null;
+    if (dx * dx + dy * dy > CLICK_MAX_MOVE_PX * CLICK_MAX_MOVE_PX) return;
+
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+    ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(ndc, camera);
+
+    // Prefer fly-in shards; fall back to seamless final mesh
+    const shardRoots = suit.pieces
+      .filter((p) => p.mesh.visible)
+      .map((p) => p.mesh);
+    let hits = raycaster.intersectObjects(shardRoots, true);
+
+    if (hits.length === 0 && !suit.isAssemblyMode()) {
+      hits = raycaster.intersectObject(suit.group, true);
+      if (hits.length > 0) {
+        const obj = hits[0].object;
+        ui.setDebugPickedPiece({
+          id: obj.name || 'final-mesh',
+          wave: 'power',
+          meshName: obj.name,
+          visible: obj.visible,
+          note: 'seamless final suit',
+        });
+        return;
+      }
+    }
+
+    if (hits.length === 0) {
+      ui.setDebugPickedPiece(null);
+      return;
+    }
+
+    const piece = resolvePiece(hits[0].object);
+    if (!piece) {
+      ui.setDebugPickedPiece({
+        id: hits[0].object.name || hits[0].object.uuid.slice(0, 8),
+        wave: 'power',
+        meshName: hits[0].object.name,
+        visible: hits[0].object.visible,
+        note: 'unmapped mesh',
+      });
+      return;
+    }
+
+    ui.setDebugPickedPiece({
+      id: piece.id,
+      wave: piece.wave,
+      meshName: piece.mesh.name,
+      visible: piece.mesh.visible,
+      rest: {
+        x: piece.restPosition.x,
+        y: piece.restPosition.y,
+        z: piece.restPosition.z,
+      },
+    });
   });
 
   const onResize = () => {

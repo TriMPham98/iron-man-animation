@@ -22,9 +22,22 @@ export interface OverlayHandles {
   setDebugPaused: (paused: boolean) => void;
   /** Labels for plates currently mid-flight. */
   setDebugActivePieces: (pieces: DebugActivePiece[]) => void;
+  /** Raycast pick readout (null clears to idle hint). */
+  setDebugPickedPiece: (info: DebugPickedPiece | null) => void;
   /** Fired while scrubbing / on commit — progress 0–1. */
   onDebugSeek: (cb: (progress01: number) => void) => void;
   onDebugTogglePause: (cb: () => void) => void;
+}
+
+export interface DebugPickedPiece {
+  id: string;
+  wave: string;
+  /** Mesh name if different from id */
+  meshName?: string;
+  visible: boolean;
+  /** World rest position, rounded for display */
+  rest?: { x: number; y: number; z: number };
+  note?: string;
 }
 
 function el<T extends HTMLElement>(id: string): T {
@@ -50,6 +63,7 @@ export function createOverlay(): OverlayHandles {
   const debugProgress = el<HTMLInputElement>('debug-progress');
   const debugLabel = el<HTMLSpanElement>('debug-progress-label');
   const debugActive = el<HTMLDivElement>('debug-active-piece');
+  const debugPicked = el<HTMLDivElement>('debug-picked-piece');
 
   let replayHandler: (() => void) | null = null;
   let seekHandler: ((p: number) => void) | null = null;
@@ -192,6 +206,36 @@ export function createOverlay(): OverlayHandles {
           (p) =>
             `${p.id} (${p.wave}) ${Math.round(p.localProgress * 100)}%`,
         )
+        .join('\n');
+    },
+    setDebugPickedPiece: (info: DebugPickedPiece | null) => {
+      if (!info) {
+        debugPicked.textContent = 'PICK · click a plate';
+        debugPicked.classList.remove('has-pick');
+        debugPicked.title = '';
+        return;
+      }
+
+      const short = shortPieceId(info.id, info.wave);
+      const rest =
+        info.rest != null
+          ? ` · rest(${info.rest.x.toFixed(2)}, ${info.rest.y.toFixed(2)}, ${info.rest.z.toFixed(2)})`
+          : '';
+      const vis = info.visible ? 'on' : 'off';
+      const note = info.note ? ` · ${info.note}` : '';
+      debugPicked.textContent = `PICK · ${short} · ${info.wave} · vis ${vis}${rest}${note}`;
+      debugPicked.classList.add('has-pick');
+      debugPicked.title = [
+        `id: ${info.id}`,
+        `wave: ${info.wave}`,
+        info.meshName ? `mesh: ${info.meshName}` : null,
+        `visible: ${info.visible}`,
+        info.rest
+          ? `rest: ${info.rest.x.toFixed(3)}, ${info.rest.y.toFixed(3)}, ${info.rest.z.toFixed(3)}`
+          : null,
+        info.note ?? null,
+      ]
+        .filter(Boolean)
         .join('\n');
     },
     onDebugSeek: (cb: (progress01: number) => void) => {
