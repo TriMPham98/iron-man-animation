@@ -65,6 +65,88 @@ async function boot(): Promise<void> {
     });
   }
 
+  /** Highlight overlays (shared materials → can't recolor source mats). */
+  const pickHighlights: THREE.Object3D[] = [];
+
+  const disposePickHighlight = (obj: THREE.Object3D) => {
+    obj.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (mesh.geometry && mesh.userData.pickOwnedGeometry) {
+        mesh.geometry.dispose();
+      }
+      const mats = mesh.material
+        ? Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material]
+        : [];
+      for (const m of mats) {
+        if (m && (m as THREE.Material).userData?.pickOwnedMaterial) {
+          m.dispose();
+        }
+      }
+    });
+  };
+
+  const clearPickHighlight = () => {
+    for (const h of pickHighlights) {
+      h.parent?.remove(h);
+      disposePickHighlight(h);
+    }
+    pickHighlights.length = 0;
+  };
+
+  const applyPickHighlight = (root: THREE.Object3D) => {
+    clearPickHighlight();
+
+    // Snapshot meshes first — adding children during traverse would re-enter
+    // on the new shell/edge meshes and blow the call stack.
+    const targets: THREE.Mesh[] = [];
+    root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.geometry) return;
+      if (mesh.userData.isPickHighlight) return;
+      targets.push(mesh);
+    });
+
+    for (const mesh of targets) {
+      // Cyan edge outline
+      const edges = new THREE.EdgesGeometry(mesh.geometry, 28);
+      const edgeMat = new THREE.LineBasicMaterial({
+        color: 0x7ee8ff,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: true,
+      });
+      edgeMat.userData.pickOwnedMaterial = true;
+      const lines = new THREE.LineSegments(edges, edgeMat);
+      lines.name = '__pickHighlight';
+      lines.userData.isPickHighlight = true;
+      lines.userData.pickOwnedGeometry = true;
+      lines.renderOrder = 999;
+      lines.raycast = () => {};
+      mesh.add(lines);
+      pickHighlights.push(lines);
+
+      // Soft gold fill so the plate reads as selected
+      const shellMat = new THREE.MeshBasicMaterial({
+        color: 0xe8c547,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      shellMat.userData.pickOwnedMaterial = true;
+      const shell = new THREE.Mesh(mesh.geometry, shellMat);
+      shell.name = '__pickHighlightShell';
+      shell.userData.isPickHighlight = true;
+      shell.renderOrder = 998;
+      shell.scale.setScalar(1.012);
+      shell.raycast = () => {};
+      mesh.add(shell);
+      pickHighlights.push(shell);
+    }
+  };
+
   ui.setLoadingProgress(0.75);
 
   const post = createPostProcessing(renderer, scene, camera, true);
@@ -137,6 +219,8 @@ async function boot(): Promise<void> {
   });
 
   const startSequence = () => {
+    clearPickHighlight();
+    ui.setDebugPickedPiece(null);
     applyAssemblyUi();
     ui.setIntegrity('INTEGRITY   0%');
     ui.setStatus('ASSEMBLY SEQUENCE INITIATED');
@@ -156,6 +240,9 @@ async function boot(): Promise<void> {
   });
 
   ui.onDebugSeek((p) => {
+    // Scrub invalidates overlay parents / visibility — drop selection
+    clearPickHighlight();
+    ui.setDebugPickedPiece(null);
     assembly.seek(p);
     syncDebugPauseLabel();
     if (p >= 0.999) {
@@ -209,7 +296,7 @@ async function boot(): Promise<void> {
     if (assemblyComplete) controls.autoRotate = false;
   });
 
-  // ── Debug raycast pick (click plate → show in scrubber) ─────────
+  // ── Debug raycast pick (click plate → scrubber + highlight) ────
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   /** Ignore picks after drag so orbit doesn't select. */
@@ -221,6 +308,10 @@ async function boot(): Promise<void> {
   ): (typeof suit.pieces)[number] | null => {
     let cur: THREE.Object3D | null = obj;
     while (cur) {
+      if (cur.userData.isPickHighlight) {
+        cur = cur.parent;
+        continue;
+      }
       const hit = pieceByMeshUuid.get(cur.uuid);
       if (hit) return hit;
       cur = cur.parent;
@@ -253,9 +344,12 @@ async function boot(): Promise<void> {
     let hits = raycaster.intersectObjects(shardRoots, true);
 
     if (hits.length === 0 && !suit.isAssemblyMode()) {
-      hits = raycaster.intersectObject(suit.group, true);
+      hits = raycaster
+        .intersectObject(suit.group, true)
+        .filter((h) => !h.object.userData.isPickHighlight);
       if (hits.length > 0) {
         const obj = hits[0].object;
+        applyPickHighlight(obj);
         ui.setDebugPickedPiece({
           id: obj.name || 'final-mesh',
           wave: 'power',
@@ -268,22 +362,27 @@ async function boot(): Promise<void> {
     }
 
     if (hits.length === 0) {
+      // Clicked empty space — clear selection
+      clearPickHighlight();
       ui.setDebugPickedPiece(null);
       return;
     }
 
     const piece = resolvePiece(hits[0].object);
     if (!piece) {
+      const obj = hits[0].object;
+      applyPickHighlight(obj);
       ui.setDebugPickedPiece({
-        id: hits[0].object.name || hits[0].object.uuid.slice(0, 8),
+        id: obj.name || obj.uuid.slice(0, 8),
         wave: 'power',
-        meshName: hits[0].object.name,
-        visible: hits[0].object.visible,
+        meshName: obj.name,
+        visible: obj.visible,
         note: 'unmapped mesh',
       });
       return;
     }
 
+    applyPickHighlight(piece.mesh);
     ui.setDebugPickedPiece({
       id: piece.id,
       wave: piece.wave,
