@@ -228,8 +228,9 @@ function prepareGlowMaterials(root: THREE.Object3D): GlowMaterial[] {
         2.4,
       );
 
-      // Cold sockets until each system ignites (root → sternum UV mask)
-      darkenAlbedoGlowRegions(m, root);
+      // Cold sockets until each system ignites (emissive islands only —
+      // do not crush general albedo / ambient response)
+      darkenAlbedoGlowRegions(m);
       packSystemsEmissiveMap(root, m);
       attachSystemsShader(m);
 

@@ -75,151 +75,11 @@ function readTextureImageData(
 }
 
 /**
- * Dilate a single-channel mask (max over neighborhood).
- * Iterated 3×3 passes so large radii stay O(n · radius), not O(n · r²).
- * Used so the gold reactor bezel (albedo-only) is covered by the cold socket.
- */
-function dilateMask(
-  src: Uint8Array,
-  w: number,
-  h: number,
-  radius: number,
-): Uint8Array {
-  if (radius <= 0) return new Uint8Array(src);
-  let cur = new Uint8Array(src);
-  let next = new Uint8Array(src.length);
-  for (let pass = 0; pass < radius; pass++) {
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let m = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          const yy = y + dy;
-          if (yy < 0 || yy >= h) continue;
-          for (let dx = -1; dx <= 1; dx++) {
-            const xx = x + dx;
-            if (xx < 0 || xx >= w) continue;
-            m = Math.max(m, cur[yy * w + xx]);
-          }
-        }
-        next[y * w + x] = m;
-      }
-    }
-    const t = cur;
-    cur = next;
-    next = t;
-  }
-  return cur;
-}
-
-/**
- * Build a UV mask of the front-center chest (arc reactor socket) by projecting
- * world-space sternum triangles into the albedo atlas.
- */
-function buildSternumUvMask(
-  root: THREE.Object3D,
-  w: number,
-  h: number,
-): Uint8Array {
-  const mask = new Uint8Array(w * h);
-  root.updateMatrixWorld(true);
-
-  let minY = Infinity;
-  let maxY = -Infinity;
-  root.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.geometry) return;
-    const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
-    if (!pos) return;
-    const v = new THREE.Vector3();
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
-      minY = Math.min(minY, v.y);
-      maxY = Math.max(maxY, v.y);
-    }
-  });
-  const yRange = Math.max(1e-4, maxY - minY);
-
-  const stamp = (u: number, v: number, radius: number, strength: number) => {
-    const px = Math.round(THREE.MathUtils.clamp(u, 0, 1) * (w - 1));
-    const py = Math.round(THREE.MathUtils.clamp(v, 0, 1) * (h - 1));
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        const x = px + dx;
-        const y = py + dy;
-        if (x < 0 || y < 0 || x >= w || y >= h) continue;
-        const i = y * w + x;
-        mask[i] = Math.max(mask[i], strength);
-      }
-    }
-  };
-
-  const a = new THREE.Vector3();
-  const b = new THREE.Vector3();
-  const c = new THREE.Vector3();
-  const mid = new THREE.Vector3();
-
-  root.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.geometry) return;
-    const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
-    const uv = mesh.geometry.getAttribute('uv') as THREE.BufferAttribute | null;
-    if (!pos || !uv) return;
-
-    const index = mesh.geometry.index;
-    const triCount = index ? index.count / 3 : pos.count / 3;
-    const getIdx = (t: number, k: number) =>
-      index ? index.getX(t * 3 + k) : t * 3 + k;
-
-    for (let t = 0; t < triCount; t++) {
-      const i0 = getIdx(t, 0);
-      const i1 = getIdx(t, 1);
-      const i2 = getIdx(t, 2);
-      a.fromBufferAttribute(pos, i0).applyMatrix4(mesh.matrixWorld);
-      b.fromBufferAttribute(pos, i1).applyMatrix4(mesh.matrixWorld);
-      c.fromBufferAttribute(pos, i2).applyMatrix4(mesh.matrixWorld);
-      mid.copy(a).add(b).add(c).multiplyScalar(1 / 3);
-
-      const yNorm = (mid.y - minY) / yRange;
-      const radial = Math.hypot(mid.x, mid.z);
-      // Front sternum / arc reactor band only
-      if (yNorm < 0.52 || yNorm > 0.82) continue;
-      if (radial > 0.32) continue;
-      if (mid.z < 0.02) continue; // front half
-
-      const strength =
-        radial < 0.14 ? 255 : radial < 0.22 ? 200 : 140;
-      const radius = radial < 0.14 ? 3 : 2;
-      for (const vi of [i0, i1, i2]) {
-        stamp(uv.getX(vi), uv.getY(vi), radius, strength);
-      }
-      stamp(
-        (uv.getX(i0) + uv.getX(i1) + uv.getX(i2)) / 3,
-        (uv.getY(i0) + uv.getY(i1) + uv.getY(i2)) / 3,
-        radius,
-        strength,
-      );
-    }
-  });
-
-  // Expand so gold bezel texels around the socket are included
-  return dilateMask(mask, w, h, 6);
-}
-
-/**
- * Darken albedo where systems are painted so sockets read cold/off until
- * power-up.
- *
- * Critical: this GLB paints the arc reactor as a bright gold disk in the
- * *base color* with little/no matching emissive coverage on the bezel. If we
- * only darken where the emissive map is hot, the gold disk still looks lit
- * the moment the chest plate becomes visible.
- *
- * Pass `root` so front-center chest UVs (sternum) can be crushed even when
- * the emissive atlas doesn't cover the gold housing.
+ * Darken albedo where the emissive map is bright so sockets read cold/off
+ * until systems power up via emissive only.
  */
 export function darkenAlbedoGlowRegions(
   material: THREE.MeshStandardMaterial,
-  root?: THREE.Object3D,
 ): void {
   const map = material.map;
   const emap = material.emissiveMap;
@@ -231,54 +91,22 @@ export function darkenAlbedoGlowRegions(
 
   const { data: baseData, w, h } = base;
   const emData = em.data;
-  const darkR = 3;
-  const darkG = 4;
-  const darkB = 6;
+  const darkR = 10;
+  const darkG = 12;
+  const darkB = 16;
 
-  // Hot emissive cores (reactor / eyes / thrusters)
-  const hot = new Uint8Array(w * h);
-  for (let p = 0, i = 0; p < hot.length; p++, i += 4) {
-    const elum = Math.max(
-      emData.data[i],
-      emData.data[i + 1],
-      emData.data[i + 2],
+  for (let i = 0; i < baseData.data.length; i += 4) {
+    const elum =
+      Math.max(emData.data[i], emData.data[i + 1], emData.data[i + 2]) / 255;
+    if (elum < 0.06) continue;
+    const t = Math.min(1, elum * 1.55);
+    baseData.data[i] = Math.round(baseData.data[i] * (1 - t) + darkR * t);
+    baseData.data[i + 1] = Math.round(
+      baseData.data[i + 1] * (1 - t) + darkG * t,
     );
-    hot[p] = elum > 18 ? elum : 0;
-  }
-  const ring = dilateMask(hot, w, h, 14);
-  const sternum = root ? buildSternumUvMask(root, w, h) : null;
-
-  for (let p = 0, i = 0; p < hot.length; p++, i += 4) {
-    const r = baseData.data[i];
-    const g = baseData.data[i + 1];
-    const b = baseData.data[i + 2];
-    const lum = Math.max(r, g, b) / 255;
-    const elum = hot[p] / 255;
-    const near = ring[p] / 255;
-    const socket = sternum ? sternum[p] / 255 : 0;
-
-    // Bright warm gold (reactor housing baked as "already on")
-    const warmGold =
-      r > 140 && g > 100 && b < 170 && r >= g * 0.9 && r > b + 10 && lum > 0.4;
-
-    let t = 0;
-    if (elum > 0.04) {
-      // Authored emissive cores → nearly black sockets
-      t = Math.min(1, elum * 2.0 + (elum > 0.35 ? 0.35 : 0));
-    }
-    if (socket > 0.05 && (warmGold || lum > 0.35 || elum > 0.02)) {
-      // Sternum / arc reactor plate — crush baked "lit" gold hard
-      t = Math.max(t, Math.min(1, 0.72 + socket * 0.35 + (warmGold ? 0.2 : 0)));
-    } else if (near > 0.04 && (warmGold || lum > 0.55)) {
-      t = Math.max(t, Math.min(1, 0.6 + near * 0.45 + (warmGold ? 0.2 : 0)));
-    } else if (warmGold && lum > 0.72) {
-      t = Math.max(t, Math.min(1, (lum - 0.55) * 2.4));
-    }
-    if (t <= 0) continue;
-
-    baseData.data[i] = Math.round(r * (1 - t) + darkR * t);
-    baseData.data[i + 1] = Math.round(g * (1 - t) + darkG * t);
-    baseData.data[i + 2] = Math.round(b * (1 - t) + darkB * t);
+    baseData.data[i + 2] = Math.round(
+      baseData.data[i + 2] * (1 - t) + darkB * t,
+    );
   }
 
   try {
@@ -459,21 +287,6 @@ export function packSystemsEmissiveMap(
     }
   }
 
-  // Slightly dilate reactor (R) so the cold-socket shader covers the gold
-  // bezel rim. Keep this tight — a wide sternum stamp was flooding R across
-  // the whole body and lighting the entire suit when the reactor ignited.
-  const reactorMask = new Uint8Array(w * h);
-  for (let p = 0, i = 0; p < reactorMask.length; p++, i += 4) {
-    reactorMask[p] = packed.data[i];
-  }
-  const reactorWide = dilateMask(reactorMask, w, h, 4);
-  for (let p = 0, i = 0; p < reactorWide.length; p++, i += 4) {
-    if (reactorWide[p] > packed.data[i]) {
-      packed.data[i] = reactorWide[p];
-      packed.data[i + 3] = 255;
-    }
-  }
-
   try {
     const canvas = document.createElement('canvas');
     canvas.width = w;
@@ -534,21 +347,6 @@ export function attachSystemsShader(
           float reactorM = emPacked.r * uReactor;
           float eyesM = emPacked.g * uEyes;
           float repulsorsM = emPacked.b * uRepulsors;
-          // Keep glow islands cold in diffuse until each system ignites —
-          // otherwise the arc reactor plate looks powered the moment it
-          // becomes visible (gold bezel is often albedo-only).
-          float coldMask =
-            emPacked.r * (1.0 - uReactor) +
-            emPacked.g * (1.0 - uEyes) +
-            emPacked.b * (1.0 - uRepulsors);
-          coldMask = clamp(coldMask, 0.0, 1.0);
-          diffuseColor.rgb *= 1.0 - coldMask * 0.97;
-          // Crush residual highlight so bloom can't relight a "cold" reactor
-          diffuseColor.rgb = mix(
-            diffuseColor.rgb,
-            diffuseColor.rgb * diffuseColor.rgb,
-            coldMask * 0.65
-          );
           // Cyan systems + warm eye slits (Mark III HUD)
           vec3 sysTint =
             vec3(0.45, 0.90, 1.0) * (reactorM + repulsorsM) +
@@ -559,7 +357,7 @@ export function attachSystemsShader(
       );
   };
 
-  material.customProgramCacheKey = () => 'ironman-systems-glow-v3';
+  material.customProgramCacheKey = () => 'ironman-systems-glow-v1';
 }
 
 export function applySystemUniforms(
