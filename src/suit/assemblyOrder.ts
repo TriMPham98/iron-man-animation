@@ -328,6 +328,30 @@ export function planWaveOrder(
     remaining.delete(best);
   }
 
+  // Torso: seat the sternum / arc-reactor plate last so the chest core
+  // only lands once surrounding plates have something to clamp onto —
+  // and so reactor ignition can wait on a fully complete torso.
+  if (wave === 'torso' && ordered.length > 2) {
+    let reactorIdx = 0;
+    let bestScore = Infinity;
+    for (let i = 0; i < ordered.length; i++) {
+      const p = ordered[i].restPosition;
+      // Prefer front-center chest (low |x|, moderate y, positive z)
+      const score =
+        Math.hypot(p.x, Math.max(0, -p.z) * 0.5) * 2.2 +
+        Math.abs(p.y - (bounds.minY + bounds.maxY) * 0.55) * 0.35 -
+        p.z * 0.4;
+      if (score < bestScore) {
+        bestScore = score;
+        reactorIdx = i;
+      }
+    }
+    if (reactorIdx < ordered.length - 1) {
+      const [reactorPiece] = ordered.splice(reactorIdx, 1);
+      ordered.push(reactorPiece);
+    }
+  }
+
   return { ordered, seedCount };
 }
 

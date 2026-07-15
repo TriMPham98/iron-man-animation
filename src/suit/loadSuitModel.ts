@@ -84,11 +84,17 @@ function classifyWave(
   // Soft core strip before arms dominate
   if (yNorm < 0.66 && rNorm < ARM_RNORM) return 'torso';
 
+  // Arc reactor / sternum / center chest — always torso.
+  // A higher collar centroid with rNorm just over 0.3 was getting stolen by
+  // the shoulder band, so the reactor plate flew in (and looked lit) while
+  // the rest of the chest was still assembling.
+  if (yNorm >= 0.58 && yNorm <= 0.82 && rNorm < 0.36) return 'torso';
+
   // Upper arms (below true shoulder / collar band)
   if (yNorm >= 0.62 && yNorm < 0.78 && rNorm > ARM_RNORM) return 'arms';
 
-  // Shoulders / pauldrons — lateral collar only (not skull)
-  if (yNorm >= 0.72 && yNorm <= 0.86 && rNorm > 0.3) return 'shoulders';
+  // Shoulders / pauldrons — true lateral collar only (not sternum / reactor)
+  if (yNorm >= 0.72 && yNorm <= 0.86 && rNorm > 0.42) return 'shoulders';
 
   // Chest / back / abs / collar core
   if (yNorm >= 0.55 && yNorm <= 0.86) return 'torso';
@@ -97,6 +103,74 @@ function classifyWave(
   if (yNorm < 0.62) return 'thighs';
   if (rNorm > 0.5) return 'arms';
   return 'torso';
+}
+
+/**
+ * True if this shard owns the arc-reactor disk: tight front-sternum centroid
+ * plus UV hits on the packed reactor (R) channel. Kept strict so thighs /
+ * abs plates are not swallowed into the torso wave.
+ */
+function shardCarriesReactor(
+  shard: MeshShard,
+  minY: number,
+  yRange: number,
+): boolean {
+  const mesh = shard.mesh;
+  const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+  const uv = mesh.geometry.getAttribute('uv') as THREE.BufferAttribute | null;
+  if (!pos || pos.count < 3) return false;
+
+  const c = shard.centroid;
+  const yNorm = (c.y - minY) / yRange;
+  const radial = Math.hypot(c.x, c.z);
+  // Must sit on the sternum band (not thighs, not pauldrons)
+  if (yNorm < 0.55 || yNorm > 0.8) return false;
+  if (radial > 0.28) return false;
+  if (c.z < 0.0) return false;
+
+  // UV path: packed emissive R = reactor (dilated to cover gold bezel)
+  const mat = (
+    Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+  ) as THREE.MeshStandardMaterial | undefined;
+  const emap = mat?.emissiveMap;
+  if (!uv || !emap?.image) {
+    // No atlas to sample — still treat a very central front shard as reactor
+    return radial < 0.16 && c.z > 0.08;
+  }
+
+  let w = 0;
+  let h = 0;
+  let pixels: Uint8ClampedArray | Uint8Array | null = null;
+  try {
+    if (emap.image instanceof HTMLCanvasElement) {
+      const ctx = emap.image.getContext('2d');
+      if (ctx) {
+        w = emap.image.width;
+        h = emap.image.height;
+        pixels = ctx.getImageData(0, 0, w, h).data;
+      }
+    }
+  } catch {
+    pixels = null;
+  }
+  if (!pixels || w < 2 || h < 2) {
+    return radial < 0.16 && c.z > 0.08;
+  }
+
+  let hot = 0;
+  let checked = 0;
+  const step = Math.max(1, Math.floor(uv.count / 64));
+  for (let i = 0; i < uv.count; i += step) {
+    const u = THREE.MathUtils.clamp(uv.getX(i), 0, 1);
+    const v = THREE.MathUtils.clamp(uv.getY(i), 0, 1);
+    const px = Math.round(u * (w - 1));
+    const py = Math.round(v * (h - 1));
+    const si = (py * w + px) * 4;
+    // Packed map R = reactor
+    if ((pixels[si] ?? 0) > 50) hot++;
+    checked++;
+  }
+  return checked > 0 && hot / checked > 0.12;
 }
 
 /**
@@ -154,8 +228,8 @@ function prepareGlowMaterials(root: THREE.Object3D): GlowMaterial[] {
         2.4,
       );
 
-      // Cold sockets until each system ignites
-      darkenAlbedoGlowRegions(m);
+      // Cold sockets until each system ignites (root → sternum UV mask)
+      darkenAlbedoGlowRegions(m, root);
       packSystemsEmissiveMap(root, m);
       attachSystemsShader(m);
 
@@ -281,6 +355,18 @@ export async function loadSuitModel(
     shard,
     wave: classifyWave(shard.centroid, minY, yRange, maxRadial),
   }));
+
+  // Force any shard that carries the arc-reactor UV island into the torso
+  // wave. Coarse spatial buckets can park the sternum plate on a low
+  // centroid (thighs/hips), so it flies in glowing long before the chest
+  // is built — the bug in the user's 28% screenshot.
+  for (const entry of tagged) {
+    if (entry.wave === 'torso' || entry.wave === 'helmet') continue;
+    if (shardCarriesReactor(entry.shard, minY, yRange)) {
+      entry.wave = 'torso';
+    }
+  }
+
   const sorted = sortShardsInsideOut(tagged.map((t) => t.shard));
   const waveByShard = new Map(
     tagged.map((t) => [t.shard, t.wave] as const),

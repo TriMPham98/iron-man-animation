@@ -486,13 +486,18 @@ export function createAssemblyTimeline(
     }
 
     // ── Sequenced systems ──────────────────────────────────────────
-    // Arc reactor after torso + shoulders are fully locked (chest reads complete)
-    // — same “wait for the plates” idea as the faceplate/eyes beat.
-    const chestLocked = Math.max(
-      waveLockEnd.torso ?? 7.2,
+    // Keep the arc reactor COLD until every armor plate has locked —
+    // including the helmet. Igniting after shoulders left the chest
+    // glowing while helmet shards were still mid-flight (73% scrub).
+    const helmetDone = waveLockEnd.helmet ?? 16.0;
+    const torsoDone = waveLockEnd.torso ?? 7.2;
+    const armorDone = Math.max(
+      torsoDone,
       waveLockEnd.shoulders ?? 9.5,
+      waveLockEnd.gauntlets ?? 12.5,
+      helmetDone,
     );
-    const reactorT = chestLocked + 0.45;
+    const reactorT = armorDone + 0.4;
     timeline.call(
       () => {
         callbacks.onStatus?.('ARC REACTOR IGNITION…');
@@ -518,7 +523,7 @@ export function createAssemblyTimeline(
       reactorT + 1.3,
     );
 
-    // Hand & foot repulsors after gauntlets clamp
+    // Hand & foot repulsors after gauntlets clamp (still before helmet)
     const handsT = (waveLockEnd.gauntlets ?? 12.5) + 0.1;
     timeline.to(
       repulsorsProxy,
@@ -531,8 +536,8 @@ export function createAssemblyTimeline(
       handsT,
     );
 
-    // Face-mask eyes after helmet seals (slower, dramatic)
-    const eyesT = (waveLockEnd.helmet ?? 16.0) + 0.28;
+    // Face-mask eyes after reactor comes online (helmet already sealed)
+    const eyesT = reactorT + 1.0;
     timeline.call(
       () => {
         callbacks.onStatus?.('HELMET SEALED — HUD ONLINE…');
@@ -585,23 +590,7 @@ export function createAssemblyTimeline(
       0.3,
     );
 
-    // Favor chest as shoulders lock and reactor ignites
-    timeline.to(
-      cameraProxy,
-      {
-        x: 0.45,
-        y: 1.25,
-        z: 2.55,
-        ly: 1.22,
-        lx: 0,
-        duration: 2.6,
-        ease: 'power2.inOut',
-        onUpdate: applyCamera,
-      },
-      reactorT - 1.0,
-    );
-
-    // Slow push-in on the helmet / faceplate beat
+    // Slow push-in on the helmet / faceplate beat (reactor still dark)
     timeline.to(
       cameraProxy,
       {
@@ -615,6 +604,22 @@ export function createAssemblyTimeline(
         onUpdate: applyCamera,
       },
       (waveStartAt.helmet ?? WAVE_EARLIEST.helmet ?? 13.2) - 0.4,
+    );
+
+    // Favor chest as the reactor ignites (after every plate is home)
+    timeline.to(
+      cameraProxy,
+      {
+        x: 0.45,
+        y: 1.25,
+        z: 2.55,
+        ly: 1.22,
+        lx: 0,
+        duration: 2.2,
+        ease: 'power2.inOut',
+        onUpdate: applyCamera,
+      },
+      reactorT - 0.55,
     );
 
     // Hold on the eyes a moment, then pull back to hero
