@@ -105,39 +105,46 @@
       </header>
 
       <footer id="hud-bottom" class="hud hud-bottom hidden">
-        <div class="hud-left">
-          <span id="integrity">INTEGRITY — — —</span>
-          <span id="hint" class="hint">Drag to orbit · click plate to inspect · R replay · Space pause</span>
-        </div>
-        <button id="replay-btn" type="button" class="replay-btn" disabled>
-          REPLAY
-        </button>
-      </footer>
+        <div class="hud-bottom-row">
+          <div class="hud-left">
+            <span id="integrity">INTEGRITY — — —</span>
+            <span id="hint" class="hint">Drag to orbit · click plate to inspect · R replay · Space pause</span>
+          </div>
 
-      <div id="debug-scrubber" class="debug-scrubber hidden" aria-label="Assembly debug scrubber">
-        <div class="debug-scrubber-row">
-          <button id="debug-pause-btn" type="button" class="debug-pause-btn" title="Pause / play (Space)">
-            PAUSE
+          <div id="debug-scrubber" class="debug-scrubber" aria-label="Assembly progress">
+            <div class="debug-scrubber-row">
+              <button id="debug-pause-btn" type="button" class="debug-pause-btn" title="Pause / play (Space)">
+                PAUSE
+              </button>
+              <input
+                id="debug-progress"
+                class="debug-progress"
+                type="range"
+                min="0"
+                max="1000"
+                value="0"
+                step="1"
+                aria-label="Assembly progress"
+              />
+              <span id="debug-progress-label" class="debug-progress-label">0%</span>
+            </div>
+          </div>
+
+          <button id="replay-btn" type="button" class="replay-btn" disabled>
+            REPLAY
           </button>
-          <input
-            id="debug-progress"
-            class="debug-progress"
-            type="range"
-            min="0"
-            max="1000"
-            value="0"
-            step="1"
-            aria-label="Assembly progress"
-          />
-          <span id="debug-progress-label" class="debug-progress-label">0%</span>
         </div>
-        <div id="debug-active-piece" class="debug-active-piece" aria-live="polite">
-          MOVING — —
+
+        <div class="hud-bottom-meta">
+          <div id="debug-active-piece" class="debug-active-piece" aria-live="polite">
+            MOVING — —
+          </div>
+          <div id="debug-picked-piece" class="debug-picked-piece" aria-live="polite">
+            PICK · click a plate
+          </div>
+          <div class="hud-bottom-meta-spacer" aria-hidden="true"></div>
         </div>
-        <div id="debug-picked-piece" class="debug-picked-piece" aria-live="polite">
-          PICK · click a plate
-        </div>
-      </div>
+      </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

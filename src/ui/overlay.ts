@@ -133,6 +133,8 @@ export function createOverlay(): OverlayHandles {
       hudBottom.classList.remove('hidden');
       // status lives inside top bar — no floating overlay over the suit
       hudCenter.classList.remove('hidden');
+      // progress controls live in the bottom bar
+      debugScrubber.classList.remove('hidden');
     },
     setStatus: (text: string, online = false) => {
       status.textContent = text;

@@ -180,16 +180,54 @@ body {
 }
 
 .hud-bottom {
+  --hud-bottom-cols: minmax(0, 1fr) minmax(14rem, 2.4fr) minmax(0, 1fr);
+  --hud-bottom-gap: 0.85rem 1.1rem;
   bottom: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+  padding-top: 0.85rem;
+  padding-bottom: 0.85rem;
   border-top: 1px solid rgba(201, 162, 39, 0.18);
-  background: linear-gradient(to top, rgba(5, 5, 8, 0.75), transparent);
+  background: linear-gradient(to top, rgba(5, 5, 8, 0.88) 55%, transparent);
   pointer-events: none;
+}
+
+.hud-bottom-row {
+  display: grid;
+  grid-template-columns: var(--hud-bottom-cols);
+  align-items: center;
+  gap: var(--hud-bottom-gap);
+  width: 100%;
 }
 
 .hud-left {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.3rem;
+  min-width: 0;
+  justify-self: stretch;
+  justify-content: center;
+}
+
+.hud-left #integrity {
+  line-height: 1.25;
+  letter-spacing: 0.16em;
+}
+
+.hud-bottom .replay-btn {
+  justify-self: end;
+  align-self: center;
+}
+
+/* Same 3 columns as the control row so MOVING / PICK line up with integrity / scrubber / replay */
+.hud-bottom-meta {
+  display: grid;
+  grid-template-columns: var(--hud-bottom-cols);
+  align-items: start;
+  gap: var(--hud-bottom-gap);
+  width: 100%;
+  min-height: 1.15em;
 }
 
 .hint {
@@ -278,55 +316,35 @@ body {
   cursor: default;
 }
 
-/* —— debug scrubber —— */
+/* —— progress scrubber (inside bottom HUD) —— */
 .debug-scrubber {
-  position: absolute;
-  left: 50%;
-  bottom: 4.75rem;
-  transform: translateX(-50%);
-  z-index: 12;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  width: min(560px, calc(100vw - 2rem));
-  padding: 0.55rem 0.75rem 0.5rem;
-  background: rgba(5, 5, 8, 0.78);
-  border: 1px solid rgba(201, 162, 39, 0.28);
-  backdrop-filter: blur(8px);
+  justify-content: center;
+  align-items: stretch;
+  min-width: 0;
+  width: 100%;
+  max-width: 38rem;
+  justify-self: center;
   pointer-events: auto;
-  transition: opacity 0.4s ease, visibility 0.4s ease;
+  transition: opacity 0.35s ease;
 }
 
 .debug-scrubber.hidden {
   opacity: 0;
-  visibility: hidden;
   pointer-events: none;
 }
 
 .debug-scrubber-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 4.25rem minmax(0, 1fr) 2.75rem;
   align-items: center;
-  gap: 0.75rem;
+  column-gap: 0.65rem;
   width: 100%;
+  padding: 0.15rem 0;
 }
 
-.debug-active-piece {
-  font-size: 0.55rem;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-height: 1.1em;
-  font-variant-numeric: tabular-nums;
-  padding-left: 0.1rem;
-}
-
-.debug-active-piece.has-active {
-  color: #7ee8ff;
-  text-shadow: 0 0 10px rgba(126, 232, 255, 0.25);
-}
-
+.debug-active-piece,
 .debug-picked-piece {
   font-size: 0.55rem;
   letter-spacing: 0.1em;
@@ -334,9 +352,32 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-height: 1.1em;
+  min-height: 1.15em;
+  line-height: 1.25;
   font-variant-numeric: tabular-nums;
-  padding-left: 0.1rem;
+  min-width: 0;
+}
+
+/* Under integrity — left column */
+.debug-active-piece {
+  justify-self: stretch;
+  text-align: left;
+}
+
+/* Under scrubber — true center of the middle column */
+.debug-picked-piece {
+  justify-self: stretch;
+  text-align: center;
+}
+
+/* Balances the right column under REPLAY */
+.hud-bottom-meta-spacer {
+  min-width: 0;
+}
+
+.debug-active-piece.has-active {
+  color: #7ee8ff;
+  text-shadow: 0 0 10px rgba(126, 232, 255, 0.25);
 }
 
 .debug-picked-piece.has-pick {
@@ -345,13 +386,14 @@ body {
 }
 
 .debug-pause-btn {
-  flex: 0 0 auto;
+  justify-self: start;
   font-family: var(--mono);
   font-size: 0.58rem;
   font-weight: 600;
   letter-spacing: 0.16em;
   padding: 0.45rem 0.7rem;
-  min-width: 4.25rem;
+  width: 100%;
+  min-width: 0;
   height: 2rem;
   color: var(--gold);
   background: transparent;
@@ -466,14 +508,16 @@ body {
 }
 
 .debug-progress-label {
-  flex: 0 0 auto;
+  justify-self: end;
   font-size: 0.58rem;
   letter-spacing: 0.12em;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   min-width: 2.75rem;
+  width: 100%;
   text-align: right;
-  line-height: 1.25rem;
+  line-height: 2rem;
+  box-sizing: border-box;
 }
 
 @media (max-width: 600px) {
@@ -492,16 +536,54 @@ body {
     gap: 0.35rem;
   }
 
+  .hud-bottom {
+    --hud-bottom-cols: 1fr;
+    --hud-bottom-gap: 0.45rem;
+  }
+
+  .hud-bottom-row {
+    justify-items: stretch;
+  }
+
+  .hud-left {
+    text-align: center;
+    align-items: center;
+  }
+
+  .hud-bottom .replay-btn {
+    justify-self: center;
+    order: 3;
+  }
+
   .debug-scrubber {
-    bottom: 4.25rem;
-    width: calc(100vw - 1.25rem);
-    gap: 0.5rem;
-    padding: 0.45rem 0.55rem;
+    max-width: none;
+    order: 2;
+  }
+
+  .hud-bottom-meta {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 0.2rem;
+    text-align: center;
+  }
+
+  .debug-active-piece,
+  .debug-picked-piece {
+    text-align: center;
+    width: 100%;
+  }
+
+  .hud-bottom-meta-spacer {
+    display: none;
+  }
+
+  .debug-scrubber-row {
+    grid-template-columns: 3.75rem minmax(0, 1fr) 2.5rem;
+    column-gap: 0.5rem;
   }
 
   .debug-pause-btn {
-    min-width: 3.75rem;
-    padding: 0.4rem 0.5rem;
+    padding: 0.4rem 0.45rem;
     font-size: 0.52rem;
   }
 
