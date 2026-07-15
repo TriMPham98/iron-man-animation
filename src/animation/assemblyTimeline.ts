@@ -344,6 +344,9 @@ export function createAssemblyTimeline(
         const slamDur = dockDur * (isHelmet ? 0.55 : 0.45);
         const settleDur = dockDur - slamDur;
 
+        // Explicit false at t=0 so reverse scrub restores hidden state
+        // (GSAP set() alone does not reliably reverse booleans).
+        timeline.set(mesh, { visible: false }, 0);
         timeline.set(mesh, { visible: true }, t);
 
         // ── Position: magnetic arc → approach → overshoot → rest ──
@@ -650,21 +653,29 @@ export function createAssemblyTimeline(
   const syncAfterSeek = (progress01: number) => {
     const timeline = ensureTl();
     const p = THREE.MathUtils.clamp(progress01, 0, 1);
-    // Apply all tween property states; suppress call()/onComplete so we
-    // control final-mesh swap and status ourselves while scrubbing.
-    timeline.progress(p, true);
-    applyCamera();
-    syncSystems();
-
     const dur = Math.max(timeline.duration(), 1e-6);
     const t = p * dur;
+
+    // Suppress call()/onComplete — we own final-mesh swap + status while scrubbing.
     if (t >= finalSwapTime - 1e-4 || p >= 0.999) {
+      timeline.progress(p, true);
+      applyCamera();
+      syncSystems();
       suit.showFinal();
     } else {
-      // Hide seamless mesh without wiping shard visibility — then re-apply
-      // timeline so GSAP visibility/position state is correct after a prior
-      // showFinal() hid every piece.
+      // Leaving seamless / end state: showFinal() forced every shard
+      // invisible outside GSAP. Re-seed start pose + visible:false, then
+      // progress 0 → p so reverse scrub re-applies every fromTo/set.
       suit.resumeAssemblyVisuals();
+      for (const piece of suit.pieces) {
+        const mesh = piece.mesh;
+        mesh.visible = false;
+        mesh.position.copy(piece.startPosition);
+        mesh.rotation.copy(piece.startRotation);
+        mesh.scale.copy(piece.startScale);
+      }
+      // Invalidate cached start values so the next render samples cleanly
+      timeline.progress(0, true);
       timeline.progress(p, true);
       applyCamera();
       syncSystems();
