@@ -22,13 +22,20 @@ export type { GlowMaterial } from './systemsGlow';
 /**
  * Map a shard to a body region for Mark III–style waves.
  *
- * Calibrated on this GLB’s envelope (after normalize):
- *   - outer thigh / hip armor: rNorm ≤ ~0.54
- *   - true outer limbs (forearm/hand): rNorm ≥ ~0.70
+ * This GLB’s centroid envelope is tight (radial ≈ 0–0.37m). Two different
+ * things sit at similar heights near the hip:
+ *   - body outer-thigh plates:  r ≲ 0.24 (on the leg surface)
+ *   - hanging hands / gauntlets: r ≳ 0.26 (beside the thigh at rest)
  *
- * Hands are classified as **arms** (not a separate early wave and never
- * thighs). The arm wave grows proximal→distal so fingers clamp only after
- * the arm stump exists. Outer-thigh armor stays in leg waves.
+ * Using height alone folds hands into the thigh wave → they clamp early and
+ * float with no arm stump. Using rNorm alone (relative to maxR ≈ outer hand)
+ * folds outer thighs into arms. Split on **absolute radial** + height.
+ *
+ * Measured:
+ *   - outer thigh body armor: y ≈ 0.85–1.05, r ≈ 0.15–0.24
+ *   - hands at hang pose:     y ≈ 0.90–1.00, r ≈ 0.28–0.37
+ *   - upper arms:             y ≈ 1.07–1.30, r ≈ 0.16–0.33
+ *   - shoulders:              y ≈ 1.41–1.50
  */
 function classifyWave(
   c: THREE.Vector3,
@@ -40,16 +47,16 @@ function classifyWave(
   const radial = Math.hypot(c.x, c.z);
   const rNorm = radial / Math.max(maxRadial, 1e-4);
 
-  // Beyond body armor envelope — forearm + hand (was wrongly thigh at 0.77)
-  const OUTER_LIMB_RNORM = 0.7;
-  // Moderate lateral above the hips — upper arm / elbow
-  const ARM_RNORM = 0.38;
-  // Skull is narrower than pauldrons — keep crown/face out of shoulder wave
+  // Soft torso / pelvis core (normalized)
+  const CORE_RNORM = 0.22;
+  // Skull narrower than pauldrons
   const HEAD_RNORM = 0.42;
+  // Absolute meters — hands sit further from the spine than body thigh armor
+  const HAND_RADIAL = 0.26;
+  const ARM_Y_MIN = minY + yRange * 0.6; // ~1.05 — upper-arm band
+  const SHOULDER_Y_MIN = minY + yRange * 0.78;
 
-  // ── Head first (before shoulder band steals crown / faceplate shards) ──
-  // Previous threshold (0.88) left the gold crown in "shoulders", so it flew
-  // in mid-shoulder-wave with nothing under it.
+  // ── Head first ────────────────────────────────────────────────
   if (yNorm > 0.82 && rNorm <= HEAD_RNORM) return 'helmet';
   if (yNorm > 0.86) return 'helmet';
 
@@ -59,49 +66,39 @@ function classifyWave(
   // Lower legs
   if (yNorm < 0.28) return 'calves';
 
-  // ── Outer limb chain first (hands must never join thigh wave) ────
-  // Hands hang at hip/thigh height but far outside the body; body thigh
-  // plates top out ~0.54 rNorm on this mesh.
-  if (rNorm >= OUTER_LIMB_RNORM) {
-    if (yNorm >= 0.84) return 'helmet'; // stray high outer = helmet flare
-    if (yNorm < 0.78) return 'arms'; // forearm + hand (distal end of arm wave)
-    return 'shoulders';
+  // ── Hanging hands / gauntlets (before thigh catch-all) ────────
+  // Rest beside the outer thigh but must ride the arm wave so they
+  // only clamp after the shoulder→arm stump exists.
+  if (yNorm >= 0.35 && yNorm < 0.6 && radial >= HAND_RADIAL) {
+    return 'arms';
   }
 
-  // Thighs — body armor only (inner of OUTER_LIMB_RNORM)
-  if (yNorm < 0.52) {
-    if (yNorm >= 0.48 && rNorm <= 0.16) return 'hips';
+  // ── Legs — body armor only (inside hand radial) ───────────────
+  if (c.y < ARM_Y_MIN) {
+    if (yNorm >= 0.48 && rNorm <= CORE_RNORM) return 'hips';
     return 'thighs';
   }
 
-  // Hip / lower abdomen: core hips vs outer thigh guards vs lower arm
-  if (yNorm < 0.62) {
-    if (rNorm >= 0.58) return 'arms';
-    if (rNorm <= 0.16) return 'hips';
-    return 'thighs';
-  }
+  // Soft torso core (abs / lower chest) before lateral arms
+  if (yNorm < 0.72 && rNorm < 0.28) return 'torso';
 
-  // Soft core strip before arms dominate
-  if (yNorm < 0.66 && rNorm < ARM_RNORM) return 'torso';
-
-  // Arc reactor / sternum / center chest — always torso.
-  // A higher collar centroid with rNorm just over 0.3 was getting stolen by
-  // the shoulder band, so the reactor plate flew in (and looked lit) while
-  // the rest of the chest was still assembling.
+  // Arc reactor / sternum / center chest
   if (yNorm >= 0.58 && yNorm <= 0.82 && rNorm < 0.36) return 'torso';
 
-  // Upper arms (below true shoulder / collar band)
-  if (yNorm >= 0.62 && yNorm < 0.78 && rNorm > ARM_RNORM) return 'arms';
+  // Upper arms — at/above ARM_Y_MIN, lateral of the torso core
+  if (c.y < SHOULDER_Y_MIN && rNorm > CORE_RNORM) return 'arms';
 
-  // Shoulders / pauldrons — true lateral collar only (not sternum / reactor)
-  if (yNorm >= 0.72 && yNorm <= 0.86 && rNorm > 0.42) return 'shoulders';
+  // Shoulders / pauldrons — high lateral collar
+  if (yNorm >= 0.72 && yNorm <= 0.86 && rNorm > 0.35) return 'shoulders';
 
-  // Chest / back / abs / collar core
+  // Chest / back / collar core
   if (yNorm >= 0.55 && yNorm <= 0.86) return 'torso';
 
   // Fallbacks
-  if (yNorm < 0.62) return 'thighs';
-  if (rNorm > 0.5) return 'arms';
+  if (c.y < ARM_Y_MIN) {
+    return radial >= HAND_RADIAL ? 'arms' : 'thighs';
+  }
+  if (rNorm > 0.35) return 'arms';
   return 'torso';
 }
 
