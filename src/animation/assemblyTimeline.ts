@@ -43,56 +43,33 @@ export interface AssemblyController {
 }
 
 /**
- * Mark III bottom→top timing — snappy plate-to-plate within a region,
- * with a beat of stillness only after each section fully locks.
+ * Mark III bottom→top timing — one continuous cascade.
  *
- * These are *earliest* start times. Actual start is gated so the next
- * wave waits until the previous section has finished (+ section pad).
+ * Root cause of “section pauses”: next wave was scheduled from previous
+ * *lock end* minus a small overlap (~0.45s). With plate travel ~1.1s that
+ * left ~0.7s after the last launch of a wave with nothing new starting.
+ *
+ * Fix: chain each wave to the previous wave’s last *launch* (+ tiny gap),
+ * not its last lock. WAVE_EARLIEST is only a soft floor for boots / open.
  */
 const WAVE_EARLIEST: Record<string, number> = {
-  boots: 0.35,
-  calves: 1.15,
-  thighs: 2.15,
-  hips: 3.25,
-  torso: 4.2,
-  shoulders: 6.0,
-  arms: 7.2,
-  gauntlets: 8.6,
-  // Extra pause before the helmet — faceplate is the hero beat
-  helmet: 10.4,
-  power: 14.2,
-};
-
-/**
- * How early the next wave may begin before the previous wave’s last plate
- * finishes locking. 0 = next section only after the prior is fully locked
- * (pause lives in WAVE_PAD_AFTER / WAVE_SECTION_PAD).
- */
-const WAVE_OVERLAP = 0;
-
-/**
- * Per-wave overlap override. Extremities need the prior stump fully locked
- * (hands must wait for arms) — keep 0 so the next wave never starts early.
- */
-const WAVE_OVERLAP_AFTER: Partial<Record<string, number>> = {
+  boots: 0.2,
+  calves: 0,
+  thighs: 0,
+  hips: 0,
+  torso: 0,
   shoulders: 0,
   arms: 0,
   gauntlets: 0,
+  helmet: 0,
+  power: 0,
 };
 
 /**
- * Default hold after a section completes before the next body region starts.
- * This is the only intentional “pause” between similar-plate bursts.
+ * Seconds after the previous wave’s last plate *launches* before the next
+ * wave’s first plate launches. Keep tiny so sections blend with no idle.
  */
-const WAVE_SECTION_PAD = 0.07;
-
-/** Extra hold after specific waves (on top of WAVE_SECTION_PAD). */
-const WAVE_PAD_AFTER: Partial<Record<string, number>> = {
-  torso: 0.025,
-  arms: 0.015,
-  gauntlets: 0.055,
-  helmet: 0.03,
-};
+const WAVE_CHAIN_GAP = 0.04;
 
 /** Camera micro-shake amplitude when a wave finishes locking. */
 const WAVE_SHAKE: Partial<Record<string, number>> = {
@@ -151,7 +128,7 @@ export function createAssemblyTimeline(
 
   /**
    * Launch gap between plates *within* the same body section.
-   * Kept tight so similar parts stream in; section pauses happen between waves.
+   * Kept tight so similar parts stream in as one cascade.
    */
   const staggerFor = (count: number, helmet = false) => {
     if (count <= 1) return 0;
@@ -291,6 +268,8 @@ export function createAssemblyTimeline(
     let built: typeof suit.pieces = [];
 
     let prevLockEnd = 0;
+    /** When the previous wave’s last plate *launched* (not locked). */
+    let prevLastLaunch = 0;
     let prevWave: string | null = null;
 
     for (const wave of WAVE_ORDER) {
@@ -303,18 +282,10 @@ export function createAssemblyTimeline(
       }
 
       const earliest = WAVE_EARLIEST[wave] ?? 0;
-      // Don't start a region until the previous section has locked —
-      // then hold WAVE_SECTION_PAD so the completed band can read.
-      const overlap =
-        prevWave != null
-          ? (WAVE_OVERLAP_AFTER[prevWave] ?? WAVE_OVERLAP)
-          : WAVE_OVERLAP;
-      const sectionPad =
-        prevLockEnd > 0
-          ? WAVE_SECTION_PAD + (WAVE_PAD_AFTER[prevWave ?? ''] ?? 0)
-          : 0;
+      // Chain off previous last *launch* so there’s no ~0.7s dead air while
+      // the final plates of a section are still mid-flight.
       const afterPrev =
-        prevLockEnd > 0 ? prevLockEnd - overlap + sectionPad : 0;
+        prevWave != null ? prevLastLaunch + WAVE_CHAIN_GAP : 0;
       const waveStart = Math.max(earliest, afterPrev);
       waveStartAt[wave] = waveStart;
 
@@ -333,10 +304,12 @@ export function createAssemblyTimeline(
       );
 
       let lastEnd = waveStart;
+      let lastLaunch = waveStart;
 
       pieces.forEach((piece, i) => {
         const t = waveStart + i * stagger;
         const mesh = piece.mesh;
+        lastLaunch = t;
         lastEnd = t + duration;
         motionSpans.push({
           id: piece.id,
@@ -493,6 +466,7 @@ export function createAssemblyTimeline(
 
       waveLockEnd[wave] = lastEnd;
       prevLockEnd = lastEnd;
+      prevLastLaunch = lastLaunch;
       prevWave = wave;
       // Accumulate built structure for later foundation selection
       if (pieces.length > 0) {
