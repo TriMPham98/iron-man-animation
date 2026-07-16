@@ -43,48 +43,55 @@ export interface AssemblyController {
 }
 
 /**
- * Mark III bottom→top timing — deliberate suit-up with a slower helmet
- * close (movie faceplate beat) and sequenced systems ignition.
+ * Mark III bottom→top timing — snappy plate-to-plate within a region,
+ * with a beat of stillness only after each section fully locks.
  *
- * These are *earliest* start times. Actual start is also gated so each wave
- * waits until the previous wave is mostly locked — plates always have
- * something physical to clamp onto.
+ * These are *earliest* start times. Actual start is gated so the next
+ * wave waits until the previous section has finished (+ section pad).
  */
 const WAVE_EARLIEST: Record<string, number> = {
-  boots: 0.5,
-  calves: 1.75,
-  thighs: 3.25,
-  hips: 4.7,
-  torso: 6.15,
-  shoulders: 8.7,
-  arms: 10.5,
-  gauntlets: 12.3,
+  boots: 0.35,
+  calves: 1.15,
+  thighs: 2.15,
+  hips: 3.25,
+  torso: 4.2,
+  shoulders: 6.0,
+  arms: 7.2,
+  gauntlets: 8.6,
   // Extra pause before the helmet — faceplate is the hero beat
-  helmet: 14.7,
-  power: 19.5,
+  helmet: 10.4,
+  power: 14.2,
 };
 
 /**
  * How early the next wave may begin before the previous wave’s last plate
- * finishes locking. Small overlap keeps the suit-up fluid.
+ * finishes locking. 0 = next section only after the prior is fully locked
+ * (pause lives in WAVE_PAD_AFTER / WAVE_SECTION_PAD).
  */
-const WAVE_OVERLAP = 0.28;
+const WAVE_OVERLAP = 0;
 
 /**
  * Per-wave overlap override. Extremities need the prior stump fully locked
- * (hands must wait for arms) — use 0 so the next wave cannot start early.
+ * (hands must wait for arms) — keep 0 so the next wave never starts early.
  */
 const WAVE_OVERLAP_AFTER: Partial<Record<string, number>> = {
-  shoulders: 0.12,
+  shoulders: 0,
   arms: 0,
   gauntlets: 0,
 };
 
-/** Extra hold after a wave before the next may start (helmet hero beat). */
+/**
+ * Default hold after a section completes before the next body region starts.
+ * This is the only intentional “pause” between similar-plate bursts.
+ */
+const WAVE_SECTION_PAD = 0.07;
+
+/** Extra hold after specific waves (on top of WAVE_SECTION_PAD). */
 const WAVE_PAD_AFTER: Partial<Record<string, number>> = {
-  arms: 0.12,
-  gauntlets: 0.35,
-  helmet: 0.15,
+  torso: 0.025,
+  arms: 0.015,
+  gauntlets: 0.055,
+  helmet: 0.03,
 };
 
 /** Camera micro-shake amplitude when a wave finishes locking. */
@@ -100,10 +107,10 @@ const WAVE_SHAKE: Partial<Record<string, number>> = {
   helmet: 0.02,
 };
 
-/** Default plate travel */
-const PIECE_DURATION = 1.35;
+/** Default plate travel — slightly snappier so same-wave clamps read as a burst */
+const PIECE_DURATION = 1.12;
 /** Helmet / faceplate — heavier, more movie-like hydraulic close */
-const HELMET_PIECE_DURATION = 2.25;
+const HELMET_PIECE_DURATION = 2.05;
 
 /** Fraction of travel spent on the magnetic approach (rest is dock + clamp). */
 const APPROACH_FRAC = 0.78;
@@ -142,13 +149,18 @@ export function createAssemblyTimeline(
     callbacks.onActivePieces?.(active);
   };
 
+  /**
+   * Launch gap between plates *within* the same body section.
+   * Kept tight so similar parts stream in; section pauses happen between waves.
+   */
   const staggerFor = (count: number, helmet = false) => {
     if (count <= 1) return 0;
     if (helmet) {
-      // Wider gaps so each head plate reads as a separate clamp
-      return Math.min(0.32, Math.max(0.1, 1.85 / count));
+      // Still readable as separate clamps, but not a long wait between each
+      return Math.min(0.2, Math.max(0.065, 1.15 / count));
     }
-    return Math.min(0.24, Math.max(0.055, 1.45 / count));
+    // Dense waves (thighs/torso/arms) fire almost as a cascade
+    return Math.min(0.1, Math.max(0.022, 0.65 / count));
   };
 
   const cameraProxy = {
@@ -291,16 +303,18 @@ export function createAssemblyTimeline(
       }
 
       const earliest = WAVE_EARLIEST[wave] ?? 0;
-      // Don't start a region until the previous one is almost locked —
-      // collar / shoulders / hands can't float before their stump exists.
+      // Don't start a region until the previous section has locked —
+      // then hold WAVE_SECTION_PAD so the completed band can read.
       const overlap =
         prevWave != null
           ? (WAVE_OVERLAP_AFTER[prevWave] ?? WAVE_OVERLAP)
           : WAVE_OVERLAP;
-      const afterPrev =
+      const sectionPad =
         prevLockEnd > 0
-          ? prevLockEnd - overlap + (WAVE_PAD_AFTER[prevWave ?? ''] ?? 0)
+          ? WAVE_SECTION_PAD + (WAVE_PAD_AFTER[prevWave ?? ''] ?? 0)
           : 0;
+      const afterPrev =
+        prevLockEnd > 0 ? prevLockEnd - overlap + sectionPad : 0;
       const waveStart = Math.max(earliest, afterPrev);
       waveStartAt[wave] = waveStart;
 
