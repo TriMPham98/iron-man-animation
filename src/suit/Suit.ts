@@ -4,7 +4,7 @@ import {
   selectFoundation,
   type WaveOrderResult,
 } from './assemblyOrder';
-import type { ArmorPiece, PieceWave } from './createPieces';
+import type { ArmorPiece, PieceWave } from './waves';
 import { loadSuitModel, type GlowMaterial } from './loadSuitModel';
 import {
   applySystemUniforms,

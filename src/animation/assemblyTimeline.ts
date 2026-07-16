@@ -1,7 +1,7 @@
 import gsap from 'gsap';
 import * as THREE from 'three';
 import type { Suit } from '../suit/Suit';
-import { WAVE_ORDER, WAVE_STATUS } from '../suit/createPieces';
+import { WAVE_ORDER, WAVE_STATUS } from '../suit/waves';
 import { magneticPath } from '../utils/easeHelpers';
 
 /** A plate currently mid-flight (between launch and lock). */

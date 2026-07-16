@@ -1,4 +1,4 @@
-import type { ArmorPiece, PieceWave } from './createPieces';
+import type { ArmorPiece, PieceWave } from './waves';
 
 /** Spine-distance weight — used for seed / tie-break only. */
 export const WEIGHT_RADIAL = 0.35;
@@ -353,92 +353,4 @@ export function planWaveOrder(
   }
 
   return { ordered, seedCount };
-}
-
-/**
- * Schedule launch times so no plate flies before its structural parent
- * is mostly locked.
- *
- * - Seeds attach to the prior-wave foundation (ready at `foundationReady`)
- * - Opposite-side seeds may launch in parallel (both only need foundation)
- * - Later pieces wait until the nearest already-scheduled neighbor is
- *   ~PARENT_READY_FRAC through its travel
- */
-export function planPieceStartTimes(
-  ordered: ArmorPiece[],
-  seedCount: number,
-  opts: {
-    waveStart: number;
-    duration: number;
-    foundationReady: number;
-    foundationPts: OrderPoint[];
-    minStagger: number;
-    /** Fraction of parent travel that must complete before child launches. */
-    parentReadyFrac?: number;
-    /** Small continuous-motion lead (seconds). */
-    childLead?: number;
-  },
-): number[] {
-  const {
-    waveStart,
-    duration,
-    foundationReady,
-    foundationPts,
-    minStagger,
-    parentReadyFrac = 0.55,
-    childLead = 0.05,
-  } = opts;
-
-  const starts: number[] = [];
-  const n = ordered.length;
-  if (n === 0) return starts;
-
-  for (let i = 0; i < n; i++) {
-    const piece = ordered[i];
-    const pt = restPoint(piece);
-
-    let readyAt = Math.max(waveStart, foundationReady);
-
-    if (i < seedCount) {
-      // Seeds only need the prior-wave stump — launch together (tiny stagger)
-      readyAt = Math.max(waveStart, foundationReady);
-      if (i > 0) {
-        readyAt = Math.max(readyAt, starts[0] + Math.min(minStagger, 0.08));
-      }
-    } else {
-      // Nearest already-scheduled piece in this wave
-      let nearestJ = 0;
-      let nearestD = Infinity;
-      for (let j = 0; j < i; j++) {
-        const d = distSq(pt, restPoint(ordered[j]));
-        if (d < nearestD) {
-          nearestD = d;
-          nearestJ = j;
-        }
-      }
-
-      const foundationD =
-        foundationPts.length > 0
-          ? minDistSqToSet(pt, foundationPts)
-          : Infinity;
-
-      // Prefer foundation if this plate is still closer to prior structure
-      // than to anything placed this wave (second limb / chest flank).
-      if (foundationPts.length > 0 && foundationD <= nearestD * 1.05) {
-        readyAt = Math.max(waveStart, foundationReady);
-      } else {
-        const parentReady =
-          starts[nearestJ] + duration * parentReadyFrac - childLead;
-        readyAt = Math.max(waveStart, foundationReady, parentReady);
-      }
-
-      // Mild floor so we never launch before the previous slot by much
-      const staggerFloor = starts[i - 1] + minStagger * 0.25;
-      readyAt = Math.max(readyAt, staggerFloor);
-    }
-
-    starts.push(readyAt);
-  }
-
-  return starts;
 }

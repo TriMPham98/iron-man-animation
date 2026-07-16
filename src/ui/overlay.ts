@@ -1,3 +1,8 @@
+import {
+  readDirectorPreference,
+  writeDirectorPreference,
+} from './viewerMode';
+
 export interface DebugActivePiece {
   id: string;
   wave: string;
@@ -12,15 +17,21 @@ export interface OverlayHandles {
   setIntegrity: (text: string) => void;
   setHintVisible: (v: boolean) => void;
   setReplayEnabled: (v: boolean) => void;
+  setSkipEnabled: (v: boolean) => void;
   onReplay: (cb: () => void) => void;
+  onSkip: (cb: () => void) => void;
   updateClock: (elapsedSec: number) => void;
   fadeTitle: (hide: boolean) => void;
-  /** Show debug scrubber (progress + pause). */
-  showDebugScrubber: () => void;
+  /** Whether director tools (scrubber, pick meta) are visible. */
+  isDirectorMode: () => boolean;
+  setDirectorMode: (enabled: boolean) => void;
+  onDirectorModeChange: (cb: (enabled: boolean) => void) => void;
+  /** Show/hide director scrubber based on current mode. */
+  syncDirectorChrome: () => void;
   /** Update slider from live timeline progress (ignored while user drags). */
   setDebugProgress: (p: number) => void;
   setDebugPaused: (paused: boolean) => void;
-  /** Labels for plates currently mid-flight. */
+  /** Labels for plates currently mid-flight (director only). */
   setDebugActivePieces: (pieces: DebugActivePiece[]) => void;
   /** Raycast pick readout (null clears to idle hint). */
   setDebugPickedPiece: (info: DebugPickedPiece | null) => void;
@@ -56,6 +67,8 @@ export function createOverlay(): OverlayHandles {
   const integrity = el<HTMLSpanElement>('integrity');
   const hint = el<HTMLSpanElement>('hint');
   const replayBtn = el<HTMLButtonElement>('replay-btn');
+  const skipBtn = el<HTMLButtonElement>('skip-btn');
+  const directorBtn = el<HTMLButtonElement>('director-btn');
   const clock = el<HTMLSpanElement>('hud-clock');
   const title = el<HTMLHeadingElement>('title');
   const debugScrubber = el<HTMLDivElement>('debug-scrubber');
@@ -64,11 +77,15 @@ export function createOverlay(): OverlayHandles {
   const debugLabel = el<HTMLSpanElement>('debug-progress-label');
   const debugActive = el<HTMLDivElement>('debug-active-piece');
   const debugPicked = el<HTMLDivElement>('debug-picked-piece');
+  const hudBottomMeta = el<HTMLDivElement>('hud-bottom-meta');
 
   let replayHandler: (() => void) | null = null;
+  let skipHandler: (() => void) | null = null;
   let seekHandler: ((p: number) => void) | null = null;
   let togglePauseHandler: (() => void) | null = null;
+  let directorModeHandler: ((enabled: boolean) => void) | null = null;
   let userScrubbing = false;
+  let directorMode = readDirectorPreference();
 
   const formatPct = (p: number) =>
     `${Math.round(THREE_Math_clamp01(p) * 100)}%`;
@@ -87,8 +104,37 @@ export function createOverlay(): OverlayHandles {
     debugLabel.textContent = formatPct(clamped);
   };
 
+  const applyDirectorChrome = () => {
+    document.body.classList.toggle('director-mode', directorMode);
+    document.body.classList.toggle('viewer-mode', !directorMode);
+    directorBtn.classList.toggle('is-active', directorMode);
+    directorBtn.setAttribute('aria-pressed', directorMode ? 'true' : 'false');
+    directorBtn.title = directorMode
+      ? 'Director mode on — hide tools'
+      : 'Director mode — scrubber & plate pick';
+
+    if (directorMode) {
+      debugScrubber.classList.remove('hidden');
+      hudBottomMeta.classList.remove('hidden');
+    } else {
+      debugScrubber.classList.add('hidden');
+      hudBottomMeta.classList.add('hidden');
+    }
+  };
+
   replayBtn.addEventListener('click', () => {
     replayHandler?.();
+  });
+
+  skipBtn.addEventListener('click', () => {
+    skipHandler?.();
+  });
+
+  directorBtn.addEventListener('click', () => {
+    directorMode = !directorMode;
+    writeDirectorPreference(directorMode);
+    applyDirectorChrome();
+    directorModeHandler?.(directorMode);
   });
 
   debugPauseBtn.addEventListener('click', () => {
@@ -121,6 +167,8 @@ export function createOverlay(): OverlayHandles {
     emitSeek();
   });
 
+  applyDirectorChrome();
+
   return {
     setLoadingProgress: (p: number) => {
       loadingFill.style.width = `${Math.round(Math.min(1, Math.max(0, p)) * 100)}%`;
@@ -131,10 +179,8 @@ export function createOverlay(): OverlayHandles {
     showHud: () => {
       hudTop.classList.remove('hidden');
       hudBottom.classList.remove('hidden');
-      // status lives inside top bar — no floating overlay over the suit
       hudCenter.classList.remove('hidden');
-      // progress controls live in the bottom bar
-      debugScrubber.classList.remove('hidden');
+      applyDirectorChrome();
     },
     setStatus: (text: string, online = false) => {
       status.textContent = text;
@@ -149,8 +195,15 @@ export function createOverlay(): OverlayHandles {
     setReplayEnabled: (v: boolean) => {
       replayBtn.disabled = !v;
     },
+    setSkipEnabled: (v: boolean) => {
+      skipBtn.disabled = !v;
+      skipBtn.classList.toggle('hidden', !v);
+    },
     onReplay: (cb: () => void) => {
       replayHandler = cb;
+    },
+    onSkip: (cb: () => void) => {
+      skipHandler = cb;
     },
     updateClock: (elapsedSec: number) => {
       const m = Math.floor(elapsedSec / 60);
@@ -168,8 +221,18 @@ export function createOverlay(): OverlayHandles {
       title.style.transition =
         'opacity 0.8s ease, max-height 0.8s ease, margin 0.8s ease';
     },
-    showDebugScrubber: () => {
-      debugScrubber.classList.remove('hidden');
+    isDirectorMode: () => directorMode,
+    setDirectorMode: (enabled: boolean) => {
+      directorMode = enabled;
+      writeDirectorPreference(enabled);
+      applyDirectorChrome();
+      directorModeHandler?.(directorMode);
+    },
+    onDirectorModeChange: (cb: (enabled: boolean) => void) => {
+      directorModeHandler = cb;
+    },
+    syncDirectorChrome: () => {
+      applyDirectorChrome();
     },
     setDebugProgress: (p: number) => {
       if (userScrubbing) return;
@@ -180,6 +243,8 @@ export function createOverlay(): OverlayHandles {
       debugPauseBtn.classList.toggle('is-paused', paused);
     },
     setDebugActivePieces: (pieces: DebugActivePiece[]) => {
+      if (!directorMode) return;
+
       if (pieces.length === 0) {
         debugActive.textContent = 'MOVING — —';
         debugActive.classList.remove('has-active');
@@ -211,6 +276,13 @@ export function createOverlay(): OverlayHandles {
         .join('\n');
     },
     setDebugPickedPiece: (info: DebugPickedPiece | null) => {
+      if (!directorMode) {
+        debugPicked.textContent = 'PICK · click a plate';
+        debugPicked.classList.remove('has-pick');
+        debugPicked.title = '';
+        return;
+      }
+
       if (!info) {
         debugPicked.textContent = 'PICK · click a plate';
         debugPicked.classList.remove('has-pick');

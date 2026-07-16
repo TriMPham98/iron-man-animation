@@ -9,6 +9,7 @@ import { createPostProcessing } from './scene/postProcessing';
 import { createRenderer } from './scene/createRenderer';
 import { Suit } from './suit/Suit';
 import { createOverlay } from './ui/overlay';
+import { prefersReducedMotion } from './ui/viewerMode';
 
 async function boot(): Promise<void> {
   const canvas = document.getElementById('scene-canvas') as HTMLCanvasElement;
@@ -17,6 +18,11 @@ async function boot(): Promise<void> {
   const ui = createOverlay();
   ui.setLoadingProgress(0.05);
   ui.setStatus('LOADING SUIT MESH…');
+
+  const reducedMotion = prefersReducedMotion();
+  if (reducedMotion) {
+    document.body.classList.add('reduced-motion');
+  }
 
   const renderer = createRenderer(canvas);
   const scene = new THREE.Scene();
@@ -170,6 +176,17 @@ async function boot(): Promise<void> {
   let clockStart = 0;
   const clock = new THREE.Clock();
 
+  const viewerHint = 'Drag to orbit · R replay · Space pause · S skip';
+  const directorHint =
+    'Drag to orbit · click plate · R replay · Space pause · S skip';
+
+  const refreshHintCopy = () => {
+    const hintEl = document.getElementById('hint');
+    if (hintEl) {
+      hintEl.textContent = ui.isDirectorMode() ? directorHint : viewerHint;
+    }
+  };
+
   const applyCompleteUi = () => {
     assemblyComplete = true;
     suit.showFinal(); // seamless mesh — no grid-shard square blooms
@@ -177,6 +194,7 @@ async function boot(): Promise<void> {
     controls.enabled = true;
     controls.autoRotate = true;
     ui.setReplayEnabled(true);
+    ui.setSkipEnabled(false);
     ui.setHintVisible(true);
     ui.fadeTitle(true);
     ui.setIntegrity('INTEGRITY 100%');
@@ -184,6 +202,7 @@ async function boot(): Promise<void> {
     ui.setDebugProgress(1);
     ui.setDebugPaused(true);
     ui.setDebugActivePieces([]);
+    refreshHintCopy();
   };
 
   const applyAssemblyUi = () => {
@@ -191,6 +210,7 @@ async function boot(): Promise<void> {
     controls.enabled = false;
     controls.autoRotate = false;
     ui.setReplayEnabled(false);
+    ui.setSkipEnabled(true);
     ui.setHintVisible(false);
     ui.fadeTitle(false);
   };
@@ -218,9 +238,24 @@ async function boot(): Promise<void> {
     },
   });
 
+  const finishInstantly = () => {
+    clearPickHighlight();
+    ui.setDebugPickedPiece(null);
+    assembly.seek(1);
+    applyCompleteUi();
+    clockStart = clock.getElapsedTime();
+  };
+
   const startSequence = () => {
     clearPickHighlight();
     ui.setDebugPickedPiece(null);
+
+    if (reducedMotion) {
+      finishInstantly();
+      ui.setStatus('SYSTEMS ONLINE — REDUCED MOTION', true);
+      return;
+    }
+
     applyAssemblyUi();
     ui.setIntegrity('INTEGRITY   0%');
     ui.setStatus('ASSEMBLY SEQUENCE INITIATED');
@@ -231,12 +266,45 @@ async function boot(): Promise<void> {
     clockStart = clock.getElapsedTime();
   };
 
+  const skipToEnd = () => {
+    if (assemblyComplete) return;
+    clearPickHighlight();
+    ui.setDebugPickedPiece(null);
+    assembly.seek(1);
+    applyCompleteUi();
+  };
+
   const syncDebugPauseLabel = () => {
     ui.setDebugPaused(assembly.isPaused() || assemblyComplete);
   };
 
+  const togglePause = () => {
+    if (assembly.isPlaying()) {
+      assembly.pause();
+    } else if (assemblyComplete || assembly.getProgress() >= 0.999) {
+      startSequence();
+      return;
+    } else {
+      applyAssemblyUi();
+      assembly.resume();
+    }
+    syncDebugPauseLabel();
+  };
+
   ui.onReplay(() => {
     startSequence();
+  });
+
+  ui.onSkip(() => {
+    skipToEnd();
+  });
+
+  ui.onDirectorModeChange((enabled) => {
+    if (!enabled) {
+      clearPickHighlight();
+      ui.setDebugPickedPiece(null);
+    }
+    refreshHintCopy();
   });
 
   ui.onDebugSeek((p) => {
@@ -256,17 +324,7 @@ async function boot(): Promise<void> {
   });
 
   ui.onDebugTogglePause(() => {
-    if (assembly.isPlaying()) {
-      assembly.pause();
-    } else if (assemblyComplete || assembly.getProgress() >= 0.999) {
-      // Restart from beginning when already finished
-      startSequence();
-      return;
-    } else {
-      applyAssemblyUi();
-      assembly.resume();
-    }
-    syncDebugPauseLabel();
+    togglePause();
   });
 
   window.addEventListener('keydown', (e) => {
@@ -274,21 +332,21 @@ async function boot(): Promise<void> {
       startSequence();
       return;
     }
+    if (e.key === 's' || e.key === 'S') {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (!assemblyComplete) {
+        e.preventDefault();
+        skipToEnd();
+      }
+      return;
+    }
     // Space — pause / resume (ignore when typing in inputs)
     if (e.code === 'Space' || e.key === ' ') {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
       e.preventDefault();
-      if (assembly.isPlaying()) {
-        assembly.pause();
-      } else if (assemblyComplete || assembly.getProgress() >= 0.999) {
-        startSequence();
-        return;
-      } else {
-        applyAssemblyUi();
-        assembly.resume();
-      }
-      syncDebugPauseLabel();
+      togglePause();
     }
   });
 
@@ -296,7 +354,7 @@ async function boot(): Promise<void> {
     if (assemblyComplete) controls.autoRotate = false;
   });
 
-  // ── Debug raycast pick (click plate → scrubber + highlight) ────
+  // ── Director raycast pick (click plate → scrubber + highlight) ─
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   /** Ignore picks after drag so orbit doesn't select. */
@@ -330,6 +388,9 @@ async function boot(): Promise<void> {
     const dy = e.clientY - pointerDownPos.y;
     pointerDownPos = null;
     if (dx * dx + dy * dy > CLICK_MAX_MOVE_PX * CLICK_MAX_MOVE_PX) return;
+
+    // Plate pick is director-only (clean viewer surface)
+    if (!ui.isDirectorMode()) return;
 
     const rect = canvas.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return;
@@ -441,8 +502,9 @@ async function boot(): Promise<void> {
 
   ui.hideLoading();
   ui.showHud();
-  ui.showDebugScrubber();
-  await new Promise((r) => setTimeout(r, 400));
+  ui.syncDirectorChrome();
+  refreshHintCopy();
+  await new Promise((r) => setTimeout(r, reducedMotion ? 120 : 400));
 
   clockStart = clock.getElapsedTime();
   startSequence();

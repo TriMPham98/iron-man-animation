@@ -80,16 +80,20 @@
   </head>
   <body>
     <div id="app">
-      <canvas id="scene-canvas"></canvas>
+      <canvas
+        id="scene-canvas"
+        role="img"
+        aria-label="Iron Man–inspired suit assembly sequence in 3D"
+      ></canvas>
 
       <div id="vignette" aria-hidden="true"></div>
       <div id="scanlines" aria-hidden="true"></div>
 
-      <div id="loading" class="panel">
+      <div id="loading" class="panel" role="status" aria-live="polite">
         <div class="loading-inner">
-          <div class="loading-mark">◆</div>
+          <div class="loading-mark" aria-hidden="true">◆</div>
           <p class="loading-label">INITIALIZING SUIT SYSTEMS…</p>
-          <div class="loading-bar">
+          <div class="loading-bar" aria-hidden="true">
             <div id="loading-fill" class="loading-fill"></div>
           </div>
         </div>
@@ -99,19 +103,30 @@
         <span class="hud-brand">MARK SUIT // PROTO</span>
         <div id="hud-center" class="hud-center">
           <h1 id="title" class="title">ASSEMBLY SEQUENCE</h1>
-          <p id="status" class="status">STAND BY</p>
+          <p id="status" class="status" aria-live="polite">STAND BY</p>
         </div>
-        <span id="hud-clock" class="hud-clock">00:00.00</span>
+        <div class="hud-top-right">
+          <button
+            id="director-btn"
+            type="button"
+            class="director-btn"
+            aria-pressed="false"
+            title="Director mode — scrubber & plate pick"
+          >
+            DIR
+          </button>
+          <span id="hud-clock" class="hud-clock" aria-hidden="true">00:00.00</span>
+        </div>
       </header>
 
       <footer id="hud-bottom" class="hud hud-bottom hidden">
         <div class="hud-bottom-row">
           <div class="hud-left">
-            <span id="integrity">INTEGRITY — — —</span>
-            <span id="hint" class="hint">Drag to orbit · click plate to inspect · R replay · Space pause</span>
+            <span id="integrity" aria-live="polite">INTEGRITY — — —</span>
+            <span id="hint" class="hint">Drag to orbit · R replay · Space pause · S skip</span>
           </div>
 
-          <div id="debug-scrubber" class="debug-scrubber" aria-label="Assembly progress">
+          <div id="debug-scrubber" class="debug-scrubber hidden" aria-label="Assembly progress">
             <div class="debug-scrubber-row">
               <button id="debug-pause-btn" type="button" class="debug-pause-btn" title="Pause / play (Space)">
                 PAUSE
@@ -130,12 +145,17 @@
             </div>
           </div>
 
-          <button id="replay-btn" type="button" class="replay-btn" disabled>
-            REPLAY
-          </button>
+          <div class="hud-actions">
+            <button id="skip-btn" type="button" class="skip-btn" disabled>
+              SKIP
+            </button>
+            <button id="replay-btn" type="button" class="replay-btn" disabled>
+              REPLAY
+            </button>
+          </div>
         </div>
 
-        <div class="hud-bottom-meta">
+        <div id="hud-bottom-meta" class="hud-bottom-meta hidden">
           <div id="debug-active-piece" class="debug-active-piece" aria-live="polite">
             MOVING — —
           </div>

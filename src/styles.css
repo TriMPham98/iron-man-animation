@@ -174,9 +174,53 @@ body {
   justify-self: start;
 }
 
+.hud-top-right {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
 .hud-clock {
   font-variant-numeric: tabular-nums;
-  justify-self: end;
+}
+
+.director-btn {
+  pointer-events: auto;
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  padding: 0.35rem 0.55rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid rgba(201, 162, 39, 0.28);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.director-btn:hover {
+  color: var(--gold);
+  border-color: rgba(201, 162, 39, 0.55);
+  background: rgba(201, 162, 39, 0.08);
+}
+
+.director-btn.is-active {
+  color: #7ee8ff;
+  border-color: rgba(126, 232, 255, 0.5);
+  background: rgba(126, 232, 255, 0.08);
+}
+
+.director-btn:focus-visible,
+.replay-btn:focus-visible,
+.skip-btn:focus-visible,
+.debug-pause-btn:focus-visible {
+  outline: 2px solid rgba(232, 197, 71, 0.65);
+  outline-offset: 2px;
 }
 
 .hud-bottom {
@@ -215,9 +259,61 @@ body {
   letter-spacing: 0.16em;
 }
 
-.hud-bottom .replay-btn {
+.hud-actions {
   justify-self: end;
   align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  pointer-events: auto;
+}
+
+.skip-btn {
+  pointer-events: auto;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  padding: 0.7rem 1.1rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid rgba(232, 228, 217, 0.28);
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease,
+    opacity 0.3s ease;
+}
+
+.skip-btn:not(:disabled):hover {
+  color: var(--text);
+  border-color: rgba(232, 228, 217, 0.55);
+  background: rgba(232, 228, 217, 0.06);
+}
+
+.skip-btn:disabled,
+.skip-btn.hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+/* Viewer: hide director column so integrity / actions stay balanced */
+body.viewer-mode .hud-bottom {
+  --hud-bottom-cols: minmax(0, 1fr) auto;
+}
+
+body.viewer-mode .hud-bottom-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+body.viewer-mode .debug-scrubber {
+  display: none;
+}
+
+body.viewer-mode .hud-bottom-meta {
+  display: none;
 }
 
 /* Same 3 columns as the control row so MOVING / PICK line up with integrity / scrubber / replay */
@@ -550,7 +646,7 @@ body {
     align-items: center;
   }
 
-  .hud-bottom .replay-btn {
+  .hud-actions {
     justify-self: center;
     order: 3;
   }
@@ -588,7 +684,7 @@ body {
   }
 
   .hud-brand,
-  .hud-clock {
+  .hud-top-right {
     justify-self: center;
   }
 
@@ -600,5 +696,28 @@ body {
   .status {
     font-size: 0.52rem;
     letter-spacing: 0.1em;
+  }
+
+  .skip-btn,
+  .replay-btn {
+    padding: 0.55rem 0.9rem;
+    font-size: 0.55rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #scanlines {
+    display: none;
+  }
+
+  .loading-mark {
+    animation: none;
+  }
+
+  .title,
+  .status,
+  .hint,
+  #loading {
+    transition: none !important;
   }
 }

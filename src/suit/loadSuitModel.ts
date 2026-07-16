@@ -7,7 +7,7 @@ import {
   splitMeshIntoShards,
   type MeshShard,
 } from './splitMesh';
-import type { ArmorPiece, PieceWave } from './createPieces';
+import type { ArmorPiece, PieceWave } from './waves';
 import {
   attachSystemsShader,
   darkenAlbedoGlowRegions,
