@@ -97,10 +97,13 @@ const WAVE_SHAKE: Partial<Record<string, number>> = {
 const PIECE_DURATION = 1.12;
 /** Helmet / faceplate — heavier, more movie-like hydraulic close */
 const HELMET_PIECE_DURATION = 2.05;
+/** Gauntlet / finger plates — a bit longer so multi-piece hands read */
+const GAUNTLET_PIECE_DURATION = 1.38;
 
 /** Fraction of travel spent on the magnetic approach (rest is dock + clamp). */
 const APPROACH_FRAC = 0.78;
 const HELMET_APPROACH_FRAC = 0.82;
+const GAUNTLET_APPROACH_FRAC = 0.8;
 
 export function createAssemblyTimeline(
   suit: Suit,
@@ -139,11 +142,18 @@ export function createAssemblyTimeline(
    * Launch gap between plates *within* the same body section.
    * Kept tight so similar parts stream in as one cascade.
    */
-  const staggerFor = (count: number, helmet = false) => {
+  const staggerFor = (
+    count: number,
+    kind: 'default' | 'helmet' | 'gauntlets' = 'default',
+  ) => {
     if (count <= 1) return 0;
-    if (helmet) {
+    if (kind === 'helmet') {
       // Still readable as separate clamps, but not a long wait between each
       return Math.min(0.2, Math.max(0.065, 1.15 / count));
+    }
+    if (kind === 'gauntlets') {
+      // Deliberate finger cascade — not one simultaneous plop
+      return Math.min(0.2, Math.max(0.06, 1.05 / count));
     }
     // Dense waves (thighs/torso/arms) fire almost as a cascade
     return Math.min(0.1, Math.max(0.022, 0.65 / count));
@@ -283,7 +293,7 @@ export function createAssemblyTimeline(
 
     for (const wave of WAVE_ORDER) {
       const { ordered: pieces } = suit.planWave(wave, built);
-      // Hands fold into the arm wave; skip empty bands (e.g. gauntlets).
+      // Skip empty bands (e.g. power if unused)
       if (pieces.length === 0 && wave !== 'power') {
         waveLockEnd[wave] = prevLockEnd;
         waveStartAt[wave] = prevLockEnd;
@@ -299,13 +309,27 @@ export function createAssemblyTimeline(
       waveStartAt[wave] = waveStart;
 
       const isHelmet = wave === 'helmet';
-      const duration = isHelmet ? HELMET_PIECE_DURATION : PIECE_DURATION;
+      const isGauntlets = wave === 'gauntlets';
+      const duration = isHelmet
+        ? HELMET_PIECE_DURATION
+        : isGauntlets
+          ? GAUNTLET_PIECE_DURATION
+          : PIECE_DURATION;
       // Paired L/R launches: stagger between *pairs*, not individual plates
       const launchGroups = planSymmetricLaunchGroups(pieces, wave);
       // Mirror scatter starts so paths can be geometric L↔R reflections
       applyMirroredFlightStarts(launchGroups);
-      const stagger = staggerFor(launchGroups.length, isHelmet);
-      const approachFrac = isHelmet ? HELMET_APPROACH_FRAC : APPROACH_FRAC;
+      const staggerKind = isHelmet
+        ? 'helmet'
+        : isGauntlets
+          ? 'gauntlets'
+          : 'default';
+      const stagger = staggerFor(launchGroups.length, staggerKind);
+      const approachFrac = isHelmet
+        ? HELMET_APPROACH_FRAC
+        : isGauntlets
+          ? GAUNTLET_APPROACH_FRAC
+          : APPROACH_FRAC;
 
       timeline.call(
         () => {
@@ -563,8 +587,9 @@ export function createAssemblyTimeline(
       reactorT + 1.3,
     );
 
-    // Hand & foot repulsors after gauntlets clamp (still before helmet)
-    const handsT = (waveLockEnd.gauntlets ?? 12.5) + 0.1;
+    // Hand & foot repulsors once gauntlets (or arms if no hand split) are home
+    const handsT =
+      Math.max(waveLockEnd.gauntlets ?? 0, waveLockEnd.arms ?? 0, 0.01) + 0.15;
     timeline.to(
       repulsorsProxy,
       {

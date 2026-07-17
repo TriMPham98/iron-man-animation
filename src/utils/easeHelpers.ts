@@ -31,7 +31,8 @@ const WAVE_SCATTER: Record<string, ScatterBias> = {
   torso: { y: 0.55, radial: 0.55, front: 0.95 },
   shoulders: { y: 1.7, radial: 1.15, front: 0.25 },
   arms: { y: 0.25, radial: 1.65, front: 0.05 },
-  gauntlets: { y: 0.05, radial: 1.9, front: 0.35 },
+  // Hands: outward + slightly below so fingers stream in before palm seats
+  gauntlets: { y: -0.85, radial: 2.35, front: 0.65 },
   // Cranial shell / back of head — drop from above
   helmet: { y: 3.2, radial: 0.25, front: 1.35 },
   power: { y: 0.4, radial: 0.15, front: 2.1 },

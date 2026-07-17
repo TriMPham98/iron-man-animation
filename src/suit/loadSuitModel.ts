@@ -7,6 +7,8 @@ import {
 } from '../scene/quality';
 import { scatterRotation, scatterStart } from '../utils/easeHelpers';
 import {
+  isHandRegionCentroid,
+  refineHandShards,
   sortShardsInsideOut,
   splitMeshIntoShards,
   type MeshShard,
@@ -259,10 +261,15 @@ export async function loadSuitModel(
   // Split into spatial shards for fly-in — share prepared materials so
   // sequenced system glow (reactor / eyes) lights the correct UV islands
   // as soon as each body region locks (not only after showFinal).
-  const allShards: MeshShard[] = [];
+  let allShards: MeshShard[] = [];
   for (const mesh of sourceMeshes) {
     const shards = splitMeshIntoShards(mesh, shardGrid);
     allShards.push(...shards);
+  }
+  // Hands start as one blob — light subdivide (≈ half prior density)
+  // low tier: skip refine; medium/high: coarse 2×2×2 only
+  if (quality !== 'low') {
+    allShards = refineHandShards(allShards, { x: 2, y: 2, z: 2 });
   }
 
   let minY = Infinity;
@@ -280,6 +287,18 @@ export async function loadSuitModel(
     shard,
     wave: classifyWave(shard.centroid, minY, yRange, maxRadial),
   }));
+
+  // Force hand-region / refined-hand shards into gauntlets (centroid can sit
+  // inside the thigh radial band after a hand blob is subdivided).
+  for (const entry of tagged) {
+    if (entry.shard.mesh.userData.handRegion) {
+      entry.wave = 'gauntlets';
+      continue;
+    }
+    if (isHandRegionCentroid(entry.shard.centroid)) {
+      entry.wave = 'gauntlets';
+    }
+  }
 
   // Force any shard that carries the arc-reactor UV island into the torso
   // wave. Coarse spatial buckets can park the sternum plate on a low

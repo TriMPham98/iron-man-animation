@@ -42,10 +42,12 @@ export function classifyWave(
   const CORE_RNORM = 0.22;
   // Skull narrower than pauldrons
   const HEAD_RNORM = 0.42;
-  // Absolute meters — hands sit further from the spine than body thigh armor
-  const HAND_RADIAL = 0.26;
+  // Absolute meters — hands sit further from the spine than body thigh armor.
+  // 0.245 catches outer hang / soft palm edge without stealing r≈0.22 body thighs.
+  const HAND_RADIAL = 0.245;
   const ARM_Y_MIN = minY + yRange * 0.6; // ~1.05 — upper-arm band
   const SHOULDER_Y_MIN = minY + yRange * 0.78;
+  const ax = Math.abs(c.x);
 
   // ── Head first ────────────────────────────────────────────────
   if (yNorm > 0.82 && rNorm <= HEAD_RNORM) return 'helmet';
@@ -58,10 +60,21 @@ export function classifyWave(
   if (yNorm < 0.28) return 'calves';
 
   // ── Hanging hands / gauntlets (before thigh catch-all) ────────
-  // Rest beside the outer thigh but must ride the arm wave so they
-  // only clamp after the shoulder→arm stump exists.
-  if (yNorm >= 0.35 && yNorm < 0.6 && radial >= HAND_RADIAL) {
-    return 'arms';
+  // Beside outer thigh at hang pose — own wave so fingers assemble after
+  // the arm stump (not one big “plop” with the arm cascade).
+  if (yNorm >= 0.35 && yNorm < 0.58 && radial >= HAND_RADIAL) {
+    return 'gauntlets';
+  }
+  // Strongly lateral hang-height only (true hand hang |x|≳0.25). Body outer
+  // thigh is typically |x|≲0.22 at r≲0.24 — leave those as thighs.
+  // (Finer palm fragments after hand refine are forced via handRegion flag.)
+  if (
+    yNorm >= 0.42 &&
+    yNorm < 0.56 &&
+    ax >= 0.25 &&
+    radial >= 0.21
+  ) {
+    return 'gauntlets';
   }
 
   // ── Legs — body armor only (inside hand radial) ───────────────

@@ -29,25 +29,25 @@ describe('classifyWave', () => {
     { name: 'shin', x: 0.1, y: 0.35, expect: 'calves' as const },
     { name: 'upper calf', x: 0.12, y: 0.5, expect: 'calves' as const },
 
-    // hanging hands: y ~0.9 band as yNorm (~0.49), radial >= 0.26 → arms
+    // hanging hands → gauntlets (own wave after arms)
     // hands at hang pose: y ≈ 0.90–1.00, r ≈ 0.28–0.37
     {
       name: 'hanging hand L',
       x: 0.3,
       y: 0.95,
-      expect: 'arms' as const,
+      expect: 'gauntlets' as const,
     },
     {
       name: 'hanging hand R',
       x: -0.32,
       y: 0.92,
-      expect: 'arms' as const,
+      expect: 'gauntlets' as const,
     },
     {
       name: 'hand at yNorm ~0.5',
       x: 0.28,
       y: 0.9,
-      expect: 'arms' as const,
+      expect: 'gauntlets' as const,
     },
 
     // outer thigh body: similar height but radial < 0.26 → thighs
@@ -120,12 +120,22 @@ describe('classifyWave', () => {
   });
 
   it('does not classify outer thighs as arms (hand/thigh radial split)', () => {
-    // Same height band as hanging hands, inside HAND_RADIAL
+    // Body outer-thigh surface stays thighs
+    expect(waveAt(0.2, 0.95)).toBe('thighs');
     expect(waveAt(0.22, 0.95)).toBe('thighs');
-    expect(waveAt(0.24, 0.98)).toBe('thighs');
-    // Just outside HAND_RADIAL at hang height → arms (not thighs)
-    expect(waveAt(0.26, 0.95)).toBe('arms');
-    expect(waveAt(0.3, 0.95)).toBe('arms');
+    // Soft boundary / classic hang → gauntlets
+    expect(waveAt(0.245, 0.95)).toBe('gauntlets');
+    expect(waveAt(0.26, 0.95)).toBe('gauntlets');
+    expect(waveAt(0.3, 0.95)).toBe('gauntlets');
+  });
+
+  it('tags strongly lateral hang-height plates as gauntlets', () => {
+    // |x| ≳ 0.25 at hang height (true hand hang), not body thigh |x|≲0.22
+    expect(waveAt(0.22, 0.95)).toBe('thighs');
+    expect(waveAt(0.26, 0.92)).toBe('gauntlets');
+    expect(
+      classifyWave({ x: 0.26, y: 0.92, z: 0.04 }, MIN_Y, Y_RANGE, MAX_RADIAL),
+    ).toBe('gauntlets');
   });
 
   it('classifies upper arms and shoulders by height + lateral position', () => {
@@ -143,8 +153,8 @@ describe('classifyWave', () => {
     const thigh = classifyWave(at(0.22, 0.95), MIN_Y, Y_RANGE, MAX_RADIAL);
     expect(thigh).toBe('thighs');
 
-    // Hand at similar yNorm with absolute r >= 0.26
+    // Hand at similar yNorm with absolute r ≥ hang threshold → gauntlets
     const hand = classifyWave(at(0.3, 0.95), MIN_Y, Y_RANGE, MAX_RADIAL);
-    expect(hand).toBe('arms');
+    expect(hand).toBe('gauntlets');
   });
 });

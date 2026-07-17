@@ -254,7 +254,7 @@ export function splitMeshIntoShards(
     if (y < 0.15) return 'boots';
     if (y < 0.5) return 'calves';
     // Hanging hands / gauntlets — further out than body thigh armor
-    if (y < 1.05 && r >= 0.26) return 'arms';
+    if (y < 1.05 && r >= 0.235) return 'gauntlets';
     // Elbow / lower upper-arm just above hip crease (thighs#103/#111 arm half)
     if (y >= 1.0 && y < 1.18 && r >= 0.15) return 'arms';
     if (y < 1.05) return 'thighs';
@@ -497,6 +497,64 @@ export function splitMeshIntoShards(
   }
 
   return shards;
+}
+
+/**
+ * Hang-pose hands / gauntlets (absolute meters after model normalize).
+ * Includes slightly inner palm/finger fragments that can sit r≈0.20–0.25
+ * after a hand blob is subdivided (those were mis-tagged as thighs).
+ */
+export function isHandRegionCentroid(c: THREE.Vector3): boolean {
+  const r = Math.hypot(c.x, c.z);
+  const ax = Math.abs(c.x);
+  // Classic hang: outer, hip-height
+  if (c.y > 0.55 && c.y < 1.08 && r >= 0.235) return true;
+  // Sub-shard / palm fragment: strongly lateral at hang height
+  if (c.y > 0.72 && c.y < 1.05 && ax >= 0.22 && r >= 0.19) return true;
+  return false;
+}
+
+/**
+ * Further subdivide large hand-region shards so gauntlets assemble as
+ * a few plates instead of one plop. Keep density modest (≈ half prior).
+ */
+export function refineHandShards(
+  shards: MeshShard[],
+  denserGrid: { x: number; y: number; z: number } = { x: 2, y: 2, z: 2 },
+): MeshShard[] {
+  const out: MeshShard[] = [];
+  for (const s of shards) {
+    if (!isHandRegionCentroid(s.centroid)) {
+      out.push(s);
+      continue;
+    }
+    const pos = s.mesh.geometry.getAttribute(
+      'position',
+    ) as THREE.BufferAttribute | null;
+    const triCount = pos ? pos.count / 3 : 0;
+    // Only re-split truly chunky hand blobs (higher bar = fewer parts)
+    if (triCount < 72) {
+      s.mesh.userData.handRegion = true;
+      out.push(s);
+      continue;
+    }
+
+    s.mesh.updateWorldMatrix(true, false);
+    const sub = splitMeshIntoShards(s.mesh, denserGrid);
+    if (sub.length <= 1) {
+      s.mesh.userData.handRegion = true;
+      out.push(s);
+      continue;
+    }
+
+    s.mesh.geometry.dispose();
+    for (const piece of sub) {
+      // Mark so classifyWave cannot re-tag palm fragments as thighs
+      piece.mesh.userData.handRegion = true;
+      out.push(piece);
+    }
+  }
+  return out;
 }
 
 /**
