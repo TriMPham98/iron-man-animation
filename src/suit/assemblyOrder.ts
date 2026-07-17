@@ -354,3 +354,90 @@ export function planWaveOrder(
 
   return { ordered, seedCount };
 }
+
+/** On-spine plates (no L/R pair) — absolute X below this stays solo. */
+const CENTERLINE_X = 0.05;
+/**
+ * Max match cost to accept a mirror pair.
+ * Cost ≈ 2·Δ|x| + Δy + 0.5·Δz (meters).
+ */
+const MAX_PAIR_COST = 0.38;
+
+/**
+ * Group plates in a wave for **paired L/R launches**.
+ *
+ * Each group is 1–2 pieces that should start at the same timeline time.
+ * Group order is structural (assemblyScore: bottom→top or proximal→distal),
+ * then greedily match each plate with its best opposite-side mirror.
+ *
+ * Centerline pieces (`|x|` small) launch alone. Unmatched laterals also solo.
+ */
+export function planSymmetricLaunchGroups(
+  pieces: ArmorPiece[],
+  wave: PieceWave,
+): ArmorPiece[][] {
+  if (pieces.length === 0) return [];
+  if (pieces.length === 1) return [pieces.slice()];
+
+  const bounds = boundsFromPoints(pieces.map(restPoint));
+
+  // Structural priority first so pairs march boots→thighs / shoulder→hand
+  const priority = pieces.slice().sort((a, b) => {
+    const sa = assemblyScore(restPoint(a), wave, bounds);
+    const sb = assemblyScore(restPoint(b), wave, bounds);
+    if (Math.abs(sa - sb) > 1e-6) return sa - sb;
+    // Prefer outer |x| slightly later within same band so pairs form cleanly
+    const dAbs =
+      Math.abs(a.restPosition.x) - Math.abs(b.restPosition.x);
+    if (Math.abs(dAbs) > 1e-6) return dAbs;
+    return a.id.localeCompare(b.id);
+  });
+
+  const used = new Set<string>();
+  const groups: ArmorPiece[][] = [];
+
+  for (const p of priority) {
+    if (used.has(p.id)) continue;
+    used.add(p.id);
+
+    const px = p.restPosition.x;
+    if (Math.abs(px) < CENTERLINE_X) {
+      groups.push([p]);
+      continue;
+    }
+
+    const pSign = Math.sign(px) || 1;
+    let best: ArmorPiece | null = null;
+    let bestCost = Infinity;
+
+    for (const q of priority) {
+      if (used.has(q.id)) continue;
+      const qx = q.restPosition.x;
+      if (Math.abs(qx) < CENTERLINE_X) continue;
+      if ((Math.sign(qx) || 1) === pSign) continue;
+
+      const cost =
+        Math.abs(Math.abs(px) - Math.abs(qx)) * 2 +
+        Math.abs(p.restPosition.y - q.restPosition.y) +
+        Math.abs(p.restPosition.z - q.restPosition.z) * 0.5;
+
+      if (cost < bestCost) {
+        bestCost = cost;
+        best = q;
+      }
+    }
+
+    if (best && bestCost <= MAX_PAIR_COST) {
+      used.add(best.id);
+      // Stable within-group order (left then right) — same launch time either way
+      const pair = [p, best].sort(
+        (a, b) => a.restPosition.x - b.restPosition.x,
+      );
+      groups.push(pair);
+    } else {
+      groups.push([p]);
+    }
+  }
+
+  return groups;
+}

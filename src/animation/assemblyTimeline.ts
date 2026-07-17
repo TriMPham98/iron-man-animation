@@ -1,6 +1,7 @@
 import gsap from 'gsap';
 import * as THREE from 'three';
 import type { Suit } from '../suit/Suit';
+import { planSymmetricLaunchGroups } from '../suit/assemblyOrder';
 import { WAVE_ORDER, WAVE_STATUS } from '../suit/waves';
 import { magneticPath } from '../utils/easeHelpers';
 
@@ -291,7 +292,9 @@ export function createAssemblyTimeline(
 
       const isHelmet = wave === 'helmet';
       const duration = isHelmet ? HELMET_PIECE_DURATION : PIECE_DURATION;
-      const stagger = staggerFor(pieces.length, isHelmet);
+      // Paired L/R launches: stagger between *pairs*, not individual plates
+      const launchGroups = planSymmetricLaunchGroups(pieces, wave);
+      const stagger = staggerFor(launchGroups.length, isHelmet);
       const approachFrac = isHelmet ? HELMET_APPROACH_FRAC : APPROACH_FRAC;
 
       timeline.call(
@@ -306,162 +309,165 @@ export function createAssemblyTimeline(
       let lastEnd = waveStart;
       let lastLaunch = waveStart;
 
-      pieces.forEach((piece, i) => {
-        const t = waveStart + i * stagger;
-        const mesh = piece.mesh;
+      launchGroups.forEach((group, groupIndex) => {
+        const t = waveStart + groupIndex * stagger;
         lastLaunch = t;
         lastEnd = t + duration;
-        motionSpans.push({
-          id: piece.id,
-          wave,
-          start: t,
-          end: t + duration,
-        });
 
-        const path = magneticPath(
-          piece.startPosition,
-          piece.restPosition,
-          piece.id,
-          { helmet: isHelmet },
-        );
+        for (const piece of group) {
+          const mesh = piece.mesh;
+          motionSpans.push({
+            id: piece.id,
+            wave,
+            start: t,
+            end: t + duration,
+          });
 
-        const approachDur = duration * approachFrac;
-        const dockDur = duration - approachDur;
-        // Split dock: soft overshoot, then settle into socket
-        const slamDur = dockDur * (isHelmet ? 0.55 : 0.45);
-        const settleDur = dockDur - slamDur;
+          const path = magneticPath(
+            piece.startPosition,
+            piece.restPosition,
+            piece.id,
+            { helmet: isHelmet },
+          );
 
-        // Explicit false at t=0 so reverse scrub restores hidden state
-        // (GSAP set() alone does not reliably reverse booleans).
-        timeline.set(mesh, { visible: false }, 0);
-        timeline.set(mesh, { visible: true }, t);
+          const approachDur = duration * approachFrac;
+          const dockDur = duration - approachDur;
+          // Split dock: soft overshoot, then settle into socket
+          const slamDur = dockDur * (isHelmet ? 0.55 : 0.45);
+          const settleDur = dockDur - slamDur;
 
-        // ── Position: magnetic arc → approach → overshoot → rest ──
-        // Phase 1a: fly toward curved waypoint (magnetic pull-in)
-        const midApproach = approachDur * 0.62;
-        const nearApproach = approachDur - midApproach;
+          // Explicit false at t=0 so reverse scrub restores hidden state
+          // (GSAP set() alone does not reliably reverse booleans).
+          timeline.set(mesh, { visible: false }, 0);
+          timeline.set(mesh, { visible: true }, t);
 
-        timeline.fromTo(
-          mesh.position,
-          {
-            x: piece.startPosition.x,
-            y: piece.startPosition.y,
-            z: piece.startPosition.z,
-          },
-          {
-            x: path.waypoint.x,
-            y: path.waypoint.y,
-            z: path.waypoint.z,
-            duration: midApproach,
-            ease: isHelmet ? 'power2.inOut' : 'power2.in',
-          },
-          t,
-        );
+          // ── Position: magnetic arc → approach → overshoot → rest ──
+          // Phase 1a: fly toward curved waypoint (magnetic pull-in)
+          const midApproach = approachDur * 0.62;
+          const nearApproach = approachDur - midApproach;
 
-        // Phase 1b: curve into the near-socket approach point
-        timeline.to(
-          mesh.position,
-          {
-            x: path.approach.x,
-            y: path.approach.y,
-            z: path.approach.z,
-            duration: nearApproach,
-            ease: isHelmet ? 'power3.inOut' : 'power3.in',
-          },
-          t + midApproach,
-        );
+          timeline.fromTo(
+            mesh.position,
+            {
+              x: piece.startPosition.x,
+              y: piece.startPosition.y,
+              z: piece.startPosition.z,
+            },
+            {
+              x: path.waypoint.x,
+              y: path.waypoint.y,
+              z: path.waypoint.z,
+              duration: midApproach,
+              ease: isHelmet ? 'power2.inOut' : 'power2.in',
+            },
+            t,
+          );
 
-        // Phase 2a: soft overshoot past the socket
-        timeline.to(
-          mesh.position,
-          {
-            x: path.overshoot.x,
-            y: path.overshoot.y,
-            z: path.overshoot.z,
-            duration: slamDur,
-            ease: isHelmet ? 'power2.in' : 'power2.in',
-          },
-          t + approachDur,
-        );
+          // Phase 1b: curve into the near-socket approach point
+          timeline.to(
+            mesh.position,
+            {
+              x: path.approach.x,
+              y: path.approach.y,
+              z: path.approach.z,
+              duration: nearApproach,
+              ease: isHelmet ? 'power3.inOut' : 'power3.in',
+            },
+            t + midApproach,
+          );
 
-        // Phase 2b: clamp settle into rest
-        timeline.to(
-          mesh.position,
-          {
-            x: piece.restPosition.x,
-            y: piece.restPosition.y,
-            z: piece.restPosition.z,
-            duration: settleDur,
-            ease: 'power3.out',
-          },
-          t + approachDur + slamDur,
-        );
+          // Phase 2a: soft overshoot past the socket
+          timeline.to(
+            mesh.position,
+            {
+              x: path.overshoot.x,
+              y: path.overshoot.y,
+              z: path.overshoot.z,
+              duration: slamDur,
+              ease: isHelmet ? 'power2.in' : 'power2.in',
+            },
+            t + approachDur,
+          );
 
-        // ── Rotation: mostly during approach, final align on dock ──
-        const travelEase = isHelmet ? 'power3.inOut' : 'power2.inOut';
-        timeline.fromTo(
-          mesh.rotation,
-          {
-            x: piece.startRotation.x,
-            y: piece.startRotation.y,
-            z: piece.startRotation.z,
-          },
-          {
-            x: piece.restRotation.x,
-            y: piece.restRotation.y,
-            z: piece.restRotation.z,
-            duration: approachDur + slamDur * 0.5,
-            ease: travelEase,
-          },
-          t,
-        );
+          // Phase 2b: clamp settle into rest
+          timeline.to(
+            mesh.position,
+            {
+              x: piece.restPosition.x,
+              y: piece.restPosition.y,
+              z: piece.restPosition.z,
+              duration: settleDur,
+              ease: 'power3.out',
+            },
+            t + approachDur + slamDur,
+          );
 
-        // ── Scale: grow on approach, light clamp seat on lock ─────
-        const rs = piece.restScale;
-        const preLock = isHelmet ? 0.985 : 0.96;
-        const punch = isHelmet ? 1.008 : 1.02;
+          // ── Rotation: mostly during approach, final align on dock ──
+          const travelEase = isHelmet ? 'power3.inOut' : 'power2.inOut';
+          timeline.fromTo(
+            mesh.rotation,
+            {
+              x: piece.startRotation.x,
+              y: piece.startRotation.y,
+              z: piece.startRotation.z,
+            },
+            {
+              x: piece.restRotation.x,
+              y: piece.restRotation.y,
+              z: piece.restRotation.z,
+              duration: approachDur + slamDur * 0.5,
+              ease: travelEase,
+            },
+            t,
+          );
 
-        // Grow from tiny scatter scale → near rest during approach
-        timeline.fromTo(
-          mesh.scale,
-          {
-            x: piece.startScale.x,
-            y: piece.startScale.y,
-            z: piece.startScale.z,
-          },
-          {
-            x: rs.x * preLock,
-            y: rs.y * preLock,
-            z: rs.z * preLock,
-            duration: approachDur,
-            ease: isHelmet ? 'power2.inOut' : 'power2.out',
-          },
-          t,
-        );
+          // ── Scale: grow on approach, light clamp seat on lock ─────
+          const rs = piece.restScale;
+          const preLock = isHelmet ? 0.985 : 0.96;
+          const punch = isHelmet ? 1.008 : 1.02;
 
-        // Lock impact: slight punch past rest scale, then seat
-        timeline.to(
-          mesh.scale,
-          {
-            x: rs.x * punch,
-            y: rs.y * punch,
-            z: rs.z * punch,
-            duration: slamDur,
-            ease: 'power2.in',
-          },
-          t + approachDur,
-        );
-        timeline.to(
-          mesh.scale,
-          {
-            x: rs.x,
-            y: rs.y,
-            z: rs.z,
-            duration: settleDur,
-            ease: 'power4.out',
-          },
-          t + approachDur + slamDur,
-        );
+          // Grow from tiny scatter scale → near rest during approach
+          timeline.fromTo(
+            mesh.scale,
+            {
+              x: piece.startScale.x,
+              y: piece.startScale.y,
+              z: piece.startScale.z,
+            },
+            {
+              x: rs.x * preLock,
+              y: rs.y * preLock,
+              z: rs.z * preLock,
+              duration: approachDur,
+              ease: isHelmet ? 'power2.inOut' : 'power2.out',
+            },
+            t,
+          );
+
+          // Lock impact: slight punch past rest scale, then seat
+          timeline.to(
+            mesh.scale,
+            {
+              x: rs.x * punch,
+              y: rs.y * punch,
+              z: rs.z * punch,
+              duration: slamDur,
+              ease: 'power2.in',
+            },
+            t + approachDur,
+          );
+          timeline.to(
+            mesh.scale,
+            {
+              x: rs.x,
+              y: rs.y,
+              z: rs.z,
+              duration: settleDur,
+              ease: 'power4.out',
+            },
+            t + approachDur + slamDur,
+          );
+        }
       });
 
       waveLockEnd[wave] = lastEnd;

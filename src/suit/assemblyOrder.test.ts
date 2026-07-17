@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   FOUNDATION_WAVES,
   assemblyScore,
+  planSymmetricLaunchGroups,
   planWaveOrder,
   selectFoundation,
   sortPiecesInWave,
@@ -181,5 +182,60 @@ describe('planWaveOrder / sortPiecesInWave', () => {
     // First seed is the better id when scores match
     expect(ordered[0].id).toBe('a-plate');
     expect(ordered[1].id).toBe('b-plate');
+  });
+});
+
+describe('planSymmetricLaunchGroups', () => {
+  it('pairs opposite-side boots at the same height into one launch group', () => {
+    const pieces = [
+      piece('boot-L', 'boots', 0.12, 0.05),
+      piece('boot-R', 'boots', -0.12, 0.05),
+    ];
+    const groups = planSymmetricLaunchGroups(pieces, 'boots');
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toHaveLength(2);
+    const ids = groups[0].map((p) => p.id).sort();
+    expect(ids).toEqual(['boot-L', 'boot-R']);
+  });
+
+  it('launches lower pair before higher pair (upward waves)', () => {
+    const bootish = [
+      piece('low-L', 'boots', 0.12, 0.05),
+      piece('low-R', 'boots', -0.12, 0.05),
+      piece('high-L', 'boots', 0.12, 0.15),
+      piece('high-R', 'boots', -0.12, 0.15),
+    ];
+    const groups = planSymmetricLaunchGroups(bootish, 'boots');
+    expect(groups).toHaveLength(2);
+    expect(groups[0].map((p) => p.id).sort()).toEqual(['low-L', 'low-R']);
+    expect(groups[1].map((p) => p.id).sort()).toEqual(['high-L', 'high-R']);
+  });
+
+  it('keeps centerline plates solo', () => {
+    const pieces = [
+      piece('spine', 'torso', 0.01, 1.2),
+      piece('side-L', 'torso', 0.2, 1.2),
+      piece('side-R', 'torso', -0.2, 1.2),
+    ];
+    const groups = planSymmetricLaunchGroups(pieces, 'torso');
+    const spineGroup = groups.find((g) => g.some((p) => p.id === 'spine'));
+    expect(spineGroup).toBeDefined();
+    expect(spineGroup).toHaveLength(1);
+    const sideGroup = groups.find((g) => g.some((p) => p.id === 'side-L'));
+    expect(sideGroup?.map((p) => p.id).sort()).toEqual(['side-L', 'side-R']);
+  });
+
+  it('pairs arm laterals and prefers proximal groups first', () => {
+    const pieces = [
+      piece('hand-L', 'arms', 0.3, 0.95),
+      piece('hand-R', 'arms', -0.3, 0.95),
+      piece('upper-L', 'arms', 0.22, 1.25),
+      piece('upper-R', 'arms', -0.22, 1.25),
+    ];
+    const groups = planSymmetricLaunchGroups(pieces, 'arms');
+    expect(groups).toHaveLength(2);
+    // Proximal (high Y) first for limb waves
+    expect(groups[0].map((p) => p.id).sort()).toEqual(['upper-L', 'upper-R']);
+    expect(groups[1].map((p) => p.id).sort()).toEqual(['hand-L', 'hand-R']);
   });
 });
