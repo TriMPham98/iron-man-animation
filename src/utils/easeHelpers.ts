@@ -11,34 +11,43 @@ export function hashSeed(seed: string): number {
 }
 
 /**
- * Per-wave fly-in bias — plates arrive from anatomically sensible directions
- * (boots from below, helmet from above/front, limbs from the sides).
+ * Frontal scatter profile — every plate approaches from +Z (camera side)
+ * with wave-specific height and limb lateral spread.
  */
-export interface ScatterBias {
-  /** Extra world-Y offset added to the shell sample (negative = from below). */
+export interface WaveScatterProfile {
+  /** Base meters in front of rest (+Z). */
+  frontDist: number;
+  /** Extra meters added by seed (0–frontSpread). */
+  frontSpread: number;
+  /** World-Y bias (boots negative, helmet positive). */
   y: number;
-  /** Push outward from spine in XZ (0 = pure sphere sample). */
-  radial: number;
-  /** Bias toward +Z (camera / front of suit). */
-  front: number;
+  /** Push outward on ±X using sign(rest.x); 0 for centerline waves. */
+  lateral: number;
+  /** Seed jitter scale on X/Y (Z jitter stays small and front-safe). */
+  jitter: number;
 }
 
-const WAVE_SCATTER: Record<string, ScatterBias> = {
-  boots: { y: -2.8, radial: 0.35, front: 0.15 },
-  calves: { y: -1.2, radial: 0.9, front: 0.1 },
-  thighs: { y: -0.35, radial: 1.05, front: 0.15 },
-  hips: { y: 0.15, radial: 0.7, front: 0.45 },
-  torso: { y: 0.55, radial: 0.55, front: 0.95 },
-  shoulders: { y: 1.7, radial: 1.15, front: 0.25 },
-  arms: { y: 0.25, radial: 1.65, front: 0.05 },
-  // Hands: outward + slightly below so fingers stream in before palm seats
-  gauntlets: { y: -0.85, radial: 2.35, front: 0.65 },
-  // Cranial shell / back of head — drop from above
-  helmet: { y: 3.2, radial: 0.25, front: 1.35 },
-  power: { y: 0.4, radial: 0.15, front: 2.1 },
+const WAVE_FRONTAL: Record<string, WaveScatterProfile> = {
+  boots: { frontDist: 1.8, frontSpread: 0.9, y: -2.2, lateral: 0.45, jitter: 0.35 },
+  calves: { frontDist: 2.0, frontSpread: 1.0, y: -1.0, lateral: 0.7, jitter: 0.4 },
+  thighs: { frontDist: 2.1, frontSpread: 1.0, y: -0.25, lateral: 0.85, jitter: 0.4 },
+  hips: { frontDist: 2.2, frontSpread: 0.9, y: 0.1, lateral: 0.35, jitter: 0.35 },
+  torso: { frontDist: 2.4, frontSpread: 1.0, y: 0.35, lateral: 0.25, jitter: 0.4 },
+  shoulders: { frontDist: 2.2, frontSpread: 1.0, y: 1.1, lateral: 1.05, jitter: 0.4 },
+  arms: { frontDist: 2.0, frontSpread: 1.1, y: 0.2, lateral: 1.35, jitter: 0.45 },
+  gauntlets: { frontDist: 2.1, frontSpread: 1.0, y: -0.55, lateral: 1.5, jitter: 0.45 },
+  // Cranial shell — above-front (not pure crown drop)
+  helmet: { frontDist: 1.9, frontSpread: 0.8, y: 1.6, lateral: 0.15, jitter: 0.3 },
+  power: { frontDist: 2.6, frontSpread: 0.7, y: 0.25, lateral: 0.1, jitter: 0.25 },
 };
 
-const DEFAULT_BIAS: ScatterBias = { y: 1.2, radial: 0.4, front: 0.2 };
+const DEFAULT_FRONTAL: WaveScatterProfile = {
+  frontDist: 2.2,
+  frontSpread: 1.0,
+  y: 0.4,
+  lateral: 0.4,
+  jitter: 0.4,
+};
 
 /**
  * Front faceplate / mask (Mark III slam) — rest sits on the face (+Z),
@@ -50,8 +59,11 @@ export function isFaceplateRest(rest: THREE.Vector3): boolean {
 }
 
 /**
- * Scatter a start position on a spherical shell around the rest pose,
- * biased by body region so each wave reads as a directional arrival.
+ * Scatter start in the **front hemisphere** (+Z toward camera).
+ * Wave still owns height; limbs keep sign(rest.x) lateral for L/R mirrors.
+ *
+ * `radiusMin` / `radiusMax` are kept for API compatibility and scale frontDist
+ * when callers pass non-defaults (loadSuitModel uses 3.5–8.5).
  */
 export function scatterStart(
   rest: THREE.Vector3,
@@ -64,53 +76,47 @@ export function scatterStart(
   const r2 = hashSeed(seed + ':b');
   const r3 = hashSeed(seed + ':c');
 
-  // Faceplate: fly in from camera/front (+Z), not from above
+  // Faceplate: strong frontal slam near eye line
   if (wave === 'helmet' && isFaceplateRest(rest)) {
-    const frontDist = 2.1 + r1 * 1.4; // meters in front of the face
+    const frontDist = 2.1 + r1 * 1.4;
     return new THREE.Vector3(
       rest.x + (r3 - 0.5) * 0.2,
-      rest.y + 0.08 + (r2 - 0.5) * 0.25, // near eye line
+      rest.y + 0.08 + (r2 - 0.5) * 0.25,
       rest.z + frontDist,
     );
   }
 
-  const bias = (wave && WAVE_SCATTER[wave]) || DEFAULT_BIAS;
+  const profile = (wave && WAVE_FRONTAL[wave]) || DEFAULT_FRONTAL;
 
-  const theta = r1 * Math.PI * 2;
-  const phi = Math.acos(2 * r2 - 1);
-  const radius = radiusMin + r3 * (radiusMax - radiusMin);
+  // Map legacy radius range → scale so front cloud stays readable
+  const midR = (radiusMin + radiusMax) * 0.5;
+  const scale = THREE.MathUtils.clamp(midR / 6.5, 0.65, 1.35);
 
-  const offset = new THREE.Vector3(
-    radius * Math.sin(phi) * Math.cos(theta),
-    radius * Math.sin(phi) * Math.sin(theta) * 0.75,
-    radius * Math.cos(phi),
+  const frontDist =
+    (profile.frontDist + r1 * profile.frontSpread) * scale;
+  const sideSign = Math.abs(rest.x) < 0.04 ? 0 : Math.sign(rest.x);
+  const lateral =
+    sideSign * (profile.lateral * scale) * (0.75 + r2 * 0.5);
+  const yOff = profile.y * scale + (r3 - 0.5) * profile.jitter * scale;
+
+  // Front-safe jitter: never push start behind rest on Z
+  const jx = (r1 - 0.5) * profile.jitter * scale;
+  const jz = r2 * 0.35 * scale; // only further forward
+
+  return new THREE.Vector3(
+    rest.x + lateral + jx,
+    rest.y + yOff,
+    rest.z + frontDist + jz,
   );
-
-  // Region bias
-  offset.y += bias.y + r1 * 0.9;
-
-  // Push away from spine so limbs don't spawn through the torso
-  const lateral = Math.hypot(rest.x, rest.z) || 1e-4;
-  offset.x += (rest.x / lateral) * bias.radial * radius * 0.22;
-  offset.z += (rest.z / lateral) * bias.radial * radius * 0.22;
-
-  // Front-of-suit bias (+Z in model space after normalize)
-  offset.z += bias.front * (0.55 + r2 * 0.65);
-
-  // Small lateral jitter so plates don't stack on one ray
-  offset.x += (r3 - 0.5) * 1.1;
-  offset.z += (r1 - 0.5) * 0.7;
-
-  return rest.clone().add(offset);
 }
 
 export function scatterRotation(
   seed: string,
   opts?: { rest?: THREE.Vector3; wave?: string },
 ): THREE.Euler {
-  const rx = (hashSeed(seed + ':rx') - 0.5) * Math.PI * 2.4;
-  const ry = (hashSeed(seed + ':ry') - 0.5) * Math.PI * 2.4;
-  const rz = (hashSeed(seed + ':rz') - 0.5) * Math.PI * 2.4;
+  const r1 = hashSeed(seed + ':rx');
+  const r2 = hashSeed(seed + ':ry');
+  const r3 = hashSeed(seed + ':rz');
 
   // Faceplate: mild pitch only — reads as a mask closing from the front
   if (
@@ -118,16 +124,19 @@ export function scatterRotation(
     opts.rest &&
     isFaceplateRest(opts.rest)
   ) {
-    const r1 = hashSeed(seed + ':rx');
-    const r2 = hashSeed(seed + ':ry');
     return new THREE.Euler(
-      (r1 - 0.5) * 0.55, // slight nod
+      (r1 - 0.5) * 0.55,
       (r2 - 0.5) * 0.2,
       (r1 - 0.5) * 0.12,
     );
   }
 
-  return new THREE.Euler(rx, ry, rz);
+  // Frontal approach: moderate tumble (not full random cartwheels)
+  return new THREE.Euler(
+    (r1 - 0.5) * Math.PI * 0.9,
+    (r2 - 0.5) * Math.PI * 0.9,
+    (r3 - 0.5) * Math.PI * 0.7,
+  );
 }
 export interface MagneticPath {
   /** Curved mid-flight control point. */
@@ -189,6 +198,9 @@ export function mirrorPathAroundRest(
 /**
  * Build a two-phase magnetic path: arc in → near-socket approach → overshoot
  * past rest for a mechanical clamp. Deterministic per seed.
+ *
+ * When the start is strongly in front of rest (+Z), arcs stay mild so the
+ * whole suit reads as flying in from the camera (faceplate is the extreme).
  */
 export function magneticPath(
   start: THREE.Vector3,
@@ -201,31 +213,45 @@ export function magneticPath(
   const r3 = hashSeed(seed + ':mw3');
 
   const faceplate = options.faceplate === true || isFaceplateRest(rest);
-
-  // Faceplate: keep the path on the frontal approach line (less side arc)
-  if (faceplate) {
-    const dir = rest.clone().sub(start);
-    const len = Math.max(dir.length(), 1e-4);
-    const dirN = dir.clone().multiplyScalar(1 / len);
-
-    // Mostly linear in from +Z with a slight downward settle
-    const waypoint = start.clone().lerp(rest, 0.58);
-    waypoint.y += 0.06 + r1 * 0.04;
-    waypoint.x += (r3 - 0.5) * 0.08;
-
-    const shy = 0.03 + r2 * 0.01;
-    const approach = rest.clone().addScaledVector(dirN, -shy * Math.min(len, 2.2));
-    // Tiny overshoot into the face for a mask clamp
-    const overshoot = rest.clone().addScaledVector(dirN, 0.006 + r1 * 0.003);
-
-    return { waypoint, approach, overshoot };
-  }
+  const frontDelta = start.z - rest.z;
+  const stronglyFrontal = frontDelta > 0.8;
 
   const dir = rest.clone().sub(start);
   const len = Math.max(dir.length(), 1e-4);
   const dirN = dir.clone().multiplyScalar(1 / len);
 
-  // Arc waypoint ~55–65% along travel, offset perpendicular for a curve
+  // Faceplate / strong frontal: nearly linear approach
+  if (faceplate || stronglyFrontal) {
+    const waypoint = start.clone().lerp(rest, 0.55 + r1 * 0.08);
+    // Keep waypoint in front of rest; small height settle
+    waypoint.y += (faceplate ? 0.06 : 0.03) + r1 * 0.04;
+    waypoint.x += (r3 - 0.5) * (faceplate ? 0.08 : 0.14);
+    // Never pull waypoint behind the rest on Z
+    if (waypoint.z < rest.z + 0.05) {
+      waypoint.z = rest.z + 0.05 + r2 * 0.1;
+    }
+
+    const shy = faceplate
+      ? 0.03 + r2 * 0.01
+      : options.helmet
+        ? 0.025
+        : 0.035 + r2 * 0.015;
+    const approach = rest
+      .clone()
+      .addScaledVector(dirN, -shy * Math.min(len, 2.2));
+    const oh =
+      options.overshoot ??
+      (faceplate
+        ? 0.006 + r1 * 0.003
+        : options.helmet
+          ? 0.005 + r1 * 0.003
+          : 0.012 + r1 * 0.008);
+    const overshoot = rest.clone().addScaledVector(dirN, oh);
+
+    return { waypoint, approach, overshoot };
+  }
+
+  // Fallback mild arc (rarely used once frontal scatter is default)
   const waypoint = start.clone().lerp(rest, 0.55 + r1 * 0.1);
   const up = new THREE.Vector3(0, 1, 0);
   let side = new THREE.Vector3().crossVectors(dirN, up);
@@ -235,15 +261,15 @@ export function magneticPath(
   side.normalize();
   const lift = new THREE.Vector3().crossVectors(side, dirN).normalize();
 
-  const amp = len * (0.07 + r2 * 0.11);
+  const amp = len * (0.04 + r2 * 0.06);
   waypoint.addScaledVector(side, (r3 - 0.5) * 2 * amp);
-  waypoint.addScaledVector(lift, amp * (0.25 + r1 * 0.35));
+  waypoint.addScaledVector(lift, amp * (0.2 + r1 * 0.25));
 
-  // Approach: slightly short of rest (helmet closer / gentler)
   const shy = options.helmet ? 0.022 : 0.04 + r2 * 0.02;
-  const approach = rest.clone().addScaledVector(dirN, -shy * Math.min(len, 2.5));
+  const approach = rest
+    .clone()
+    .addScaledVector(dirN, -shy * Math.min(len, 2.5));
 
-  // Overshoot past socket — subtle clamp seat (helmet almost none)
   const oh =
     options.overshoot ??
     (options.helmet ? 0.005 + r1 * 0.003 : 0.014 + r1 * 0.01);
