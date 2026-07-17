@@ -7,9 +7,10 @@ import {
 import type { Suit } from '../suit/Suit';
 import type { OverlayHandles } from '../ui/overlay';
 
-const VIEWER_HINT = 'Drag to orbit · R replay · Space pause · S skip';
+const VIEWER_HINT =
+  'Drag to orbit (pause/end) · R replay · Space pause · S skip';
 const DIRECTOR_HINT =
-  'Drag to orbit · click plate · R replay · Space pause · S skip';
+  'Drag to orbit (pause/end) · click plate (path) · R replay · Space · S skip';
 
 export interface AssemblySessionOptions {
   suit: Suit;
@@ -62,12 +63,22 @@ export function createAssemblySession(
     }
   };
 
+  /** Free-look when finished or paused/scrubbed; locked while GSAP drives the camera. */
+  const setOrbitMode = (mode: 'locked' | 'free' | 'complete') => {
+    if (mode === 'locked') {
+      controls.enabled = false;
+      controls.autoRotate = false;
+      return;
+    }
+    controls.target.copy(lookTarget);
+    controls.enabled = true;
+    controls.autoRotate = mode === 'complete';
+  };
+
   const applyCompleteUi = () => {
     assemblyComplete = true;
     suit.showFinal(); // seamless mesh — no grid-shard square blooms
-    controls.target.copy(lookTarget);
-    controls.enabled = true;
-    controls.autoRotate = true;
+    setOrbitMode('complete');
     ui.setReplayEnabled(true);
     ui.setSkipEnabled(false);
     ui.setHintVisible(true);
@@ -80,10 +91,9 @@ export function createAssemblySession(
     refreshHintCopy();
   };
 
-  const applyAssemblyUi = () => {
+  const applyAssemblyUi = (opts?: { freeLook?: boolean }) => {
     assemblyComplete = false;
-    controls.enabled = false;
-    controls.autoRotate = false;
+    setOrbitMode(opts?.freeLook ? 'free' : 'locked');
     ui.setReplayEnabled(false);
     ui.setSkipEnabled(true);
     ui.setHintVisible(false);
@@ -158,11 +168,14 @@ export function createAssemblySession(
   const togglePause = () => {
     if (assembly.isPlaying()) {
       assembly.pause();
+      // Inspect mid-assembly: free orbit while paused
+      setOrbitMode('free');
     } else if (assemblyComplete || assembly.getProgress() >= 0.999) {
       startSequence();
       return;
     } else {
-      applyAssemblyUi();
+      // Resume cinematic camera path (drops free-look offset)
+      applyAssemblyUi({ freeLook: false });
       assembly.resume();
     }
     syncDebugPauseLabel();
@@ -176,7 +189,8 @@ export function createAssemblySession(
     if (p >= 0.999) {
       applyCompleteUi();
     } else {
-      applyAssemblyUi();
+      // Scrub pauses the timeline — allow look-around at that frame
+      applyAssemblyUi({ freeLook: true });
       const pct = Math.round(p * 100);
       ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
       ui.setStatus('DEBUG SCRUB', false);

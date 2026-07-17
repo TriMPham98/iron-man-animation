@@ -190,3 +190,43 @@ export function magneticPath(
 
   return { waypoint, approach, overshoot };
 }
+
+/** Keyframes stored on each plate for director path visualization. */
+export interface FlightPathKeys {
+  start: THREE.Vector3;
+  waypoint: THREE.Vector3;
+  approach: THREE.Vector3;
+  overshoot: THREE.Vector3;
+  rest: THREE.Vector3;
+}
+
+export function flightPathKeysFrom(
+  start: THREE.Vector3,
+  rest: THREE.Vector3,
+  path: MagneticPath,
+): FlightPathKeys {
+  return {
+    start: start.clone(),
+    waypoint: path.waypoint.clone(),
+    approach: path.approach.clone(),
+    overshoot: path.overshoot.clone(),
+    rest: rest.clone(),
+  };
+}
+
+/**
+ * Dense polyline through the magnetic control points (director debug line).
+ * Uses a centripetal Catmull–Rom through start → waypoint → approach → overshoot → rest.
+ */
+export function sampleFlightPathLine(
+  keys: FlightPathKeys,
+  segments = 64,
+): THREE.Vector3[] {
+  const curve = new THREE.CatmullRomCurve3(
+    [keys.start, keys.waypoint, keys.approach, keys.overshoot, keys.rest],
+    false,
+    'catmullrom',
+    0.35,
+  );
+  return curve.getPoints(Math.max(8, segments));
+}

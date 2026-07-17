@@ -12,7 +12,7 @@ export interface BindInputOptions {
   controls: OrbitControls;
   pick: {
     clear: () => void;
-    apply: (root: THREE.Object3D) => void;
+    apply: (root: THREE.Object3D, piece?: ArmorPiece | null) => void;
   };
   session: {
     startSequence: () => void;
@@ -62,7 +62,8 @@ export function bindInput(options: BindInputOptions): void {
   });
 
   controls.addEventListener('start', () => {
-    if (session.isComplete()) controls.autoRotate = false;
+    // User take-over stops idle spin (complete mode); free-look while paused has no spin
+    if (controls.autoRotate) controls.autoRotate = false;
   });
 
   // ── Director raycast pick (click plate → scrubber + highlight) ─
@@ -119,7 +120,8 @@ export function bindInput(options: BindInputOptions): void {
         .filter((h) => !h.object.userData.isPickHighlight);
       if (hits.length > 0) {
         const obj = hits[0].object;
-        pick.apply(obj);
+        // Final seamless mesh has no per-shard flight path
+        pick.apply(obj, null);
         ui.setDebugPickedPiece({
           id: obj.name || 'final-mesh',
           wave: 'power',
@@ -141,7 +143,7 @@ export function bindInput(options: BindInputOptions): void {
     const piece = resolvePiece(hits[0].object);
     if (!piece) {
       const obj = hits[0].object;
-      pick.apply(obj);
+      pick.apply(obj, null);
       ui.setDebugPickedPiece({
         id: obj.name || obj.uuid.slice(0, 8),
         wave: 'power',
@@ -152,7 +154,7 @@ export function bindInput(options: BindInputOptions): void {
       return;
     }
 
-    pick.apply(piece.mesh);
+    pick.apply(piece.mesh, piece);
     ui.setDebugPickedPiece({
       id: piece.id,
       wave: piece.wave,
@@ -163,6 +165,9 @@ export function bindInput(options: BindInputOptions): void {
         y: piece.restPosition.y,
         z: piece.restPosition.z,
       },
+      note: piece.mesh.userData.flightPathKeys
+        ? 'flight path shown'
+        : undefined,
     });
   });
 }

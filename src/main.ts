@@ -60,7 +60,7 @@ async function boot(): Promise<void> {
   applyStudioEnvironment(renderer, scene);
   scene.add(suit.group);
 
-  const pick = createPickHighlight();
+  const pick = createPickHighlight(scene);
 
   const post = createPostProcessing(renderer, scene, camera, {
     preferBloom: preferBloomForTier(quality),
@@ -133,7 +133,8 @@ async function boot(): Promise<void> {
     const t = clock.getElapsedTime();
     const delta = clock.getDelta();
 
-    if (session.isComplete()) {
+    // Orbit when finished or paused/scrubbed; locked while GSAP drives the camera
+    if (controls.enabled) {
       controls.update();
       lookTarget.copy(controls.target);
     }

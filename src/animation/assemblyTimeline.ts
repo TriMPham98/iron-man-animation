@@ -7,6 +7,7 @@ import {
 } from '../suit/assemblyOrder';
 import { WAVE_ORDER, WAVE_STATUS } from '../suit/waves';
 import {
+  flightPathKeysFrom,
   magneticPath,
   mirrorPathAroundRest,
   type MagneticPath,
@@ -364,6 +365,13 @@ export function createAssemblyTimeline(
                   piece.id,
                   { helmet: isHelmet },
                 );
+
+          // Director mode: click-to-inspect draws this flight curve
+          piece.mesh.userData.flightPathKeys = flightPathKeysFrom(
+            piece.startPosition,
+            piece.restPosition,
+            path,
+          );
 
           const approachDur = duration * approachFrac;
           const dockDur = duration - approachDur;

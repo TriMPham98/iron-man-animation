@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
+  flightPathKeysFrom,
   hashSeed,
   magneticPath,
   mirrorEulerYZ,
   mirrorOffsetX,
   mirrorPathAroundRest,
   mirrorStartAroundRest,
+  sampleFlightPathLine,
   scatterStart,
 } from './easeHelpers';
 
@@ -77,5 +79,16 @@ describe('mirror helpers (bilateral flight)', () => {
     expect(m.x).toBeCloseTo(0.5);
     expect(m.y).toBeCloseTo(-1.2);
     expect(m.z).toBeCloseTo(0.3);
+  });
+
+  it('sampleFlightPathLine starts at scatter and ends at rest', () => {
+    const start = new THREE.Vector3(2, 1, 1);
+    const rest = new THREE.Vector3(0.2, 1.1, 0);
+    const path = magneticPath(start, rest, 'line-seed');
+    const keys = flightPathKeysFrom(start, rest, path);
+    const pts = sampleFlightPathLine(keys, 32);
+    expect(pts.length).toBeGreaterThan(8);
+    expect(pts[0].distanceTo(start)).toBeLessThan(1e-4);
+    expect(pts[pts.length - 1].distanceTo(rest)).toBeLessThan(1e-4);
   });
 });
