@@ -7,11 +7,15 @@
     <meta name="color-scheme" content="dark" />
     <title>Mark Suit — Assembly Sequence</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <!-- Critical CSS: paint dark on first frame — no white flash before JS/CSS modules -->
+    <!--
+      Critical CSS: solid page shell + content-sized loader.
+      Do NOT put a full-screen fill on #loading — that was the dark-gray block.
+    -->
     <style>
       html,
       body {
         margin: 0;
+        padding: 0;
         width: 100%;
         height: 100%;
         overflow: hidden;
@@ -20,36 +24,34 @@
         color-scheme: dark;
       }
       #app {
-        position: relative;
-        width: 100%;
-        height: 100%;
+        display: none;
+        position: absolute;
+        inset: 0;
         background: #050508;
+      }
+      body.scene-ready #app {
+        display: block;
       }
       #scene-canvas {
         display: block;
+        position: absolute;
+        inset: 0;
         width: 100%;
         height: 100%;
         background: #050508;
       }
       #loading {
-        position: absolute;
-        inset: 0;
-        z-index: 20;
-        display: grid;
-        place-items: center;
-        background: #050508;
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-      }
-      #loading .loading-label {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 9999;
         margin: 0;
-        font-size: 0.7rem;
-        letter-spacing: 0.28em;
-        color: rgba(232, 228, 217, 0.55);
-      }
-      #loading .loading-mark {
-        color: #c9a227;
-        font-size: 1.75rem;
-        margin-bottom: 1.25rem;
+        padding: 0;
+        background: none;
+        border: none;
+        box-shadow: none;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
         text-align: center;
       }
       #loading .loading-inner {
@@ -57,7 +59,20 @@
         flex-direction: column;
         align-items: center;
         gap: 1.25rem;
-        min-width: min(320px, 80vw);
+        width: 320px;
+        max-width: 80vw;
+      }
+      #loading .loading-mark {
+        color: #c9a227;
+        font-size: 1.75rem;
+        line-height: 1;
+      }
+      #loading .loading-label {
+        margin: 0;
+        font-size: 0.7rem;
+        letter-spacing: 0.28em;
+        color: rgba(232, 228, 217, 0.55);
+        white-space: nowrap;
       }
       #loading .loading-bar {
         width: 100%;
@@ -79,6 +94,17 @@
     />
   </head>
   <body>
+    <!-- Content-sized loader only (no full-screen fill = no gray block) -->
+    <div id="loading" role="status" aria-live="polite">
+      <div class="loading-inner">
+        <div class="loading-mark" aria-hidden="true">◆</div>
+        <p class="loading-label">INITIALIZING SUIT SYSTEMS…</p>
+        <div class="loading-bar" aria-hidden="true">
+          <div id="loading-fill" class="loading-fill"></div>
+        </div>
+      </div>
+    </div>
+
     <div id="app">
       <canvas
         id="scene-canvas"
@@ -88,16 +114,6 @@
 
       <div id="vignette" aria-hidden="true"></div>
       <div id="scanlines" aria-hidden="true"></div>
-
-      <div id="loading" class="panel" role="status" aria-live="polite">
-        <div class="loading-inner">
-          <div class="loading-mark" aria-hidden="true">◆</div>
-          <p class="loading-label">INITIALIZING SUIT SYSTEMS…</p>
-          <div class="loading-bar" aria-hidden="true">
-            <div id="loading-fill" class="loading-fill"></div>
-          </div>
-        </div>
-      </div>
 
       <header id="hud-top" class="hud hud-top hidden">
         <span class="hud-brand">MARK SUIT // PROTO</span>

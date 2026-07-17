@@ -38,6 +38,7 @@ Author tools are **off by default** for a clean portfolio surface.
 | HUD | Click **DIR** in the top-right (preference saved in `localStorage`) |
 | URL | `?debug=1` or `?director=1` |
 | Force viewer | `?debug=0` |
+| Quality | `?quality=high` · `medium` · `low` (auto-detects by default) |
 
 In director mode you also get:
 
@@ -62,19 +63,38 @@ In director mode you also get:
 
 ```
 public/models/ironman.glb # free community suit mesh + textures
+public/draco/             # local Draco wasm/js decoders for GLTFLoader
 src/
   main.ts                 # bootstrap + render loop
-  scene/                  # renderer, camera, lights, env, post-FX
+  session/                # assembly session state machine
+  scene/                  # renderer, camera, lights, env, post-FX, quality
   suit/                   # glTF load, spatial mesh split, assembly pieces
     waves.ts              # PieceWave types + WAVE_ORDER / WAVE_STATUS
+    classifyWave.ts       # pure body-region classification (unit tested)
   animation/              # GSAP assembly timeline
-  ui/                     # HUD overlay, viewer / director mode
+  ui/                     # HUD overlay, viewer / director mode, pick
   utils/                  # colors, scatter helpers
 ```
+
+```bash
+npm test                 # unit tests (assembly order, classifyWave, seeds)
+```
+
+## Performance / quality
+
+Quality is auto-detected (GPU software → low; mobile / low cores / low memory → medium or low; else high). Override with `?quality=high|medium|low`.
+
+| Tier | Shard grid | Max DPR | Bloom |
+|------|------------|---------|-------|
+| high | 3×7×3 | 1.75 | full-res |
+| medium | 2×5×2 | 1.5 | half-res |
+| low | 2×4×2 | 1.25 | off |
+
+Draco mesh decoders are served locally from `public/draco/` (no gstatic CDN).
 
 ## Notes
 
 - The suit mesh is a **free fan-art GLB** loaded at runtime, then split into spatial shards for the fly-in assembly sequence.
-- Bloom is disabled automatically on software renderers.
-- Pixel ratio is clamped for performance on high-DPI displays.
+- Bloom is disabled automatically on software renderers and on the low quality tier.
+- Pixel ratio is clamped for performance on high-DPI displays (tier-dependent).
 - See `public/models/ATTRIBUTION.md` for model credit and IP notes.

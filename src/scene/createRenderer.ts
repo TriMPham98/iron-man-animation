@@ -1,6 +1,16 @@
 import * as THREE from 'three';
 
-export function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
+export interface CreateRendererOptions {
+  /** Upper bound for devicePixelRatio (default 1.75 = high tier). */
+  maxPixelRatio?: number;
+}
+
+export function createRenderer(
+  canvas: HTMLCanvasElement,
+  options: CreateRendererOptions = {},
+): THREE.WebGLRenderer {
+  const maxPixelRatio = options.maxPixelRatio ?? 1.75;
+
   const renderer = new THREE.WebGLRenderer({
     canvas,
     antialias: true,
@@ -21,7 +31,7 @@ export function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
   const setSize = () => {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+    const dpr = Math.min(window.devicePixelRatio || 1, maxPixelRatio);
     renderer.setPixelRatio(dpr);
     renderer.setSize(w, h, false);
   };
