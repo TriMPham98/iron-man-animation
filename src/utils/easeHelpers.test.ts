@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   flightPathKeysFrom,
   hashSeed,
+  isFaceplateRest,
   magneticPath,
   mirrorEulerYZ,
   mirrorOffsetX,
@@ -90,5 +91,23 @@ describe('mirror helpers (bilateral flight)', () => {
     expect(pts.length).toBeGreaterThan(8);
     expect(pts[0].distanceTo(start)).toBeLessThan(1e-4);
     expect(pts[pts.length - 1].distanceTo(rest)).toBeLessThan(1e-4);
+  });
+
+  it('faceplate scatter starts well in front (+Z) of the rest pose', () => {
+    const rest = new THREE.Vector3(0.02, 1.55, 0.12);
+    expect(isFaceplateRest(rest)).toBe(true);
+    const start = scatterStart(rest, 'faceplate-seed', 3.5, 8.5, 'helmet');
+    // Clearly in front of the face, not above the crown
+    expect(start.z).toBeGreaterThan(rest.z + 1.5);
+    expect(start.y).toBeLessThan(rest.y + 0.6);
+    expect(Math.abs(start.x - rest.x)).toBeLessThan(0.35);
+  });
+
+  it('cranial shell helmet scatter still prefers above', () => {
+    const rest = new THREE.Vector3(0.02, 1.62, -0.05); // back of head
+    expect(isFaceplateRest(rest)).toBe(false);
+    const start = scatterStart(rest, 'shell-seed', 3.5, 8.5, 'helmet');
+    // Bias y: 3.2 on shell — expect higher start than rest
+    expect(start.y).toBeGreaterThan(rest.y + 1.0);
   });
 });
