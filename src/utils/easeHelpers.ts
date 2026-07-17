@@ -98,6 +98,54 @@ export interface MagneticPath {
   overshoot: THREE.Vector3;
 }
 
+/** Reflect a free vector across the YZ plane (left ↔ right). */
+export function mirrorOffsetX(v: THREE.Vector3): THREE.Vector3 {
+  return new THREE.Vector3(-v.x, v.y, v.z);
+}
+
+/**
+ * Mirror `point` relative to `restSource` onto the frame of `restTarget`.
+ * offset = point − restSource → (−ox, oy, oz) applied at restTarget.
+ */
+export function mirrorPointAroundRest(
+  point: THREE.Vector3,
+  restSource: THREE.Vector3,
+  restTarget: THREE.Vector3,
+): THREE.Vector3 {
+  const o = point.clone().sub(restSource);
+  return restTarget.clone().add(mirrorOffsetX(o));
+}
+
+/** Mirror start pose so L/R pairs share a bilateral scatter offset from rest. */
+export function mirrorStartAroundRest(
+  startSource: THREE.Vector3,
+  restSource: THREE.Vector3,
+  restTarget: THREE.Vector3,
+): THREE.Vector3 {
+  return mirrorPointAroundRest(startSource, restSource, restTarget);
+}
+
+/**
+ * Mirror Euler for a left↔right plate (reflect across YZ).
+ * Keep X (pitch), flip Y/Z (yaw/roll).
+ */
+export function mirrorEulerYZ(e: THREE.Euler): THREE.Euler {
+  return new THREE.Euler(e.x, -e.y, -e.z, e.order);
+}
+
+/** Mirror every control point of a magnetic path around a new rest. */
+export function mirrorPathAroundRest(
+  path: MagneticPath,
+  restSource: THREE.Vector3,
+  restTarget: THREE.Vector3,
+): MagneticPath {
+  return {
+    waypoint: mirrorPointAroundRest(path.waypoint, restSource, restTarget),
+    approach: mirrorPointAroundRest(path.approach, restSource, restTarget),
+    overshoot: mirrorPointAroundRest(path.overshoot, restSource, restTarget),
+  };
+}
+
 /**
  * Build a two-phase magnetic path: arc in → near-socket approach → overshoot
  * past rest for a mechanical clamp. Deterministic per seed.

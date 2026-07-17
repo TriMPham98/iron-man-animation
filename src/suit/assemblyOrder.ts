@@ -1,3 +1,4 @@
+import { mirrorEulerYZ, mirrorStartAroundRest } from '../utils/easeHelpers';
 import type { ArmorPiece, PieceWave } from './waves';
 
 /** Spine-distance weight — used for seed / tie-break only. */
@@ -440,4 +441,32 @@ export function planSymmetricLaunchGroups(
   }
 
   return groups;
+}
+
+/**
+ * For each L/R launch pair, copy the left plate’s scatter offset onto the right
+ * (mirrored across YZ in rest-local space) so flight paths can be geometric mirrors.
+ *
+ * Mutates `startPosition` / `startRotation` and the live mesh pose.
+ * Left = lower rest X (first in group after sort).
+ */
+export function applyMirroredFlightStarts(groups: ArmorPiece[][]): void {
+  for (const group of groups) {
+    if (group.length !== 2) continue;
+    const [left, right] = group[0].restPosition.x <= group[1].restPosition.x
+      ? group
+      : [group[1], group[0]];
+
+    const start = mirrorStartAroundRest(
+      left.startPosition,
+      left.restPosition,
+      right.restPosition,
+    );
+    const rot = mirrorEulerYZ(left.startRotation);
+
+    right.startPosition.copy(start);
+    right.startRotation.copy(rot);
+    right.mesh.position.copy(start);
+    right.mesh.rotation.copy(rot);
+  }
 }

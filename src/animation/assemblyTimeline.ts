@@ -1,9 +1,16 @@
 import gsap from 'gsap';
 import * as THREE from 'three';
 import type { Suit } from '../suit/Suit';
-import { planSymmetricLaunchGroups } from '../suit/assemblyOrder';
+import {
+  applyMirroredFlightStarts,
+  planSymmetricLaunchGroups,
+} from '../suit/assemblyOrder';
 import { WAVE_ORDER, WAVE_STATUS } from '../suit/waves';
-import { magneticPath } from '../utils/easeHelpers';
+import {
+  magneticPath,
+  mirrorPathAroundRest,
+  type MagneticPath,
+} from '../utils/easeHelpers';
 
 /** A plate currently mid-flight (between launch and lock). */
 export interface ActivePieceInfo {
@@ -294,6 +301,8 @@ export function createAssemblyTimeline(
       const duration = isHelmet ? HELMET_PIECE_DURATION : PIECE_DURATION;
       // Paired L/R launches: stagger between *pairs*, not individual plates
       const launchGroups = planSymmetricLaunchGroups(pieces, wave);
+      // Mirror scatter starts so paths can be geometric L↔R reflections
+      applyMirroredFlightStarts(launchGroups);
       const stagger = staggerFor(launchGroups.length, isHelmet);
       const approachFrac = isHelmet ? HELMET_APPROACH_FRAC : APPROACH_FRAC;
 
@@ -314,6 +323,23 @@ export function createAssemblyTimeline(
         lastLaunch = t;
         lastEnd = t + duration;
 
+        // Shared seed path on the left (lower rest X), then mirror for partner
+        const leftOfPair =
+          group.length === 2
+            ? group[0].restPosition.x <= group[1].restPosition.x
+              ? group[0]
+              : group[1]
+            : null;
+        const primaryPath =
+          leftOfPair != null
+            ? magneticPath(
+                leftOfPair.startPosition,
+                leftOfPair.restPosition,
+                leftOfPair.id,
+                { helmet: isHelmet },
+              )
+            : null;
+
         for (const piece of group) {
           const mesh = piece.mesh;
           motionSpans.push({
@@ -323,12 +349,21 @@ export function createAssemblyTimeline(
             end: t + duration,
           });
 
-          const path = magneticPath(
-            piece.startPosition,
-            piece.restPosition,
-            piece.id,
-            { helmet: isHelmet },
-          );
+          const path: MagneticPath =
+            leftOfPair != null && primaryPath != null
+              ? piece.id === leftOfPair.id
+                ? primaryPath
+                : mirrorPathAroundRest(
+                    primaryPath,
+                    leftOfPair.restPosition,
+                    piece.restPosition,
+                  )
+              : magneticPath(
+                  piece.startPosition,
+                  piece.restPosition,
+                  piece.id,
+                  { helmet: isHelmet },
+                );
 
           const approachDur = duration * approachFrac;
           const dockDur = duration - approachDur;

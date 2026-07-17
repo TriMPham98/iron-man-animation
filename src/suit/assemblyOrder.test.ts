@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   FOUNDATION_WAVES,
+  applyMirroredFlightStarts,
   assemblyScore,
   planSymmetricLaunchGroups,
   planWaveOrder,
@@ -237,5 +238,25 @@ describe('planSymmetricLaunchGroups', () => {
     // Proximal (high Y) first for limb waves
     expect(groups[0].map((p) => p.id).sort()).toEqual(['upper-L', 'upper-R']);
     expect(groups[1].map((p) => p.id).sort()).toEqual(['hand-L', 'hand-R']);
+  });
+
+  it('applyMirroredFlightStarts mirrors +X plate from −X (lower rest X is source)', () => {
+    // Convention: lower rest.x is the source; partner gets mirrored scatter
+    const source = piece('boot-negX', 'boots', -0.12, 0.05);
+    const partner = piece('boot-posX', 'boots', 0.12, 0.05);
+    source.startPosition.set(1.5, 0.5, 2.0);
+    source.startRotation.set(0.2, 0.4, -0.1);
+    partner.startPosition.set(9, 9, 9); // will be overwritten
+    partner.startRotation.set(0, 0, 0);
+
+    applyMirroredFlightStarts([[source, partner]]);
+
+    // offset from source rest = (1.62, 0.45, 2.0) → partner = restP + (−1.62, 0.45, 2.0)
+    expect(partner.startPosition.x).toBeCloseTo(0.12 - 1.62);
+    expect(partner.startPosition.y).toBeCloseTo(0.05 + 0.45);
+    expect(partner.startPosition.z).toBeCloseTo(0 + 2.0);
+    expect(partner.startRotation.x).toBeCloseTo(0.2);
+    expect(partner.startRotation.y).toBeCloseTo(-0.4);
+    expect(partner.startRotation.z).toBeCloseTo(0.1);
   });
 });
