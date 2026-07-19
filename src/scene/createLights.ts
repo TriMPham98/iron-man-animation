@@ -8,6 +8,8 @@ export interface SceneLights {
   fill: THREE.DirectionalLight;
   front: THREE.DirectionalLight;
   kick: THREE.DirectionalLight;
+  /** Cool rear fill — illuminates back plates when orbiting behind the suit. */
+  back: THREE.DirectionalLight;
   group: THREE.Group;
 }
 
@@ -52,6 +54,17 @@ export function createLights(): SceneLights {
   kick.position.set(0.2, -1.8, 2.8);
   group.add(kick);
 
+  // Cool steel-cyan rear — hangar bounce matching rim/reactor palette so the
+  // spine and calf plates read when the camera orbits behind the figure.
+  const back = new THREE.DirectionalLight(0x9ad8f0, 2.0);
+  back.position.set(1.2, 3.6, -5.8);
+  group.add(back);
+
+  // Soft warm rear kick — keeps gold trim from going dead black on the back
+  const backWarm = new THREE.DirectionalLight(0xffe4c8, 0.9);
+  backWarm.position.set(-2.4, 2.2, -4.5);
+  group.add(backWarm);
+
   return {
     ambient,
     hemi,
@@ -60,6 +73,7 @@ export function createLights(): SceneLights {
     fill,
     front,
     kick,
+    back,
     group,
   };
 }

@@ -21,6 +21,10 @@ export function applyStudioEnvironment(
   const envRim = new THREE.DirectionalLight(0x66d0e8, 2.2);
   envRim.position.set(-5, 3, -3);
   envScene.add(envRim);
+  // Cool rear for env reflections when orbiting behind the suit
+  const envBack = new THREE.DirectionalLight(0x7ec8e8, 2.0);
+  envBack.position.set(1, 3.5, -5.5);
+  envScene.add(envBack);
   const envHot = new THREE.DirectionalLight(0xfff0e0, 2.8);
   envHot.position.set(0, 2, 6);
   envScene.add(envHot);
