@@ -8,9 +8,9 @@ import type { Suit } from '../suit/Suit';
 import type { OverlayHandles } from '../ui/overlay';
 
 const VIEWER_HINT =
-  'Drag to orbit (pause/end) · R replay · Space pause · S skip · ←→ scrub';
+  'Drag to orbit · R replay · Space pause · S skip · ←→ scrub';
 const DIRECTOR_HINT =
-  'Drag to orbit (pause/end) · click plate (path) · ←→ scrub · R · Space · S';
+  'Drag to orbit · click plate (path) · ←→ scrub · R · Space · S';
 
 export interface AssemblySessionOptions {
   suit: Suit;
@@ -64,19 +64,16 @@ export function createAssemblySession(
   };
 
   /**
-   * Free-look when finished or paused/scrubbed; locked while GSAP drives the camera.
-   * `preserveTarget` keeps the current orbit pivot (after free-look) instead of
-   * re-seeding from the cinematic lookTarget.
+   * Orbit is always available during assembly and after complete.
+   * While the cinematic path is playing, the first drag claims free-look
+   * (`userOwnsCamera`) and overrides the progress-driven camera.
+   * `preserveTarget` keeps the current orbit pivot instead of re-seeding
+   * from the cinematic lookTarget.
    */
   const setOrbitMode = (
-    mode: 'locked' | 'free' | 'complete',
+    mode: 'free' | 'complete',
     opts?: { preserveTarget?: boolean },
   ) => {
-    if (mode === 'locked') {
-      controls.enabled = false;
-      controls.autoRotate = false;
-      return;
-    }
     if (!opts?.preserveTarget) {
       controls.target.copy(lookTarget);
     }
@@ -110,14 +107,10 @@ export function createAssemblySession(
     refreshHintCopy();
   };
 
-  const applyAssemblyUi = (opts?: {
-    freeLook?: boolean;
-    preserveTarget?: boolean;
-  }) => {
+  const applyAssemblyUi = (opts?: { preserveTarget?: boolean }) => {
     assemblyComplete = false;
-    setOrbitMode(opts?.freeLook ? 'free' : 'locked', {
-      preserveTarget: opts?.preserveTarget,
-    });
+    // Keep orbit live so a mid-play drag can override the cinematic path
+    setOrbitMode('free', { preserveTarget: opts?.preserveTarget });
     ui.setReplayEnabled(false);
     ui.setSkipEnabled(true);
     ui.setHintVisible(false);
@@ -135,8 +128,9 @@ export function createAssemblySession(
       ui.setDebugProgress(t);
       if (t < 0.999 && assemblyComplete) {
         // Scrubbed back from the end — keep free-look if user owns the camera
-        const freeLook = assembly.userOwnsCamera();
-        applyAssemblyUi({ freeLook, preserveTarget: freeLook });
+        applyAssemblyUi({
+          preserveTarget: assembly.userOwnsCamera(),
+        });
       }
     },
     onActivePieces: (pieces) => {
@@ -193,20 +187,19 @@ export function createAssemblySession(
   const togglePause = () => {
     if (assembly.isPlaying()) {
       assembly.pause();
-      // Inspect mid-assembly: free orbit while paused
-      setOrbitMode('free');
+      // Orbit stays enabled; path is frozen at this frame until resume
+      setOrbitMode('free', {
+        preserveTarget: assembly.userOwnsCamera(),
+      });
     } else if (assemblyComplete || assembly.getProgress() >= 0.999) {
       startSequence();
       return;
     } else {
-      // Director / free-look: keep framing while assembly continues.
-      // Viewer without prior orbit: re-lock to the cinematic camera path.
+      // Free-look / director: keep framing while assembly continues.
+      // No prior orbit: resume snaps back onto the cinematic path.
       const preserveCamera =
         ui.isDirectorMode() || assembly.userOwnsCamera();
-      applyAssemblyUi({
-        freeLook: preserveCamera,
-        preserveTarget: preserveCamera,
-      });
+      applyAssemblyUi({ preserveTarget: preserveCamera });
       assembly.resume({ preserveCamera });
     }
     syncDebugPauseLabel();
@@ -223,7 +216,7 @@ export function createAssemblySession(
       applyCompleteUi({ preserveCamera });
     } else {
       // Scrub pauses the timeline — allow look-around at that frame
-      applyAssemblyUi({ freeLook: true, preserveTarget: preserveCamera });
+      applyAssemblyUi({ preserveTarget: preserveCamera });
       const pct = Math.round(p * 100);
       ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
       ui.setStatus('DEBUG SCRUB', false);

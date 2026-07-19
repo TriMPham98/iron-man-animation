@@ -133,10 +133,18 @@ async function boot(): Promise<void> {
     const t = clock.getElapsedTime();
     const delta = clock.getDelta();
 
-    // Orbit when finished or paused/scrubbed; locked while GSAP drives the camera
+    // Orbit is live mid-assembly; cinematic path yields once the user claims free-look.
     if (controls.enabled) {
+      const ownsCamera = session.assembly.userOwnsCamera();
+      const playing = session.assembly.isPlaying();
+      if (playing && !ownsCamera) {
+        // Keep orbit pivot in sync so the first drag does not jump
+        controls.target.copy(lookTarget);
+      }
       controls.update();
-      lookTarget.copy(controls.target);
+      if (ownsCamera || !playing) {
+        lookTarget.copy(controls.target);
+      }
     }
 
     ui.updateClock(Math.max(0, t - session.getClockStart()));

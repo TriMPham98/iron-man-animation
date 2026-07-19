@@ -92,7 +92,7 @@ export function bindInput(options: BindInputOptions): void {
   controls.addEventListener('start', () => {
     // User take-over stops idle spin (complete mode); free-look while paused has no spin
     if (controls.autoRotate) controls.autoRotate = false;
-    // Free-look orbit claims the camera — scrub/resume must not snap to cinematic path
+    // Orbit claims the camera — mid-play path, scrub, and resume all yield to free-look
     session.assembly?.setUserOwnsCamera(true);
   });
 

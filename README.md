@@ -22,7 +22,7 @@ npm run preview  # serve dist locally
 
 | Input | Action |
 |--------|--------|
-| Drag | Orbit camera (after assembly completes) |
+| Drag | Orbit camera (also overrides path while assembly plays) |
 | Scroll | Zoom |
 | `R` or **REPLAY** | Restart the assembly sequence |
 | `S` or **SKIP** | Jump to finished suit / systems online |

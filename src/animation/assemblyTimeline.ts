@@ -41,7 +41,8 @@ interface PieceMotionSpan {
 export interface CameraControlOptions {
   /**
    * Keep the live camera/orbit framing instead of snapping back onto the
-   * cinematic path. Used after the user has free-looked (orbit) in director mode.
+   * cinematic path. Used after the user has free-looked (orbit), including
+   * mid-play takeovers of the progress-driven camera.
    */
   preserveCamera?: boolean;
 }
@@ -197,7 +198,7 @@ export function createAssemblyTimeline(
   const repulsorsProxy = { v: 0 };
 
   const applyCamera = () => {
-    // Free-look (director orbit): never overwrite the live framing
+    // Free-look orbit (including mid-play takeover): never overwrite framing
     if (userOwnsCamera) return;
     camera.position.set(
       cameraProxy.x + shake.x,
