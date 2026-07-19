@@ -27,6 +27,7 @@ npm run preview  # serve dist locally
 | `R` or **REPLAY** | Restart the assembly sequence |
 | `S` or **SKIP** | Jump to finished suit / systems online |
 | Space | Pause / resume (or restart if finished) |
+| `←` / `→` | Scrub progress (−/+0.2%; Shift = 1%) |
 | **DIR** | Toggle director mode (scrubber + plate pick) |
 
 ### Director mode

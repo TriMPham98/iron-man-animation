@@ -8,9 +8,9 @@ import type { Suit } from '../suit/Suit';
 import type { OverlayHandles } from '../ui/overlay';
 
 const VIEWER_HINT =
-  'Drag to orbit (pause/end) · R replay · Space pause · S skip';
+  'Drag to orbit (pause/end) · R replay · Space pause · S skip · ←→ scrub';
 const DIRECTOR_HINT =
-  'Drag to orbit (pause/end) · click plate (path) · R replay · Space · S skip';
+  'Drag to orbit (pause/end) · click plate (path) · ←→ scrub · R · Space · S';
 
 export interface AssemblySessionOptions {
   suit: Suit;

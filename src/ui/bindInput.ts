@@ -18,15 +18,21 @@ export interface BindInputOptions {
     startSequence: () => void;
     skipToEnd: () => void;
     togglePause: () => void;
+    seek: (progress01: number) => void;
     isComplete: () => boolean;
     assembly?: {
       setUserOwnsCamera: (owns: boolean) => void;
+      getProgress: () => number;
     };
   };
 }
 
+/** Progress step for ←/→ scrub. Shift = coarse. */
+const SCRUB_STEP = 0.002;
+const SCRUB_STEP_COARSE = 0.01;
+
 /**
- * Keyboard (R / S / Space) + director pointer pick raycast.
+ * Keyboard (R / S / Space / ← →) + director pointer pick raycast.
  * Ignores picks after drag so orbit does not select a plate.
  */
 export function bindInput(options: BindInputOptions): void {
@@ -41,14 +47,19 @@ export function bindInput(options: BindInputOptions): void {
     });
   }
 
+  const isTypingTarget = (target: EventTarget | null): boolean => {
+    const tag = (target as HTMLElement | null)?.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON';
+  };
+
   window.addEventListener('keydown', (e) => {
     if (e.key === 'r' || e.key === 'R') {
+      if (isTypingTarget(e.target)) return;
       session.startSequence();
       return;
     }
     if (e.key === 's' || e.key === 'S') {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (isTypingTarget(e.target)) return;
       if (!session.isComplete()) {
         e.preventDefault();
         session.skipToEnd();
@@ -57,10 +68,24 @@ export function bindInput(options: BindInputOptions): void {
     }
     // Space — pause / resume (ignore when typing in inputs)
     if (e.code === 'Space' || e.key === ' ') {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+      if (isTypingTarget(e.target)) return;
       e.preventDefault();
       session.togglePause();
+      return;
+    }
+    // ← / → — scrub assembly progress (Shift = coarser steps)
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (isTypingTarget(e.target)) return;
+      // Range input already handles arrows natively — let it
+      if ((e.target as HTMLElement | null)?.id === 'debug-progress') return;
+      e.preventDefault();
+      const cur = session.assembly?.getProgress() ?? 0;
+      const step = e.shiftKey ? SCRUB_STEP_COARSE : SCRUB_STEP;
+      const next =
+        e.key === 'ArrowLeft'
+          ? Math.max(0, cur - step)
+          : Math.min(1, cur + step);
+      session.seek(next);
     }
   });
 
