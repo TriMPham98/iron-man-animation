@@ -86,11 +86,25 @@ export function classifyWave(
   // Soft torso core (abs / lower chest) before lateral arms
   if (yNorm < 0.72 && rNorm < 0.28) return 'torso';
 
-  // Arc reactor / sternum / center chest
+  // Arc reactor / sternum / center chest (radial-based — works for shallow plates)
   if (yNorm >= 0.58 && yNorm <= 0.82 && rNorm < 0.36) return 'torso';
 
-  // Upper arms — at/above ARM_Y_MIN, lateral of the torso core
-  if (c.y < SHOULDER_Y_MIN && rNorm > CORE_RNORM) return 'arms';
+  // Front / back lower–mid chest including the reactor housing.
+  // Chest protrusion inflates radial (hypot(x,z)) even on the centerline, so
+  // rNorm alone mis-tags medial plates as arms (e.g. former arms#227:
+  // |x|≈0.04, z≈0.18, y≈1.37 → lower chest under the reactor).
+  // Gate on lateral |x| + front/back depth instead of rNorm.
+  if (
+    yNorm >= 0.55 &&
+    yNorm <= 0.82 &&
+    ax <= 0.13 &&
+    Math.abs(c.z) >= 0.06
+  ) {
+    return 'torso';
+  }
+
+  // Upper arms — at/above ARM_Y_MIN, truly lateral (not front-chest radial)
+  if (c.y < SHOULDER_Y_MIN && ax > 0.14 && rNorm > CORE_RNORM) return 'arms';
 
   // Shoulders / pauldrons — high lateral collar
   if (yNorm >= 0.72 && yNorm <= 0.86 && rNorm > 0.35) return 'shoulders';

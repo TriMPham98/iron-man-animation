@@ -148,6 +148,34 @@ describe('classifyWave', () => {
     expect(waveAt(0.2, 1.45)).toBe('shoulders');
   });
 
+  it('keeps front medial lower-chest / reactor housing as torso (not arms)', () => {
+    // Former arms#227 on the normalized GLB: centerline front plate under the
+    // reactor — radial is high from +z protrusion, not from arm span.
+    expect(
+      classifyWave(
+        { x: -0.038, y: 1.374, z: 0.177 },
+        MIN_Y,
+        Y_RANGE,
+        MAX_RADIAL,
+      ),
+    ).toBe('torso');
+    // Symmetric front-chest neighbor
+    expect(
+      classifyWave(
+        { x: 0.049, y: 1.359, z: 0.17 },
+        MIN_Y,
+        Y_RANGE,
+        MAX_RADIAL,
+      ),
+    ).toBe('torso');
+    // Back center plate at the same band
+    expect(
+      classifyWave({ x: 0, y: 1.37, z: -0.178 }, MIN_Y, Y_RANGE, MAX_RADIAL),
+    ).toBe('torso');
+    // Still arms when truly lateral at chest height
+    expect(waveAt(0.22, 1.25, 0.05)).toBe('arms');
+  });
+
   it('uses absolute radial for hands so rNorm alone cannot fold thighs into arms', () => {
     // With maxRadial = 0.37, outer thigh r=0.22 → rNorm≈0.59 (high) but must stay thighs
     const thigh = classifyWave(at(0.22, 0.95), MIN_Y, Y_RANGE, MAX_RADIAL);
