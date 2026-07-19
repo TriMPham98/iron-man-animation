@@ -1,6 +1,6 @@
-# Mark Suit — Assembly Sequence
+# MK III — Assembly Sequence
 
-A polished browser demo of an **Iron Man–inspired suit assembly** animation, built with **Three.js**, **GSAP**, and **Vite**.
+A polished browser demo of an **Iron Man MK III–inspired suit assembly** animation, built with **Three.js**, **GSAP**, and **Vite**.
 
 Armor plates fly in from off-screen, lock onto a core figure, the arc reactor and eye slots ignite, then you can orbit the finished suit and replay the sequence.
 
