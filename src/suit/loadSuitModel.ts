@@ -29,6 +29,23 @@ const DRACO_DECODER_PATH = '/draco/';
 export type { GlowMaterial } from './systemsGlow';
 
 /**
+ * Max |world X| of shard vertices. Geometry positions are local to the
+ * centroid; world X = local X + centroid.x.
+ */
+function shardMaxAbsX(shard: MeshShard): number {
+  const pos = shard.mesh.geometry.getAttribute(
+    'position',
+  ) as THREE.BufferAttribute | null;
+  if (!pos || pos.count < 1) return Math.abs(shard.centroid.x);
+  let max = 0;
+  const cx = shard.centroid.x;
+  for (let i = 0; i < pos.count; i++) {
+    max = Math.max(max, Math.abs(pos.getX(i) + cx));
+  }
+  return max;
+}
+
+/**
  * True if this shard owns the arc-reactor disk: tight front-sternum centroid
  * plus UV hits on the packed reactor (R) channel. Kept strict so thighs /
  * abs plates are not swallowed into the torso wave.
@@ -282,11 +299,26 @@ export async function loadSuitModel(
   }
   const yRange = Math.max(1e-4, maxY - minY);
 
-  // Classify by body region, then order inside-out within each band
-  const tagged = allShards.map((shard) => ({
-    shard,
-    wave: classifyWave(shard.centroid, minY, yRange, maxRadial),
-  }));
+  // Classify by body region, then order inside-out within each band.
+  // Pass max |world X| so thin hip side-flares (centroid only slightly
+  // lateral) are not mistaken for free arms that extend outward.
+  const tagged = allShards.map((shard) => {
+    const maxAbsX = shardMaxAbsX(shard);
+    return {
+      shard,
+      wave: classifyWave(
+        {
+          x: shard.centroid.x,
+          y: shard.centroid.y,
+          z: shard.centroid.z,
+          maxAbsX,
+        },
+        minY,
+        yRange,
+        maxRadial,
+      ),
+    };
+  });
 
   // Force hand-region / refined-hand shards into gauntlets (centroid can sit
   // inside the thigh radial band after a hand blob is subdivided).

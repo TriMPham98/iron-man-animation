@@ -148,6 +148,57 @@ describe('classifyWave', () => {
     expect(waveAt(0.2, 1.45)).toBe('shoulders');
   });
 
+  it('keeps hip side-flare plates as hips, not arms (former arms#180/#193)', () => {
+    // Measured L/R waist side plates: centroid |x|≈0.15, y≈1.22, thin on the
+    // body (max|x|≲0.23). Previously ax>0.14 tagged them as arms.
+    const left180 = classifyWave(
+      { x: -0.154, y: 1.222, z: 0.012, maxAbsX: 0.225 },
+      MIN_Y,
+      Y_RANGE,
+      MAX_RADIAL,
+    );
+    const left193 = classifyWave(
+      { x: -0.148, y: 1.216, z: 0.082, maxAbsX: 0.181 },
+      MIN_Y,
+      Y_RANGE,
+      MAX_RADIAL,
+    );
+    const right177 = classifyWave(
+      { x: 0.153, y: 1.21, z: 0.015, maxAbsX: 0.186 },
+      MIN_Y,
+      Y_RANGE,
+      MAX_RADIAL,
+    );
+    const right181 = classifyWave(
+      { x: 0.148, y: 1.191, z: 0.081, maxAbsX: 0.176 },
+      MIN_Y,
+      Y_RANGE,
+      MAX_RADIAL,
+    );
+    expect(left180).toBe('hips');
+    expect(left193).toBe('hips');
+    expect(right177).toBe('hips');
+    expect(right181).toBe('hips');
+
+    // Neighbor true arm at same height with outward span stays arms
+    expect(
+      classifyWave(
+        { x: 0.161, y: 1.22, z: 0.01, maxAbsX: 0.288 },
+        MIN_Y,
+        Y_RANGE,
+        MAX_RADIAL,
+      ),
+    ).toBe('arms');
+    expect(
+      classifyWave(
+        { x: -0.166, y: 1.22, z: 0.008, maxAbsX: 0.288 },
+        MIN_Y,
+        Y_RANGE,
+        MAX_RADIAL,
+      ),
+    ).toBe('arms');
+  });
+
   it('keeps front medial lower-chest / reactor housing as torso (not arms)', () => {
     // Former arms#227 on the normalized GLB: centerline front plate under the
     // reactor — radial is high from +z protrusion, not from arm span.

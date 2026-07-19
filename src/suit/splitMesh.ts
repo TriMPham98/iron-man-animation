@@ -251,13 +251,17 @@ export function splitMeshIntoShards(
   const bandOf = (c: THREE.Vector3): string => {
     const y = c.y;
     const r = Math.hypot(c.x, c.z);
+    const ax = Math.abs(c.x);
     if (y < 0.15) return 'boots';
     if (y < 0.5) return 'calves';
     // Hanging hands / gauntlets — further out than body thigh armor
     if (y < 1.05 && r >= 0.235) return 'gauntlets';
     // Elbow / lower upper-arm just above hip crease (thighs#103/#111 arm half)
-    if (y >= 1.0 && y < 1.18 && r >= 0.15) return 'arms';
+    if (y >= 1.0 && y < 1.18 && r >= 0.15 && ax >= 0.18) return 'arms';
     if (y < 1.05) return 'thighs';
+    // Hip / oblique side flare — on the body wall, not free arm
+    // (medial half of former arms#186/#189 welded plates: ax≈0.15, r≈0.15)
+    if (y >= 1.0 && y < 1.35 && ax < 0.19 && r < 0.2) return 'hips';
     if (y < 1.2 && r < 0.14) return 'torso';
     if (y < 1.4 && r >= 0.14) return 'arms';
     if (y < 1.52 && r >= 0.14) return 'shoulders';
@@ -345,8 +349,73 @@ export function splitMeshIntoShards(
     ) {
       return [groupA, groupB];
     }
+    // Oblique (medial body wall) vs upper-arm lateral dual — former arms#186/#189
+    // (both halves same height/sign; modes |x|≈0.15 vs ≈0.24, dist≈0.10)
+    {
+      const axA = Math.abs(ca.x);
+      const axB = Math.abs(cb.x);
+      const yLo = Math.min(ca.y, cb.y);
+      const yHi = Math.max(ca.y, cb.y);
+      if (
+        yLo > 0.95 &&
+        yHi < 1.45 &&
+        Math.abs(axA - axB) >= 0.05 &&
+        Math.min(axA, axB) < 0.18 &&
+        Math.max(axA, axB) > 0.2
+      ) {
+        return [groupA, groupB];
+      }
+    }
     if (dist >= 0.16) return [groupA, groupB];
     return null;
+  };
+
+  /**
+   * Hard |x| cut for welded oblique wall + free arm on the same side.
+   * 2-means fails when the arm mass dominates (modes both land lateral and
+   * leave a medial tongue attached — residual of former arms#186/#189).
+   * Span is measured on vertices (centroids alone can sit mid-tri and miss
+   * a thin medial tongue).
+   */
+  const tryObliqueArmCut = (tris: number[]): number[][] | null => {
+    if (tris.length < 24) return null;
+    let minAx = Infinity;
+    let maxAx = -Infinity;
+    let minYy = Infinity;
+    let maxYy = -Infinity;
+    const v = new THREE.Vector3();
+    for (const t of tris) {
+      const tc = centroids[t];
+      minYy = Math.min(minYy, tc.y);
+      maxYy = Math.max(maxYy, tc.y);
+      for (let k = 0; k < 3; k++) {
+        v.fromBufferAttribute(pos, t * 3 + k).applyMatrix4(world);
+        const ax = Math.abs(v.x);
+        minAx = Math.min(minAx, ax);
+        maxAx = Math.max(maxAx, ax);
+      }
+    }
+    // Waist → upper-arm band with clear medial body + lateral arm span
+    if (minYy < 0.95 || maxYy > 1.45) return null;
+    if (maxAx - minAx < 0.1) return null;
+    if (minAx > 0.17 || maxAx < 0.22) return null;
+
+    // Assign by each triangle’s most-medial vertex so a thin body-wall tongue
+    // isn’t swallowed when the centroid sits out on the free arm.
+    const cut = 0.19;
+    const medial: number[] = [];
+    const lateral: number[] = [];
+    for (const t of tris) {
+      let triMinAx = Infinity;
+      for (let k = 0; k < 3; k++) {
+        v.fromBufferAttribute(pos, t * 3 + k).applyMatrix4(world);
+        triMinAx = Math.min(triMinAx, Math.abs(v.x));
+      }
+      if (triMinAx < cut) medial.push(t);
+      else lateral.push(t);
+    }
+    if (medial.length < 8 || lateral.length < 8) return null;
+    return [medial, lateral];
   };
 
   /**
@@ -354,7 +423,12 @@ export function splitMeshIntoShards(
    * split by height and/or radial modes that map to different body parts.
    */
   const trySpatialBandSplit = (tris: number[]): number[][] | null => {
-    // Prefer radial first: hanging hands sit at same height as outer thighs
+    // Hard cut first for welded oblique + arm (arms#186/#189). Must run
+    // before radial 2-means, which can “succeed” with useless partitions
+    // and leave a medial tongue attached to the free arm.
+    const byCut = tryObliqueArmCut(tris);
+    if (byCut) return byCut;
+    // Prefer radial: hanging hands sit at same height as outer thighs
     // (body r≲0.24 vs hand r≳0.26 — modes can be only ~0.05–0.08 apart)
     const byR = tryBimodalSplit(
       tris,
@@ -363,10 +437,36 @@ export function splitMeshIntoShards(
       0.04,
     );
     if (byR) return byR;
+    // Absolute laterality: welded oblique (medial) + upper-arm (lateral)
+    // plates on the same side. Signed-X modes can sit only ~0.08 apart.
+    const byAbsX = tryBimodalSplit(
+      tris,
+      (c) => Math.abs(c.x),
+      0.08,
+      0.06,
+    );
+    if (byAbsX) return byAbsX;
     // Lateral L/R dual plates sharing a mid-body grid cell
-    const byX = tryBimodalSplit(tris, (c) => c.x, 0.1, 0.08);
+    const byX = tryBimodalSplit(tris, (c) => c.x, 0.1, 0.07);
     if (byX) return byX;
     return tryBimodalSplit(tris, (c) => c.y, 0.12, 0.08);
+  };
+
+  /** Recursively spatial-split until modes no longer bipartition. */
+  const expandSpatial = (comp: number[]): number[][] => {
+    const spatial = trySpatialBandSplit(comp);
+    if (!spatial) return [comp];
+    const out: number[][] = [];
+    for (const part of spatial) {
+      if (part.length === 0) continue;
+      // Guard: only recurse when both children are meaningfully smaller
+      if (part.length >= comp.length) {
+        out.push(part);
+        continue;
+      }
+      out.push(...expandSpatial(part));
+    }
+    return out.length > 0 ? out : [comp];
   };
 
   /**
@@ -377,7 +477,9 @@ export function splitMeshIntoShards(
   const coarseKey = (c: THREE.Vector3): string => {
     const band = bandOf(c);
     const r = Math.hypot(c.x, c.z);
-    const zone = r >= 0.26 ? 'out' : 'in';
+    // Three radial zones so medial oblique (r≈0.15) and near-body upper arm
+    // (r≈0.23) do not re-merge after a spatial split (threshold was 0.26).
+    const zone = r >= 0.26 ? 'out' : r >= 0.19 ? 'mid' : 'in';
     return `${band}|${zone}`;
   };
   const sideOf = (c: THREE.Vector3): 'L' | 'R' | 'M' =>
@@ -389,20 +491,17 @@ export function splitMeshIntoShards(
     const raw = splitTrisByConnectivity(tris, pos, world, weldEps);
 
     // Expand connectivity islands with spatial bi-modal split when a thin
-    // bridge welded two body parts (arm/thigh or body/hand).
+    // bridge welded two body parts (arm/thigh, body/hand, oblique/arm).
     const expanded: number[][] = [];
     for (const comp of raw) {
       if (comp.length === 0) continue;
-      const spatial = trySpatialBandSplit(comp);
-      if (spatial) expanded.push(...spatial);
-      else expanded.push(comp);
+      expanded.push(...expandSpatial(comp));
     }
 
     let candidates =
-      expanded.length > 0 ? expanded : trySpatialBandSplit(tris) ?? [tris];
+      expanded.length > 0 ? expanded : expandSpatial(tris);
     if (candidates.length === 1) {
-      const spatial = trySpatialBandSplit(candidates[0]);
-      if (spatial) candidates = spatial;
+      candidates = expandSpatial(candidates[0]);
     }
 
     // 1) Group by band + radial zone
@@ -429,9 +528,18 @@ export function splitMeshIntoShards(
 
     for (const scrap of scraps) {
       const sc = islandCentroid(scrap);
+      const scrapBand = bandOf(sc);
       let bestKey: string | null = null;
       let bestD = Infinity;
       for (const [ck, g] of coarse) {
+        // Don't glue an oblique/body tongue back onto a free-arm host (or
+        // vice versa) just because scrap size is under the island threshold.
+        if (
+          scrapBand !== bandOf(g.c) &&
+          Math.abs(Math.abs(sc.x) - Math.abs(g.c.x)) > 0.04
+        ) {
+          continue;
+        }
         const d = sc.distanceTo(g.c);
         if (d < bestD) {
           bestD = d;
