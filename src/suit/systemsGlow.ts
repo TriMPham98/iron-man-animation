@@ -20,14 +20,20 @@ const POWER_EMISSIVE_BOOST = 1.05;
 /**
  * Classify a world-space surface point into a suit system so the single
  * emissive atlas can be packed as R=reactor, G=eyes, B=repulsors.
+ *
+ * Hang-pose palms sit at r ≈ 0.28–0.40 (not >0.42). An older radial-only
+ * palm gate let those verts fall into the chest-reactor fallback, so
+ * gauntlet#246 (and its L/R twin) glowed when the arc reactor ignited —
+ * long before the hands clamped on.
  */
-function classifySystemPoint(
+export function classifySystemPoint(
   p: THREE.Vector3,
   minY: number,
   yRange: number,
 ): SuitSystem {
   const yNorm = (p.y - minY) / yRange;
   const radial = Math.hypot(p.x, p.z);
+  const ax = Math.abs(p.x);
 
   // Helmet / faceplate
   if (yNorm > 0.84) return 'eyes';
@@ -35,14 +41,19 @@ function classifySystemPoint(
   // Boot thrusters
   if (yNorm < 0.12) return 'repulsors';
 
-  // Palm repulsors — mid height, far from spine
-  if (yNorm >= 0.22 && yNorm < 0.55 && radial > 0.42) return 'repulsors';
+  // Hands / gauntlets / lower arms — lateral hang pose (both palms).
+  // Prefer |x| so front-chest protrusion cannot steal these verts.
+  if (yNorm >= 0.35 && yNorm < 0.72 && ax >= 0.2) return 'repulsors';
+  // Outer palm / finger tips (high absolute radial at hang height)
+  if (yNorm >= 0.22 && yNorm < 0.62 && radial >= 0.26) return 'repulsors';
 
-  // Arc reactor — chest core
-  if (yNorm >= 0.52 && yNorm < 0.84 && radial < 0.4) return 'reactor';
+  // Arc reactor — medial chest core only
+  if (yNorm >= 0.52 && yNorm < 0.84 && ax < 0.16 && radial < 0.32) {
+    return 'reactor';
+  }
 
-  // Upper torso fallback → reactor; limbs → repulsors
-  if (yNorm >= 0.5 && radial < 0.45) return 'reactor';
+  // Upper torso fallback → reactor only when clearly on the core
+  if (yNorm >= 0.5 && ax < 0.14 && radial < 0.28) return 'reactor';
   return 'repulsors';
 }
 

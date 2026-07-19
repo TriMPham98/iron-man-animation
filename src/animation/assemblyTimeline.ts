@@ -604,9 +604,15 @@ export function createAssemblyTimeline(
       reactorT + 1.3,
     );
 
-    // Hand & foot repulsors once gauntlets (or arms if no hand split) are home
-    const handsT =
-      Math.max(waveLockEnd.gauntlets ?? 0, waveLockEnd.arms ?? 0, 0.01) + 0.15;
+    // Hand + boot thrusters once BOTH gauntlets are fully home (shared
+    // material — lighting earlier makes mid-flight palms glow on L and R).
+    // Fall back to arms only when the gauntlet wave is empty.
+    const handsLock = Math.max(
+      waveLockEnd.gauntlets ?? 0,
+      waveLockEnd.arms ?? 0,
+      0.01,
+    );
+    const handsT = handsLock + 0.35;
     timeline.to(
       repulsorsProxy,
       {
