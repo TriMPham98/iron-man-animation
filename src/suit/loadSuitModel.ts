@@ -63,8 +63,9 @@ function shardCarriesReactor(
   const c = shard.centroid;
   const yNorm = (c.y - minY) / yRange;
   const radial = Math.hypot(c.x, c.z);
-  // Must sit on the sternum band (not thighs, not pauldrons)
-  if (yNorm < 0.55 || yNorm > 0.8) return false;
+  // Must sit on the sternum band (not thighs, not pauldrons).
+  // Upper bound 0.85 covers tall reactor housing (former helmet#270 at yNorm≈0.82).
+  if (yNorm < 0.55 || yNorm > 0.85) return false;
   if (radial > 0.28) return false;
   if (c.z < 0.0) return false;
 
@@ -334,10 +335,10 @@ export async function loadSuitModel(
 
   // Force any shard that carries the arc-reactor UV island into the torso
   // wave. Coarse spatial buckets can park the sternum plate on a low
-  // centroid (thighs/hips), so it flies in glowing long before the chest
-  // is built — the bug in the user's 28% screenshot.
+  // centroid (thighs/hips) or a high one (helmet — former helmet#270), so
+  // it flies in glowing long before the chest is built.
   for (const entry of tagged) {
-    if (entry.wave === 'torso' || entry.wave === 'helmet') continue;
+    if (entry.wave === 'torso') continue;
     if (shardCarriesReactor(entry.shard, minY, yRange)) {
       entry.wave = 'torso';
     }

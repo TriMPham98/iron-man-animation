@@ -227,6 +227,51 @@ describe('classifyWave', () => {
     expect(waveAt(0.22, 1.25, 0.05)).toBe('arms');
   });
 
+  it('keeps lateral chest plates as torso, not arms (former arms#251/#252)', () => {
+    // Front pec / lateral chest wall: modest |x|, no free-arm span, front z.
+    expect(
+      classifyWave(
+        { x: -0.161, y: 1.338, z: 0.107, maxAbsX: 0.189 },
+        MIN_Y,
+        Y_RANGE,
+        MAX_RADIAL,
+      ),
+    ).toBe('torso');
+    expect(
+      classifyWave(
+        { x: 0.161, y: 1.338, z: 0.107, maxAbsX: 0.189 },
+        MIN_Y,
+        Y_RANGE,
+        MAX_RADIAL,
+      ),
+    ).toBe('torso');
+    // Free arm at same height with outward span stays arms
+    expect(
+      classifyWave(
+        { x: -0.191, y: 1.354, z: 0.044, maxAbsX: 0.292 },
+        MIN_Y,
+        Y_RANGE,
+        MAX_RADIAL,
+      ),
+    ).toBe('arms');
+  });
+
+  it('keeps upper sternum / reactor collar as torso, not helmet (former helmet#270)', () => {
+    // Tall reactor housing: centerline, front z≳0.09, yNorm just above 0.82
+    // so the old helmet gate (yNorm>0.82 && rNorm≤HEAD) swallowed it.
+    expect(
+      classifyWave(
+        { x: 0, y: 1.45, z: 0.153, maxAbsX: 0.145 },
+        MIN_Y,
+        Y_RANGE,
+        MAX_RADIAL,
+      ),
+    ).toBe('torso');
+    // True skull still helmet
+    expect(waveAt(0.05, 1.65)).toBe('helmet');
+    expect(waveAt(0.02, 1.6, 0.08)).toBe('helmet');
+  });
+
   it('uses absolute radial for hands so rNorm alone cannot fold thighs into arms', () => {
     // With maxRadial = 0.37, outer thigh r=0.22 → rNorm≈0.59 (high) but must stay thighs
     const thigh = classifyWave(at(0.22, 0.95), MIN_Y, Y_RANGE, MAX_RADIAL);

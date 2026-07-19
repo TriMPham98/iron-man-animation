@@ -32,6 +32,10 @@ export interface WavePoint {
  *   - shoulders:              y ≈ 1.41–1.50
  *   - hip side flare (not arms): y ≈ 1.04–1.35, |x| centroid ≈ 0.14–0.16,
  *     max|x| ≲ 0.23 (arms#180/#193 L+R); true arm neighbors max|x| ≳ 0.28
+ *   - lateral chest (not arms): y ≈ 1.31–1.40, |x|≈0.16, max|x|≲0.19,
+ *     front z ≳ 0.06 (former arms#251/#252)
+ *   - upper sternum / reactor (not helmet): y ≈ 1.39–1.53, centerline,
+ *     front z ≳ 0.09, yNorm just above 0.82 (former helmet#270)
  *
  * Typical envelope used by loadSuitModel (for tests / callers):
  *   minY ≈ 0, yRange ≈ 1.85, maxRadial ≈ 0.37
@@ -58,8 +62,22 @@ export function classifyWave(
   const ax = Math.abs(c.x);
   // Prefer vertex laterality when the caller measured it; else centroid |x|.
   const laterality = c.maxAbsX ?? ax;
+  const az = Math.abs(c.z);
 
-  // ── Head first ────────────────────────────────────────────────
+  // ── Upper sternum / arc-reactor collar BEFORE helmet ──────────
+  // Tall reactor housing parks its centroid at yNorm≈0.82 with front z≳0.09.
+  // The old helmet gate (yNorm>0.82 && rNorm≤HEAD) swallowed former helmet#270.
+  if (
+    yNorm >= 0.75 &&
+    yNorm <= 0.85 &&
+    ax <= 0.12 &&
+    c.z >= 0.08 &&
+    rNorm < 0.45
+  ) {
+    return 'torso';
+  }
+
+  // ── Head ──────────────────────────────────────────────────────
   if (yNorm > 0.82 && rNorm <= HEAD_RNORM) return 'helmet';
   if (yNorm > 0.86) return 'helmet';
 
@@ -113,7 +131,7 @@ export function classifyWave(
   if (yNorm < 0.72 && rNorm < 0.28) return 'torso';
 
   // Arc reactor / sternum / center chest (radial-based — works for shallow plates)
-  if (yNorm >= 0.58 && yNorm <= 0.82 && rNorm < 0.36) return 'torso';
+  if (yNorm >= 0.58 && yNorm <= 0.84 && rNorm < 0.40) return 'torso';
 
   // Front / back lower–mid chest including the reactor housing.
   // Chest protrusion inflates radial (hypot(x,z)) even on the centerline, so
@@ -122,9 +140,23 @@ export function classifyWave(
   // Gate on lateral |x| + front/back depth instead of rNorm.
   if (
     yNorm >= 0.55 &&
-    yNorm <= 0.82 &&
+    yNorm <= 0.84 &&
     ax <= 0.13 &&
-    Math.abs(c.z) >= 0.06
+    az >= 0.06
+  ) {
+    return 'torso';
+  }
+
+  // Lateral chest / pec plates — on the body wall with front/back depth,
+  // not free arms (former arms#251/#252: ax≈0.16, maxAbsX≈0.19, z≳0.06).
+  // True upper-arm plates at this height reach max|x|≳0.22.
+  if (
+    yNorm >= 0.70 &&
+    yNorm <= 0.82 &&
+    ax >= 0.12 &&
+    ax <= 0.18 &&
+    laterality < 0.21 &&
+    az >= 0.05
   ) {
     return 'torso';
   }
