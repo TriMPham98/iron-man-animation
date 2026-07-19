@@ -37,18 +37,33 @@ interface PieceMotionSpan {
   end: number;
 }
 
+/** Options for seek/resume when free-look should keep the live framing. */
+export interface CameraControlOptions {
+  /**
+   * Keep the live camera/orbit framing instead of snapping back onto the
+   * cinematic path. Used after the user has free-looked (orbit) in director mode.
+   */
+  preserveCamera?: boolean;
+}
+
 export interface AssemblyController {
   play: () => void;
   pause: () => void;
-  resume: () => void;
-  /** Seek to normalized progress 0–1 (pauses). Scrubs plate/camera/systems state. */
-  seek: (progress01: number) => void;
+  resume: (opts?: CameraControlOptions) => void;
+  /**
+   * Seek to normalized progress 0–1 (pauses). Scrubs plate/systems state.
+   * Camera path is re-applied unless the user owns free-look framing.
+   */
+  seek: (progress01: number, opts?: CameraControlOptions) => void;
   getProgress: () => number;
   getDuration: () => number;
   kill: () => void;
   isPlaying: () => boolean;
   isPaused: () => boolean;
   rebuild: () => void;
+  /** True after free-look orbit — cinematic camera writes are suppressed. */
+  userOwnsCamera: () => boolean;
+  setUserOwnsCamera: (owns: boolean) => void;
 }
 
 /**
@@ -113,6 +128,11 @@ export function createAssemblyTimeline(
 ): AssemblyController {
   let tl: gsap.core.Timeline | null = null;
   let playing = false;
+  /**
+   * When true, plate/system tweens still run but cinematic camera writes are
+   * skipped so free-look framing survives pause/resume/scrub.
+   */
+  let userOwnsCamera = false;
   /** Timeline time when seamless final mesh swaps in (for scrub restore). */
   let finalSwapTime = 0;
   /** Launch→lock windows for every plate (rebuilt with the timeline). */
@@ -177,6 +197,8 @@ export function createAssemblyTimeline(
   const repulsorsProxy = { v: 0 };
 
   const applyCamera = () => {
+    // Free-look (director orbit): never overwrite the live framing
+    if (userOwnsCamera) return;
     camera.position.set(
       cameraProxy.x + shake.x,
       cameraProxy.y + shake.y,
@@ -752,6 +774,8 @@ export function createAssemblyTimeline(
   return {
     play: () => {
       const timeline = ensureTl();
+      // Fresh play-from-start reclaims the cinematic path
+      userOwnsCamera = false;
       playing = true;
       timeline.play(0);
     },
@@ -760,10 +784,17 @@ export function createAssemblyTimeline(
       timeline.pause();
       playing = false;
     },
-    resume: () => {
+    resume: (opts?: CameraControlOptions) => {
       const timeline = ensureTl();
+      if (opts?.preserveCamera) {
+        userOwnsCamera = true;
+      } else if (!userOwnsCamera) {
+        // Snap back onto the path immediately (drops free-look offset)
+        applyCamera();
+      }
       if (timeline.progress() >= 1) {
         // At end — restart so resume always does something useful
+        userOwnsCamera = false;
         playing = true;
         timeline.play(0);
         return;
@@ -772,10 +803,14 @@ export function createAssemblyTimeline(
       timeline.paused(false);
       timeline.play();
     },
-    seek: (progress01: number) => {
+    seek: (progress01: number, opts?: CameraControlOptions) => {
       const timeline = ensureTl();
       timeline.pause();
       playing = false;
+      if (opts?.preserveCamera) {
+        userOwnsCamera = true;
+      }
+      // applyCamera is a no-op while userOwnsCamera (director free-look)
       syncAfterSeek(progress01);
     },
     getProgress: () => {
@@ -790,13 +825,19 @@ export function createAssemblyTimeline(
       tl?.kill();
       tl = null;
       playing = false;
+      userOwnsCamera = false;
     },
     isPlaying: () => playing && !!tl && !tl.paused() && tl.progress() < 1,
     isPaused: () => !!tl && (tl.paused() || !playing),
     rebuild: () => {
       tl?.kill();
+      userOwnsCamera = false;
       tl = build();
       playing = false;
+    },
+    userOwnsCamera: () => userOwnsCamera,
+    setUserOwnsCamera: (owns: boolean) => {
+      userOwnsCamera = owns;
     },
   };
 }

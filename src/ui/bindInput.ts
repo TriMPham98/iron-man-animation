@@ -19,6 +19,9 @@ export interface BindInputOptions {
     skipToEnd: () => void;
     togglePause: () => void;
     isComplete: () => boolean;
+    assembly?: {
+      setUserOwnsCamera: (owns: boolean) => void;
+    };
   };
 }
 
@@ -64,6 +67,8 @@ export function bindInput(options: BindInputOptions): void {
   controls.addEventListener('start', () => {
     // User take-over stops idle spin (complete mode); free-look while paused has no spin
     if (controls.autoRotate) controls.autoRotate = false;
+    // Free-look orbit claims the camera — scrub/resume must not snap to cinematic path
+    session.assembly?.setUserOwnsCamera(true);
   });
 
   // ── Director raycast pick (click plate → scrubber + highlight) ─

@@ -63,22 +63,41 @@ export function createAssemblySession(
     }
   };
 
-  /** Free-look when finished or paused/scrubbed; locked while GSAP drives the camera. */
-  const setOrbitMode = (mode: 'locked' | 'free' | 'complete') => {
+  /**
+   * Free-look when finished or paused/scrubbed; locked while GSAP drives the camera.
+   * `preserveTarget` keeps the current orbit pivot (after free-look) instead of
+   * re-seeding from the cinematic lookTarget.
+   */
+  const setOrbitMode = (
+    mode: 'locked' | 'free' | 'complete',
+    opts?: { preserveTarget?: boolean },
+  ) => {
     if (mode === 'locked') {
       controls.enabled = false;
       controls.autoRotate = false;
       return;
     }
-    controls.target.copy(lookTarget);
+    if (!opts?.preserveTarget) {
+      controls.target.copy(lookTarget);
+    }
     controls.enabled = true;
     controls.autoRotate = mode === 'complete';
   };
 
-  const applyCompleteUi = () => {
+  // Declared before callbacks so they can call into the controller once assigned.
+  let assembly!: ReturnType<typeof createAssemblyTimeline>;
+
+  const applyCompleteUi = (opts?: { preserveCamera?: boolean }) => {
     assemblyComplete = true;
     suit.showFinal(); // seamless mesh — no grid-shard square blooms
-    setOrbitMode('complete');
+    // Preserve free-look framing (no idle auto-rotate snap)
+    const preserve = opts?.preserveCamera || assembly.userOwnsCamera();
+    if (preserve) {
+      setOrbitMode('free', { preserveTarget: true });
+      controls.autoRotate = false;
+    } else {
+      setOrbitMode('complete');
+    }
     ui.setReplayEnabled(true);
     ui.setSkipEnabled(false);
     ui.setHintVisible(true);
@@ -91,16 +110,21 @@ export function createAssemblySession(
     refreshHintCopy();
   };
 
-  const applyAssemblyUi = (opts?: { freeLook?: boolean }) => {
+  const applyAssemblyUi = (opts?: {
+    freeLook?: boolean;
+    preserveTarget?: boolean;
+  }) => {
     assemblyComplete = false;
-    setOrbitMode(opts?.freeLook ? 'free' : 'locked');
+    setOrbitMode(opts?.freeLook ? 'free' : 'locked', {
+      preserveTarget: opts?.preserveTarget,
+    });
     ui.setReplayEnabled(false);
     ui.setSkipEnabled(true);
     ui.setHintVisible(false);
     ui.fadeTitle(false);
   };
 
-  const assembly = createAssemblyTimeline(suit, camera, lookTarget, {
+  assembly = createAssemblyTimeline(suit, camera, lookTarget, {
     onStatus: (text) => {
       const online = text.includes('ONLINE') || text.includes('STABLE');
       ui.setStatus(text, online);
@@ -110,15 +134,16 @@ export function createAssemblySession(
       ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
       ui.setDebugProgress(t);
       if (t < 0.999 && assemblyComplete) {
-        // Scrubbed back from the end
-        applyAssemblyUi();
+        // Scrubbed back from the end — keep free-look if user owns the camera
+        const freeLook = assembly.userOwnsCamera();
+        applyAssemblyUi({ freeLook, preserveTarget: freeLook });
       }
     },
     onActivePieces: (pieces) => {
       ui.setDebugActivePieces(pieces);
     },
     onComplete: () => {
-      applyCompleteUi();
+      applyCompleteUi({ preserveCamera: assembly.userOwnsCamera() });
       ui.setDebugActivePieces([]);
     },
   });
@@ -174,9 +199,15 @@ export function createAssemblySession(
       startSequence();
       return;
     } else {
-      // Resume cinematic camera path (drops free-look offset)
-      applyAssemblyUi({ freeLook: false });
-      assembly.resume();
+      // Director / free-look: keep framing while assembly continues.
+      // Viewer without prior orbit: re-lock to the cinematic camera path.
+      const preserveCamera =
+        ui.isDirectorMode() || assembly.userOwnsCamera();
+      applyAssemblyUi({
+        freeLook: preserveCamera,
+        preserveTarget: preserveCamera,
+      });
+      assembly.resume({ preserveCamera });
     }
     syncDebugPauseLabel();
   };
@@ -184,13 +215,15 @@ export function createAssemblySession(
   const seek = (p: number) => {
     // Scrub invalidates overlay parents / visibility — drop selection
     clearPick();
-    assembly.seek(p);
+    // After free-look orbit, scrub plates only — never steal framing
+    const preserveCamera = assembly.userOwnsCamera();
+    assembly.seek(p, { preserveCamera });
     syncDebugPauseLabel();
     if (p >= 0.999) {
-      applyCompleteUi();
+      applyCompleteUi({ preserveCamera });
     } else {
       // Scrub pauses the timeline — allow look-around at that frame
-      applyAssemblyUi({ freeLook: true });
+      applyAssemblyUi({ freeLook: true, preserveTarget: preserveCamera });
       const pct = Math.round(p * 100);
       ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
       ui.setStatus('DEBUG SCRUB', false);
