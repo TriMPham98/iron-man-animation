@@ -573,18 +573,12 @@ export function createAssemblyTimeline(
     }
 
     // ── Sequenced systems ──────────────────────────────────────────
-    // Keep the arc reactor COLD until every armor plate has locked —
-    // including the helmet. Igniting after shoulders left the chest
-    // glowing while helmet shards were still mid-flight (73% scrub).
+    // Reactor: when the chest / reactor housing seats — power source for
+    // the rest of the suit-up (arms, gauntlets, helmet still fly with
+    // the core already alive). Eyes wait for the helmet seal.
     const helmetDone = waveLockEnd.helmet ?? 16.0;
     const torsoDone = waveLockEnd.torso ?? 7.2;
-    const armorDone = Math.max(
-      torsoDone,
-      waveLockEnd.shoulders ?? 9.5,
-      waveLockEnd.gauntlets ?? 12.5,
-      helmetDone,
-    );
-    const reactorT = armorDone + 0.4;
+    const reactorT = torsoDone + 0.25;
     timeline.call(
       () => {
         callbacks.onStatus?.('ARC REACTOR IGNITION…');
@@ -624,8 +618,8 @@ export function createAssemblyTimeline(
       handsT,
     );
 
-    // Face-mask eyes after reactor comes online (helmet already sealed)
-    const eyesT = reactorT + 1.0;
+    // Face-mask eyes after the helmet seals (reactor already online from torso)
+    const eyesT = helmetDone + 0.3;
     timeline.call(
       () => {
         callbacks.onStatus?.('HELMET SEALED — HUD ONLINE…');
@@ -678,23 +672,7 @@ export function createAssemblyTimeline(
       0.3,
     );
 
-    // Slow push-in on the helmet / faceplate beat (reactor still dark)
-    timeline.to(
-      cameraProxy,
-      {
-        x: 0.22,
-        y: 1.48,
-        z: 2.15,
-        ly: 1.55,
-        lx: 0,
-        duration: 3.4,
-        ease: 'power3.inOut',
-        onUpdate: applyCamera,
-      },
-      (waveStartAt.helmet ?? WAVE_EARLIEST.helmet ?? 13.2) - 0.4,
-    );
-
-    // Favor chest as the reactor ignites (after every plate is home)
+    // Favor chest as the reactor ignites (torso just locked)
     timeline.to(
       cameraProxy,
       {
@@ -708,6 +686,22 @@ export function createAssemblyTimeline(
         onUpdate: applyCamera,
       },
       reactorT - 0.55,
+    );
+
+    // Helmet / faceplate beat — core already glowing from the chest
+    timeline.to(
+      cameraProxy,
+      {
+        x: 0.22,
+        y: 1.48,
+        z: 2.15,
+        ly: 1.55,
+        lx: 0,
+        duration: 3.4,
+        ease: 'power3.inOut',
+        onUpdate: applyCamera,
+      },
+      (waveStartAt.helmet ?? WAVE_EARLIEST.helmet ?? 13.2) - 0.4,
     );
 
     // Hold on the eyes a moment, then pull back to hero

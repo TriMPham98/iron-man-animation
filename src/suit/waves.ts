@@ -30,8 +30,8 @@ export interface ArmorPiece {
 
 /**
  * Mark III–style suit-up (Iron Man 2008): workshop clamp order, bottom → top.
- * Boots/legs first, then hips → torso → shoulders → arms → gauntlets → helmet,
- * systems/power last (faceplate slam + reactor online beat).
+ * Boots/legs first, then hips → torso → shoulders → arms → gauntlets → helmet.
+ * Arc reactor ignites when torso seats; eyes/HUD after helmet seal.
  */
 export const WAVE_ORDER: PieceWave[] = [
   'boots',
