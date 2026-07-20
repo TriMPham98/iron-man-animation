@@ -36,6 +36,12 @@ export interface WavePoint {
  *     front z ≳ 0.06 (former arms#251/#252)
  *   - upper sternum / reactor (not helmet): y ≈ 1.39–1.53, centerline,
  *     front z ≳ 0.09, yNorm just above 0.82 (former helmet#270)
+ *   - upper reactor collar / upper chest (not helmet) — absolute Y required
+ *     when the skull raises maxY and yNorm climbs past 0.85:
+ *     · centerline sternum top z≈0.04–0.14 (former helmet#216 / #218 / #241)
+ *     · front upper pec z≈0.10, |x|≈0.12 (former helmet#335)
+ *     · lateral collar / trap low |z| (former helmet#336 / #343)
+ *     · shoulder-pad lobes split off welded faceplate (former helmet#333 pads)
  *
  * Typical envelope used by loadSuitModel (for tests / callers):
  *   minY ≈ 0, yRange ≈ 1.85, maxRadial ≈ 0.37
@@ -75,6 +81,40 @@ export function classifyWave(
     rNorm < 0.45
   ) {
     return 'torso';
+  }
+
+  // ── Upper chest / reactor collar (absolute Y) ─────────────────
+  // High-tier former helmet plates when skull maxY inflates yNorm past 0.85.
+  // Keep true faceplate / skull (y≳1.66 centerline, or high mid-face) as helmet.
+  if (c.y >= 1.52 && c.y <= 1.66) {
+    // Centerline upper chest / reactor top (#216, #218, #241)
+    if (ax <= 0.05 && c.z >= 0.035 && c.z <= 0.15 && c.y <= 1.58) {
+      return 'torso';
+    }
+    // Front upper pec / collar pad (#335, true #333 chest-pad fragments).
+    // y ceiling 1.61 — higher lobes (e.g. former torso#311 at y≈1.622) are
+    // mid-face / helmet, not upper chest.
+    if (
+      ax >= 0.08 &&
+      ax <= 0.14 &&
+      c.z >= 0.05 &&
+      c.z <= 0.12 &&
+      c.y <= 1.61 &&
+      laterality < 0.2 &&
+      radial < 0.18
+    ) {
+      return 'torso';
+    }
+    // Lateral collar / trap side plates (#336, #343, L/R mirrors) — low |z|
+    if (
+      ax >= 0.1 &&
+      ax <= 0.16 &&
+      az <= 0.08 &&
+      laterality < 0.2 &&
+      radial < 0.19
+    ) {
+      return 'torso';
+    }
   }
 
   // ── Head ──────────────────────────────────────────────────────

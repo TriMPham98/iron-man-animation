@@ -265,6 +265,19 @@ export function splitMeshIntoShards(
     if (y < 1.2 && r < 0.14) return 'torso';
     if (y < 1.4 && r >= 0.14) return 'arms';
     if (y < 1.52 && r >= 0.14) return 'shoulders';
+    // Upper collar / shoulder-pad lobes (not faceplate) — keep separate after
+    // faceplate+pad spatial split so coarse re-merge cannot glue them back
+    // onto the helmet face (former helmet#333 pads at y≈1.60, |x|≈0.09).
+    if (
+      y >= 1.55 &&
+      y < 1.635 &&
+      ax > 0.07 &&
+      ax < 0.16 &&
+      c.z > 0.04 &&
+      c.z < 0.12
+    ) {
+      return 'torso';
+    }
     if (y >= 1.5) return 'helmet';
     return 'torso';
   };
@@ -419,6 +432,58 @@ export function splitMeshIntoShards(
   };
 
   /**
+   * Faceplate welded to left+right upper-collar shoulder pads
+   * (former helmet#333): tall front face (y→1.8) with lower lateral lobes
+   * at y≈1.60, |x|≈0.09. Pads must fly with the chest, not the helmet.
+   */
+  const tryFaceplateCollarPadSplit = (tris: number[]): number[][] | null => {
+    if (tris.length < 40) return null;
+
+    let minYy = Infinity;
+    let maxYy = -Infinity;
+    let maxAx = 0;
+    let frontish = 0;
+    for (const t of tris) {
+      const tc = centroids[t];
+      minYy = Math.min(minYy, tc.y);
+      maxYy = Math.max(maxYy, tc.y);
+      maxAx = Math.max(maxAx, Math.abs(tc.x));
+      if (tc.z > 0.04) frontish++;
+    }
+    // Tall front face + lower lateral span
+    if (minYy > 1.52 || maxYy < 1.72) return null;
+    if (maxAx < 0.09) return null;
+    if (frontish < tris.length * 0.5) return null;
+
+    const face: number[] = [];
+    const pads: number[] = [];
+    const v = new THREE.Vector3();
+    for (const t of tris) {
+      const tc = centroids[t];
+      let triMaxAx = 0;
+      for (let k = 0; k < 3; k++) {
+        v.fromBufferAttribute(pos, t * 3 + k).applyMatrix4(world);
+        triMaxAx = Math.max(triMaxAx, Math.abs(v.x));
+      }
+      // Lateral lower lobes → upper chest / collar pads
+      // y cut 1.63 (not 1.62) so left pad mass at y≈1.622 is not left on the face
+      if (triMaxAx > 0.075 && tc.y < 1.63) pads.push(t);
+      else face.push(t);
+    }
+    if (pads.length < 12 || face.length < 24) return null;
+
+    // Require both L and R pad mass so we don't peel a single cheek
+    let hasL = false;
+    let hasR = false;
+    for (const t of pads) {
+      if (centroids[t].x < -0.05) hasL = true;
+      if (centroids[t].x > 0.05) hasR = true;
+    }
+    if (!hasL || !hasR) return null;
+    return [face, pads];
+  };
+
+  /**
    * When connectivity welds arm+thigh (or body+hand) across a thin bridge,
    * split by height and/or radial modes that map to different body parts.
    */
@@ -428,6 +493,9 @@ export function splitMeshIntoShards(
     // and leave a medial tongue attached to the free arm.
     const byCut = tryObliqueArmCut(tris);
     if (byCut) return byCut;
+    // Faceplate + dual collar pads (helmet#333) before generic |x| 2-means
+    const byCollar = tryFaceplateCollarPadSplit(tris);
+    if (byCollar) return byCollar;
     // Prefer radial: hanging hands sit at same height as outer thighs
     // (body r≲0.24 vs hand r≳0.26 — modes can be only ~0.05–0.08 apart)
     const byR = tryBimodalSplit(

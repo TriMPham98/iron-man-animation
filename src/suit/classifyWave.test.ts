@@ -272,6 +272,53 @@ describe('classifyWave', () => {
     expect(waveAt(0.02, 1.6, 0.08)).toBe('helmet');
   });
 
+  it('tags upper chest / collar plates as torso (former helmet#216–#343)', () => {
+    // Runtime-like envelope: skull raises maxY so yRange ≈ 1.71 and these
+    // plates sit at yNorm≈0.90 — past the yNorm≤0.85 collar gate.
+    const rtMin = 0;
+    const rtRange = 1.713;
+    const rtMaxR = 0.41;
+    const rt = (
+      p: { x: number; y: number; z: number; maxAbsX?: number },
+    ) => classifyWave(p, rtMin, rtRange, rtMaxR);
+
+    // #216 / #218: shallow front centerline above the reactor disk
+    expect(rt({ x: 0, y: 1.556, z: 0.044 })).toBe('torso');
+    expect(rt({ x: -0.003, y: 1.566, z: 0.046 })).toBe('torso');
+    // #241: deeper upper chest (same band as reactor top)
+    expect(rt({ x: -0.024, y: 1.547, z: 0.094 })).toBe('torso');
+    // #335: upper front pec beside the collar
+    expect(rt({ x: 0.121, y: 1.543, z: 0.099, maxAbsX: 0.15 })).toBe(
+      'torso',
+    );
+    // #336 / #343: lateral collar / trap side plates
+    expect(rt({ x: -0.148, y: 1.559, z: 0.018, maxAbsX: 0.18 })).toBe(
+      'torso',
+    );
+    expect(rt({ x: 0.119, y: 1.635, z: -0.005, maxAbsX: 0.15 })).toBe(
+      'torso',
+    );
+    // #333 chest-pad fragments after faceplate split (lower lateral lobes)
+    expect(rt({ x: 0.095, y: 1.602, z: 0.074, maxAbsX: 0.13 })).toBe(
+      'torso',
+    );
+    expect(rt({ x: -0.094, y: 1.602, z: 0.074, maxAbsX: 0.13 })).toBe(
+      'torso',
+    );
+
+    // True mid-face / skull faceplate stays helmet
+    expect(rt({ x: 0.005, y: 1.669, z: 0.099 })).toBe('helmet');
+    expect(rt({ x: 0.007, y: 1.67, z: 0.102 })).toBe('helmet');
+    // Higher left lobe (former torso#311) is helmet, not upper chest
+    expect(rt({ x: -0.082, y: 1.622, z: 0.057, maxAbsX: 0.14 })).toBe(
+      'helmet',
+    );
+    // Wider / deeper cheek not collar
+    expect(rt({ x: 0.148, y: 1.535, z: 0.083, maxAbsX: 0.2 })).not.toBe(
+      'torso',
+    );
+  });
+
   it('uses absolute radial for hands so rNorm alone cannot fold thighs into arms', () => {
     // With maxRadial = 0.37, outer thigh r=0.22 → rNorm≈0.59 (high) but must stay thighs
     const thigh = classifyWave(at(0.22, 0.95), MIN_Y, Y_RANGE, MAX_RADIAL);
