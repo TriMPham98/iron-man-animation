@@ -278,6 +278,28 @@ export function splitMeshIntoShards(
     ) {
       return 'torso';
     }
+    // Neck / upper-chest collar welded into the same grid cell as the cranial
+    // shell (helmet#220 islands at y≈1.58–1.63, low |z|). Must not re-merge
+    // with crown (y≳1.66) under a shared helmet|in coarse key.
+    if (
+      y >= 1.55 &&
+      y < 1.64 &&
+      ax > 0.04 &&
+      ax < 0.16 &&
+      Math.abs(c.z) < 0.09
+    ) {
+      return 'torso';
+    }
+    // Centerline lower collar / trapezius bridge under the skull
+    if (
+      y >= 1.55 &&
+      y < 1.62 &&
+      ax <= 0.1 &&
+      c.z > -0.09 &&
+      c.z < 0.05
+    ) {
+      return 'torso';
+    }
     if (y >= 1.5) return 'helmet';
     return 'torso';
   };
@@ -432,6 +454,90 @@ export function splitMeshIntoShards(
   };
 
   /**
+   * Cranial helmet welded to upper-chest / collar geometry (helmet#220).
+   * Head shell rises to y≈1.83 while collar hangs to y≈1.56 — one fly-in
+   * reads as a giant plate clipping the chest. Split on Y so the collar
+   * seats with torso/shoulders and the skull with the helmet wave.
+   */
+  const tryHelmetChestCollarSplit = (
+    tris: number[],
+  ): number[][] | null => {
+    if (tris.length < 80) return null;
+
+    let minYy = Infinity;
+    let maxYy = -Infinity;
+    let frontish = 0;
+    for (const t of tris) {
+      const tc = centroids[t];
+      minYy = Math.min(minYy, tc.y);
+      maxYy = Math.max(maxYy, tc.y);
+      if (tc.z > -0.05) frontish++;
+    }
+    // Must span collar band + true cranial height
+    if (minYy > 1.58 || maxYy < 1.75) return null;
+    if (maxYy - minYy < 0.2) return null;
+    if (frontish < tris.length * 0.35) return null;
+
+    const cutY = 1.62;
+    const chest: number[] = [];
+    const helmet: number[] = [];
+    for (const t of tris) {
+      if (centroids[t].y < cutY) chest.push(t);
+      else helmet.push(t);
+    }
+    if (chest.length < 40 || helmet.length < 80) return null;
+
+    // Chest mass should sit clearly lower than helmet mass
+    const cChest = islandCentroid(chest);
+    const cHelm = islandCentroid(helmet);
+    if (cHelm.y - cChest.y < 0.04) return null;
+
+    return [helmet, chest];
+  };
+
+  /**
+   * Shoulder collar welded with floating face/helmet scraps (shoulders#254).
+   * Main pad mass sits at y≈1.56–1.62; two high floaters at y≳1.65 are
+   * face geometry and must assemble with the helmet, not the pauldrons.
+   */
+  const tryShoulderHelmetFloatSplit = (
+    tris: number[],
+  ): number[][] | null => {
+    if (tris.length < 20) return null;
+
+    let minYy = Infinity;
+    let maxYy = -Infinity;
+    let frontish = 0;
+    for (const t of tris) {
+      const tc = centroids[t];
+      minYy = Math.min(minYy, tc.y);
+      maxYy = Math.max(maxYy, tc.y);
+      if (tc.z > 0.04) frontish++;
+    }
+    // Collar height + face-height span
+    if (minYy > 1.56 || maxYy < 1.66) return null;
+    if (frontish < tris.length * 0.4) return null;
+
+    const shoulder: number[] = [];
+    const helmet: number[] = [];
+    for (const t of tris) {
+      if (centroids[t].y >= 1.64) helmet.push(t);
+      else shoulder.push(t);
+    }
+    // Helmet floaters can be tiny (1–2 tris each) — still split them off
+    if (helmet.length < 1 || shoulder.length < 16) return null;
+    // Both L and R floaters (or at least dual high scraps)
+    let hasL = false;
+    let hasR = false;
+    for (const t of helmet) {
+      if (centroids[t].x < -0.03) hasL = true;
+      if (centroids[t].x > 0.03) hasR = true;
+    }
+    if (!hasL || !hasR) return null;
+    return [shoulder, helmet];
+  };
+
+  /**
    * Faceplate welded to left+right upper-collar shoulder pads
    * (former helmet#333): tall front face (y→1.8) with lower lateral lobes
    * at y≈1.60, |x|≈0.09. Pads must fly with the chest, not the helmet.
@@ -493,9 +599,15 @@ export function splitMeshIntoShards(
     // and leave a medial tongue attached to the free arm.
     const byCut = tryObliqueArmCut(tris);
     if (byCut) return byCut;
+    // Cranial shell + upper-chest collar (helmet#220) — big Y span first
+    const byHelmChest = tryHelmetChestCollarSplit(tris);
+    if (byHelmChest) return byHelmChest;
     // Faceplate + dual collar pads (helmet#333) before generic |x| 2-means
     const byCollar = tryFaceplateCollarPadSplit(tris);
     if (byCollar) return byCollar;
+    // Shoulder pads + floating face scraps (shoulders#254)
+    const byFloat = tryShoulderHelmetFloatSplit(tris);
+    if (byFloat) return byFloat;
     // Prefer radial: hanging hands sit at same height as outer thighs
     // (body r≲0.24 vs hand r≳0.26 — modes can be only ~0.05–0.08 apart)
     const byR = tryBimodalSplit(
@@ -579,12 +691,23 @@ export function splitMeshIntoShards(
 
     for (const part of candidates) {
       if (part.length === 0) continue;
-      if (part.length < 12) {
+      const c = islandCentroid(part);
+      // Keep tiny high face floaters as real pieces (shoulders#254 scraps
+      // are often 1–2 tris at y≳1.65 — scrap threshold would re-glue them).
+      const isHelmetFloater =
+        part.length >= 1 &&
+        part.length <= 8 &&
+        c.y >= 1.64 &&
+        Math.abs(c.x) < 0.12 &&
+        c.z > 0.04;
+      if (part.length < 12 && !isHelmetFloater) {
         scraps.push(part);
         continue;
       }
-      const c = islandCentroid(part);
-      const ck = coarseKey(c);
+      // Unique key so floaters never re-merge into a large co-bucketed helmet
+      const ck = isHelmetFloater
+        ? `helm-float-${c.x.toFixed(3)},${c.y.toFixed(3)},${c.z.toFixed(3)}`
+        : coarseKey(c);
       const g = coarse.get(ck);
       if (g) {
         g.tris.push(...part);
@@ -602,6 +725,8 @@ export function splitMeshIntoShards(
       for (const [ck, g] of coarse) {
         // Don't glue an oblique/body tongue back onto a free-arm host (or
         // vice versa) just because scrap size is under the island threshold.
+        // Never glue high face floaters onto shoulder/collar hosts.
+        if (sc.y >= 1.64 && g.c.y < 1.64) continue;
         if (
           scrapBand !== bandOf(g.c) &&
           Math.abs(Math.abs(sc.x) - Math.abs(g.c.x)) > 0.04

@@ -180,6 +180,19 @@ export function classifyWave(
     return 'shoulders';
   }
 
+  // Neck / upper-chest collar peeled from cranial shell (helmet#220 chest half).
+  // Centroid often near centerline with wide maxAbsX and low |z|; crown sits higher.
+  if (
+    c.y >= 1.6 &&
+    c.y <= 1.64 &&
+    ax <= 0.08 &&
+    az <= 0.06 &&
+    laterality >= 0.1 &&
+    laterality <= 0.18
+  ) {
+    return 'torso';
+  }
+
   // ── Head ──────────────────────────────────────────────────────
   if (yNorm > 0.82 && rNorm <= HEAD_RNORM) return 'helmet';
   if (yNorm > 0.86) return 'helmet';

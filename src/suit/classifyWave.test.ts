@@ -331,8 +331,15 @@ describe('classifyWave', () => {
       rt({ x: -0.0296, y: 1.6063, z: 0.0709, maxAbsX: 0.1393 }),
     ).toBe('shoulders'); // #254
 
-    // True mid-face stays helmet
+    // Neck collar peeled from cranial shell (helmet#220 chest half) → torso
+    expect(
+      rt({ x: -0.049, y: 1.626, z: 0.01, maxAbsX: 0.148 }),
+    ).toBe('torso');
+    // True mid-face / crown stays helmet
     expect(rt({ x: 0.005, y: 1.669, z: 0.099 })).toBe('helmet');
+    expect(
+      rt({ x: 0.038, y: 1.701, z: 0.02, maxAbsX: 0.08 }),
+    ).toBe('helmet');
   });
 
   it('tags upper chest / collar plates as torso (former helmet#216–#343)', () => {
