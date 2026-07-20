@@ -93,12 +93,14 @@ describe('frontal scatter (whole suit)', () => {
     expect(Math.abs(start.x - rest.x)).toBeLessThan(0.35);
   });
 
-  it('cranial shell helmet scatter is above-front (not pure side)', () => {
+  it('cranial shell helmet scatter is above-front (not pure side or sky drop)', () => {
     const rest = new THREE.Vector3(0.02, 1.62, -0.05);
     expect(isFaceplateRest(rest)).toBe(false);
     const start = scatterStart(rest, 'shell-seed', 3.5, 8.5, 'helmet');
     expect(start.z).toBeGreaterThan(rest.z + 0.75);
-    expect(start.y).toBeGreaterThan(rest.y + 0.5);
+    // Slightly above rest — not a multi-meter crown drop
+    expect(start.y).toBeGreaterThan(rest.y);
+    expect(start.y).toBeLessThan(rest.y + 1.15);
   });
 
   it('boots scatter is front-and-below', () => {

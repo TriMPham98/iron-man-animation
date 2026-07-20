@@ -36,8 +36,9 @@ const WAVE_FRONTAL: Record<string, WaveScatterProfile> = {
   shoulders: { frontDist: 2.2, frontSpread: 1.0, y: 1.1, lateral: 1.05, jitter: 0.4 },
   arms: { frontDist: 2.0, frontSpread: 1.1, y: 0.2, lateral: 1.35, jitter: 0.45 },
   gauntlets: { frontDist: 2.1, frontSpread: 1.0, y: -0.55, lateral: 1.5, jitter: 0.45 },
-  // Cranial shell — above-front (not pure crown drop)
-  helmet: { frontDist: 1.9, frontSpread: 0.8, y: 1.6, lateral: 0.15, jitter: 0.3 },
+  // Cranial shell — modest above-front (not a high crown drop that reads as
+  // “floating debris” when plates are mid-flight or partially seated)
+  helmet: { frontDist: 1.9, frontSpread: 0.8, y: 0.55, lateral: 0.15, jitter: 0.28 },
   power: { frontDist: 2.6, frontSpread: 0.7, y: 0.25, lateral: 0.1, jitter: 0.25 },
 };
 

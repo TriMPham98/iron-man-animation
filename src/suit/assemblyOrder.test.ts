@@ -259,4 +259,42 @@ describe('planSymmetricLaunchGroups', () => {
     expect(partner.startRotation.y).toBeCloseTo(-0.4);
     expect(partner.startRotation.z).toBeCloseTo(0.1);
   });
+
+  it('co-launches dual-layer helmet shells at the same socket (helmet#219/#220)', () => {
+    // Same socket, stacked source meshes — must not seat on different beats
+    const inner = piece('shell-a', 'helmet', -0.017, 1.655, 0.014);
+    const outer = piece('shell-b', 'helmet', -0.009, 1.715, -0.004);
+    const far = piece('cheek-L', 'helmet', 0.22, 1.56, 0.04);
+    const farR = piece('cheek-R', 'helmet', -0.22, 1.56, 0.04);
+
+    const groups = planSymmetricLaunchGroups(
+      [inner, outer, far, farR],
+      'helmet',
+    );
+
+    const shellGroup = groups.find((g) => g.some((p) => p.id === 'shell-a'));
+    expect(shellGroup).toBeDefined();
+    expect(shellGroup!.map((p) => p.id).sort()).toEqual([
+      'shell-a',
+      'shell-b',
+    ]);
+    // Cheeks remain a separate L/R pair
+    const cheekGroup = groups.find((g) => g.some((p) => p.id === 'cheek-L'));
+    expect(cheekGroup?.map((p) => p.id).sort()).toEqual(['cheek-L', 'cheek-R']);
+  });
+
+  it('does not fuse distant centerline helmet plates into one group', () => {
+    const jaw = piece('jaw', 'helmet', 0.0, 1.52, 0.08);
+    const crown = piece('crown', 'helmet', 0.0, 1.78, -0.02);
+    const groups = planSymmetricLaunchGroups([jaw, crown], 'helmet');
+    expect(groups).toHaveLength(2);
+  });
+
+  it('does not co-locate dual-layer pairing outside the helmet wave', () => {
+    const a = piece('torso-a', 'torso', 0.0, 1.3, 0.1);
+    const b = piece('torso-b', 'torso', 0.01, 1.32, 0.09);
+    const groups = planSymmetricLaunchGroups([a, b], 'torso');
+    // Torso keeps centerline solos — no dual-layer absorb
+    expect(groups).toHaveLength(2);
+  });
 });

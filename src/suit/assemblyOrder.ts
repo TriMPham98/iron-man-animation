@@ -363,15 +363,49 @@ const CENTERLINE_X = 0.05;
  * Cost ≈ 2·Δ|x| + Δy + 0.5·Δz (meters).
  */
 const MAX_PAIR_COST = 0.38;
+/**
+ * Dual-layer / stacked shells at the same socket (e.g. Object_2 + Object_3
+ * head plates). If they launch on different beats, the first one seats alone
+ * and reads as a floating fragment (former helmet#219 without #220).
+ *
+ * Kept tight and **non-transitive** (at most one partner) so the helmet
+ * cascade does not collapse into one mega-group.
+ */
+const COLOCATED_DIST = 0.07;
+
+/**
+ * Nearest unused plate within `maxDist` of `anchor` (dual-layer shell mate).
+ */
+function findColocatedPartner(
+  anchor: ArmorPiece,
+  candidates: ArmorPiece[],
+  used: Set<string>,
+  maxDist = COLOCATED_DIST,
+): ArmorPiece | null {
+  const maxDistSq = maxDist * maxDist;
+  let best: ArmorPiece | null = null;
+  let bestD = maxDistSq;
+  for (const q of candidates) {
+    if (used.has(q.id) || q.id === anchor.id) continue;
+    const d = anchor.restPosition.distanceToSquared(q.restPosition);
+    if (d <= bestD) {
+      bestD = d;
+      best = q;
+    }
+  }
+  return best;
+}
 
 /**
  * Group plates in a wave for **paired L/R launches**.
  *
- * Each group is 1–2 pieces that should start at the same timeline time.
+ * Each group is 1–4 pieces that should start at the same timeline time.
  * Group order is structural (assemblyScore: bottom→top or proximal→distal),
  * then greedily match each plate with its best opposite-side mirror.
  *
- * Centerline pieces (`|x|` small) launch alone. Unmatched laterals also solo.
+ * Centerline pieces (`|x|` small) launch alone, except on the helmet wave
+ * where a co-located dual-layer shell is claimed so stacked meshes clamp
+ * together (helmet#219 + #220).
  */
 export function planSymmetricLaunchGroups(
   pieces: ArmorPiece[],
@@ -381,6 +415,7 @@ export function planSymmetricLaunchGroups(
   if (pieces.length === 1) return [pieces.slice()];
 
   const bounds = boundsFromPoints(pieces.map(restPoint));
+  const absorbDualLayer = wave === 'helmet';
 
   // Structural priority first so pairs march boots→thighs / shoulder→hand
   const priority = pieces.slice().sort((a, b) => {
@@ -403,7 +438,15 @@ export function planSymmetricLaunchGroups(
 
     const px = p.restPosition.x;
     if (Math.abs(px) < CENTERLINE_X) {
-      groups.push([p]);
+      const cluster: ArmorPiece[] = [p];
+      if (absorbDualLayer) {
+        const mate = findColocatedPartner(p, priority, used);
+        if (mate) {
+          used.add(mate.id);
+          cluster.push(mate);
+        }
+      }
+      groups.push(cluster);
       continue;
     }
 
@@ -434,9 +477,27 @@ export function planSymmetricLaunchGroups(
       const pair = [p, best].sort(
         (a, b) => a.restPosition.x - b.restPosition.x,
       );
+      if (absorbDualLayer) {
+        // Optional dual-layer mate for each side (Object_2 + Object_3 cheek, etc.)
+        for (const side of [...pair]) {
+          const mate = findColocatedPartner(side, priority, used);
+          if (mate) {
+            used.add(mate.id);
+            pair.push(mate);
+          }
+        }
+      }
       groups.push(pair);
     } else {
-      groups.push([p]);
+      const cluster: ArmorPiece[] = [p];
+      if (absorbDualLayer) {
+        const mate = findColocatedPartner(p, priority, used);
+        if (mate) {
+          used.add(mate.id);
+          cluster.push(mate);
+        }
+      }
+      groups.push(cluster);
     }
   }
 
@@ -444,8 +505,12 @@ export function planSymmetricLaunchGroups(
 }
 
 /**
- * For each L/R launch pair, copy the left plate’s scatter offset onto the right
- * (mirrored across YZ in rest-local space) so flight paths can be geometric mirrors.
+ * For each true L/R launch pair, copy the left plate’s scatter offset onto the
+ * right (mirrored across YZ in rest-local space) so flight paths can be
+ * geometric mirrors.
+ *
+ * Skips dual-layer co-located shells (same side / near-centerline) and groups
+ * larger than 2 — those keep independent scatter.
  *
  * Mutates `startPosition` / `startRotation` and the live mesh pose.
  * Left = lower rest X (first in group after sort).
@@ -456,6 +521,13 @@ export function applyMirroredFlightStarts(groups: ArmorPiece[][]): void {
     const [left, right] = group[0].restPosition.x <= group[1].restPosition.x
       ? group
       : [group[1], group[0]];
+
+    // Must be opposite sides of the spine — dual-layer shells at the same
+    // socket share a sign(x) and must not be mirrored into each other.
+    const lx = left.restPosition.x;
+    const rx = right.restPosition.x;
+    if (Math.abs(lx) < CENTERLINE_X || Math.abs(rx) < CENTERLINE_X) continue;
+    if ((Math.sign(lx) || 1) === (Math.sign(rx) || 1)) continue;
 
     const start = mirrorStartAroundRest(
       left.startPosition,

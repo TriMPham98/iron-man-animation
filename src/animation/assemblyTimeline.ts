@@ -371,13 +371,24 @@ export function createAssemblyTimeline(
         lastLaunch = t;
         lastEnd = t + duration;
 
-        // Shared seed path on the left (lower rest X), then mirror for partner
-        const leftOfPair =
+        // Shared seed path on the left (lower rest X), then mirror for a true
+        // L/R partner. Dual-layer co-located shells (same side / centerline)
+        // keep independent paths so they are not reflected into each other.
+        const mirrorPair =
           group.length === 2
-            ? group[0].restPosition.x <= group[1].restPosition.x
-              ? group[0]
-              : group[1]
+            ? (() => {
+                const [a, b] =
+                  group[0].restPosition.x <= group[1].restPosition.x
+                    ? group
+                    : [group[1], group[0]];
+                const ax = a.restPosition.x;
+                const bx = b.restPosition.x;
+                if (Math.abs(ax) < 0.05 || Math.abs(bx) < 0.05) return null;
+                if ((Math.sign(ax) || 1) === (Math.sign(bx) || 1)) return null;
+                return a;
+              })()
             : null;
+        const leftOfPair = mirrorPair;
         const primaryPath =
           leftOfPair != null
             ? magneticPath(
