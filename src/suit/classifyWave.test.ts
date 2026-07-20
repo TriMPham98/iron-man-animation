@@ -311,21 +311,27 @@ describe('classifyWave', () => {
     expect(
       rt({ x: 0.1477, y: 1.5336, z: -0.0964, maxAbsX: 0.1633 }),
     ).toBe('shoulders'); // #376
+    expect(
+      rt({ x: 0.1401, y: 1.4786, z: -0.0552, maxAbsX: 0.1441 }),
+    ).toBe('shoulders'); // #299
+    expect(
+      rt({ x: 0.144, y: 1.5529, z: 0.084, maxAbsX: 0.152 }),
+    ).toBe('shoulders'); // #371
 
     // #405 high back-lateral trap
     expect(
       rt({ x: 0.122, y: 1.6418, z: -0.0856, maxAbsX: 0.1445 }),
     ).toBe('shoulders');
 
-    // #244 true-centerline collar only
+    // Near-centerline wide collar (#244, #254)
     expect(
       rt({ x: 0, y: 1.6002, z: 0.074, maxAbsX: 0.1409 }),
     ).toBe('shoulders');
-
-    // Mid-face lobe must stay helmet (former shoulders#254)
     expect(
       rt({ x: -0.0296, y: 1.6063, z: 0.0709, maxAbsX: 0.1393 }),
-    ).toBe('helmet');
+    ).toBe('shoulders'); // #254
+
+    // True mid-face stays helmet
     expect(rt({ x: 0.005, y: 1.669, z: 0.099 })).toBe('helmet');
   });
 

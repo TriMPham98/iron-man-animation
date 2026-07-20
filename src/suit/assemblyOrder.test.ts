@@ -4,6 +4,7 @@ import {
   FOUNDATION_WAVES,
   applyMirroredFlightStarts,
   assemblyScore,
+  isTorsoFrontUnderlayer,
   planSymmetricLaunchGroups,
   planWaveOrder,
   selectFoundation,
@@ -183,6 +184,40 @@ describe('planWaveOrder / sortPiecesInWave', () => {
     // First seed is the better id when scores match
     expect(ordered[0].id).toBe('a-plate');
     expect(ordered[1].id).toBe('b-plate');
+  });
+
+  it('seats front under-shells (torso#237 / #332) before outer chest plates', () => {
+    // Centerline underlayer (torso#237) + front-lateral underlayer (torso#332)
+    const under237 = piece('under-237', 'torso', -0.026, 1.543, 0.092);
+    const under332 = piece('under-332', 'torso', 0.125, 1.523, 0.089);
+    const under332L = piece('under-332-L', 'torso', -0.125, 1.523, 0.089);
+    const outerLow = piece('outer-low', 'torso', 0.15, 1.2, 0.1);
+    const outerHigh = piece('outer-high', 'torso', 0.2, 1.5, 0.12);
+    const reactor = piece('reactor', 'torso', 0, 1.45, 0.15);
+
+    expect(isTorsoFrontUnderlayer(under237)).toBe(true);
+    expect(isTorsoFrontUnderlayer(under332)).toBe(true);
+    expect(isTorsoFrontUnderlayer(under332L)).toBe(true);
+    expect(isTorsoFrontUnderlayer(outerHigh)).toBe(false);
+
+    const ordered = sortPiecesInWave(
+      [outerHigh, reactor, outerLow, under332, under237],
+      'torso',
+    );
+    const early = ordered.slice(0, 2).map((p) => p.id);
+    expect(early).toContain('under-237');
+    expect(early).toContain('under-332');
+    // Reactor housing still last
+    expect(ordered[ordered.length - 1].id).toBe('reactor');
+
+    const groups = planSymmetricLaunchGroups(
+      [outerHigh, under332, under332L, outerLow],
+      'torso',
+    );
+    // First launch is underlayer (paired L/R or solo)
+    expect(
+      groups[0].every((p) => isTorsoFrontUnderlayer(p)),
+    ).toBe(true);
   });
 });
 

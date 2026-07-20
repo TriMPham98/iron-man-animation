@@ -45,10 +45,9 @@ export interface WavePoint {
  *   - high pauldron / shoulder pads (not helmet) — absolute Y before
  *     yNorm>0.86 blanket helmet when the skull raises maxY:
  *     · outer stack max|x|≳0.20 (former #392–#393, #409, #438–#439, #449, #395)
- *     · mid-lateral pads max|x|≳0.155 (former #318, #364, #376)
+ *     · mid-lateral pads max|x|≳0.14 (former #318, #364, #376, #299, #371)
  *     · high back-lateral trap y≈1.64 (former #405)
- *     · wide centerline collar y≈1.60, |x|≲0.02 (former #244 only —
- *       not mid-face lobes like former shoulders#254)
+ *     · near-centerline wide collar y≈1.60 (former #244, #254)
  *
  * Typical envelope used by loadSuitModel (for tests / callers):
  *   minY ≈ 0, yRange ≈ 1.85, maxRadial ≈ 0.37
@@ -138,13 +137,13 @@ export function classifyWave(
   }
 
   // Mid-lateral pads / trap plates — tighter max|x| than outer stack
-  // (#318, #364, #376 and mirrors). Front, side, or back — not deep face.
+  // (#318, #364, #376, #299, #371 and mirrors). Front, side, or back.
   if (
     c.y >= 1.46 &&
     c.y <= 1.58 &&
-    ax >= 0.14 &&
+    ax >= 0.135 &&
     ax <= 0.22 &&
-    laterality >= 0.155 &&
+    laterality >= 0.14 &&
     laterality < 0.22 &&
     (az <= 0.11 || c.z < 0)
   ) {
@@ -167,13 +166,12 @@ export function classifyWave(
     return 'shoulders';
   }
 
-  // Wide *true-centerline* collar span (#244 only).
-  // ax≤0.02 keeps mid-face lobes (former shoulders#254 at |x|≈0.03, y→1.71)
-  // on the helmet where they belong.
+  // Near-centerline wide collar span (#244, #254) — spans both shoulders.
+  // Slight |x| offset allowed; true faceplate is taller (y≳1.65) or narrower.
   if (
     c.y >= 1.58 &&
-    c.y <= 1.605 &&
-    ax <= 0.02 &&
+    c.y <= 1.62 &&
+    ax <= 0.04 &&
     c.z >= 0.06 &&
     c.z <= 0.1 &&
     laterality >= 0.12 &&

@@ -246,6 +246,45 @@ export function sortPiecesInWave(
 }
 
 /**
+ * Inner chest shells that must seat before outer armor (clip-through guard).
+ *
+ * - Centerline under-shell (torso#237 family): rest ≈ (−0.03, 1.54, 0.09)
+ * - Front-lateral under-shell (torso#332 family): rest ≈ (0.13, 1.52, 0.09)
+ */
+export function isTorsoFrontUnderlayer(piece: ArmorPiece): boolean {
+  const r = piece.restPosition;
+  const ax = Math.abs(r.x);
+  const radial = Math.hypot(r.x, r.z);
+
+  // Medial front sternum underlayer
+  if (
+    ax <= 0.04 &&
+    r.y >= 1.52 &&
+    r.y <= 1.56 &&
+    r.z >= 0.08 &&
+    r.z <= 0.11 &&
+    radial <= 0.11
+  ) {
+    return true;
+  }
+
+  // Front-lateral underlayer (outer shell sits on top of this)
+  if (
+    ax >= 0.08 &&
+    ax <= 0.16 &&
+    r.y >= 1.48 &&
+    r.y <= 1.56 &&
+    r.z >= 0.06 &&
+    r.z <= 0.12 &&
+    radial <= 0.17
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Same as sortPiecesInWave but also reports how many leading seeds were
  * chosen — used by the timeline so opposite limbs can launch in parallel
  * without waiting on each other.
@@ -329,13 +368,26 @@ export function planWaveOrder(
     remaining.delete(best);
   }
 
-  // Torso: seat the sternum / arc-reactor plate last so the chest core
-  // only lands once surrounding plates have something to clamp onto —
-  // and so reactor ignition can wait on a fully complete torso.
+  // Torso dual-layer polish:
+  // 1) Front under-shells first (inner before outer — no clip-through)
+  // 2) Arc-reactor housing last so ignition waits on a finished chest
   if (wave === 'torso' && ordered.length > 2) {
+    const under: ArmorPiece[] = [];
+    const rest: ArmorPiece[] = [];
+    for (const p of ordered) {
+      if (isTorsoFrontUnderlayer(p)) under.push(p);
+      else rest.push(p);
+    }
+    if (under.length > 0) {
+      ordered.length = 0;
+      ordered.push(...under, ...rest);
+    }
+
     let reactorIdx = 0;
     let bestScore = Infinity;
     for (let i = 0; i < ordered.length; i++) {
+      // Never treat the under-shell as the reactor housing
+      if (isTorsoFrontUnderlayer(ordered[i])) continue;
       const p = ordered[i].restPosition;
       // Prefer front-center chest (low |x|, moderate y, positive z)
       const score =
@@ -347,7 +399,10 @@ export function planWaveOrder(
         reactorIdx = i;
       }
     }
-    if (reactorIdx < ordered.length - 1) {
+    if (
+      reactorIdx < ordered.length - 1 &&
+      !isTorsoFrontUnderlayer(ordered[reactorIdx])
+    ) {
       const [reactorPiece] = ordered.splice(reactorIdx, 1);
       ordered.push(reactorPiece);
     }
@@ -417,8 +472,15 @@ export function planSymmetricLaunchGroups(
   const bounds = boundsFromPoints(pieces.map(restPoint));
   const absorbDualLayer = wave === 'helmet';
 
-  // Structural priority first so pairs march boots→thighs / shoulder→hand
+  // Structural priority first so pairs march boots→thighs / shoulder→hand.
+  // Torso: front under-shells (inner) launch before outer chest plates so
+  // outer shells cannot clip through an empty underlayer (torso#237).
   const priority = pieces.slice().sort((a, b) => {
+    if (wave === 'torso') {
+      const ia = isTorsoFrontUnderlayer(a) ? 0 : 1;
+      const ib = isTorsoFrontUnderlayer(b) ? 0 : 1;
+      if (ia !== ib) return ia - ib;
+    }
     const sa = assemblyScore(restPoint(a), wave, bounds);
     const sb = assemblyScore(restPoint(b), wave, bounds);
     if (Math.abs(sa - sb) > 1e-6) return sa - sb;
