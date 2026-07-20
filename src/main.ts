@@ -78,7 +78,8 @@ async function boot(): Promise<void> {
   controls.target.copy(lookTarget);
   controls.enabled = false;
   controls.autoRotate = false;
-  controls.autoRotateSpeed = 0.6;
+  // 1.0 ≈ 60s per full orbit (Three.js: 2.0 ≈ 30s at 60fps)
+  controls.autoRotateSpeed = 1.0;
 
   ui.setLoadingProgress(0.95);
 
@@ -146,6 +147,9 @@ async function boot(): Promise<void> {
         lookTarget.copy(controls.target);
       }
     }
+
+    // Finished suit: after a full idle 360°, restart the assembly sequence.
+    session.update();
 
     ui.updateClock(Math.max(0, t - session.getClockStart()));
     post.render(delta);

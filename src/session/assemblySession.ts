@@ -28,6 +28,8 @@ export interface AssemblySession {
   skipToEnd: () => void;
   togglePause: () => void;
   seek: (progress01: number) => void;
+  /** Per-frame: restarts assembly after the complete-mode idle spin finishes a full 360°. */
+  update: () => void;
   assembly: AssemblyController;
   isComplete: () => boolean;
   getClockStart: () => number;
@@ -55,6 +57,41 @@ export function createAssemblySession(
 
   let assemblyComplete = false;
   let clockStart = 0;
+
+  /**
+   * After assembly finishes, OrbitControls auto-rotates the finished suit.
+   * Once the camera has yawed a full turn, we restart the sequence so the
+   * loop reads: assemble → spin showcase → assemble again.
+   * Free-look (user drag) cancels auto-rotate and this auto-replay.
+   */
+  let completeSpinActive = false;
+  let completeSpinAccum = 0;
+  let completeSpinLastTheta: number | null = null;
+  const _spinOffset = new THREE.Vector3();
+  const _spinSpherical = new THREE.Spherical();
+
+  const cameraAzimuth = (): number => {
+    _spinOffset.copy(camera.position).sub(controls.target);
+    _spinSpherical.setFromVector3(_spinOffset);
+    return _spinSpherical.theta;
+  };
+
+  const stopCompleteSpinTracking = () => {
+    completeSpinActive = false;
+    completeSpinAccum = 0;
+    completeSpinLastTheta = null;
+  };
+
+  const startCompleteSpinTracking = () => {
+    // Reduced motion lands on the finished suit instantly — no loop churn.
+    if (reducedMotion) {
+      stopCompleteSpinTracking();
+      return;
+    }
+    completeSpinActive = true;
+    completeSpinAccum = 0;
+    completeSpinLastTheta = null;
+  };
 
   const refreshHintCopy = () => {
     const hintEl = document.getElementById('hint');
@@ -92,8 +129,10 @@ export function createAssemblySession(
     if (preserve) {
       setOrbitMode('free', { preserveTarget: true });
       controls.autoRotate = false;
+      stopCompleteSpinTracking();
     } else {
       setOrbitMode('complete');
+      startCompleteSpinTracking();
     }
     ui.setReplayEnabled(true);
     ui.setSkipEnabled(false);
@@ -109,6 +148,7 @@ export function createAssemblySession(
 
   const applyAssemblyUi = (opts?: { preserveTarget?: boolean }) => {
     assemblyComplete = false;
+    stopCompleteSpinTracking();
     // Keep orbit live so a mid-play drag can override the cinematic path
     setOrbitMode('free', { preserveTarget: opts?.preserveTarget });
     ui.setReplayEnabled(false);
@@ -246,11 +286,44 @@ export function createAssemblySession(
     togglePause();
   });
 
+  /**
+   * Call each frame after controls.update(). Accumulates yaw while the
+   * finished suit auto-rotates; after a full turn, replays the assembly.
+   */
+  const update = () => {
+    if (!completeSpinActive || !assemblyComplete) return;
+
+    // User drag (or anything else) kills idle spin — stay on finished suit.
+    if (!controls.autoRotate) {
+      stopCompleteSpinTracking();
+      return;
+    }
+
+    const theta = cameraAzimuth();
+    if (completeSpinLastTheta === null) {
+      completeSpinLastTheta = theta;
+      return;
+    }
+
+    let dTheta = theta - completeSpinLastTheta;
+    // Unwrap so continuous spin does not flip sign at ±π
+    while (dTheta > Math.PI) dTheta -= Math.PI * 2;
+    while (dTheta < -Math.PI) dTheta += Math.PI * 2;
+    completeSpinLastTheta = theta;
+    completeSpinAccum += Math.abs(dTheta);
+
+    if (completeSpinAccum >= Math.PI * 2 - 1e-3) {
+      stopCompleteSpinTracking();
+      startSequence();
+    }
+  };
+
   return {
     startSequence,
     skipToEnd,
     togglePause,
     seek,
+    update,
     assembly,
     isComplete: () => assemblyComplete,
     getClockStart: () => clockStart,
