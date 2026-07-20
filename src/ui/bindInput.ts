@@ -86,6 +86,20 @@ export function bindInput(options: BindInputOptions): void {
           ? Math.max(0, cur - step)
           : Math.min(1, cur + step);
       session.seek(next);
+      return;
+    }
+
+    // Director reclass: A add · [ ] cycle target wave
+    if (!ui.isDirectorMode()) return;
+    if (isTypingTarget(e.target)) return;
+    if (e.key === 'a' || e.key === 'A') {
+      e.preventDefault();
+      ui.addReclassEntry();
+      return;
+    }
+    if (e.key === ']' || e.key === '[') {
+      e.preventDefault();
+      ui.cycleReclassTargetWave(e.key === ']' ? 1 : -1);
     }
   });
 
@@ -152,6 +166,7 @@ export function bindInput(options: BindInputOptions): void {
         const obj = hits[0].object;
         // Final seamless mesh has no per-shard flight path
         pick.apply(obj, null);
+        ui.setReclassPick(null);
         ui.setDebugPickedPiece({
           id: obj.name || 'final-mesh',
           wave: 'power',
@@ -167,6 +182,7 @@ export function bindInput(options: BindInputOptions): void {
       // Clicked empty space — clear selection
       pick.clear();
       ui.setDebugPickedPiece(null);
+      ui.setReclassPick(null);
       return;
     }
 
@@ -174,6 +190,7 @@ export function bindInput(options: BindInputOptions): void {
     if (!piece) {
       const obj = hits[0].object;
       pick.apply(obj, null);
+      ui.setReclassPick(null);
       ui.setDebugPickedPiece({
         id: obj.name || obj.uuid.slice(0, 8),
         wave: 'power',
@@ -185,6 +202,7 @@ export function bindInput(options: BindInputOptions): void {
     }
 
     pick.apply(piece.mesh, piece);
+    ui.setReclassPick(piece);
     ui.setDebugPickedPiece({
       id: piece.id,
       wave: piece.wave,

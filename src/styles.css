@@ -490,6 +490,220 @@ body.viewer-mode .hud-bottom-meta {
   min-width: 0;
 }
 
+/* —— director reclassifier card —— */
+.reclass-panel {
+  position: fixed;
+  top: 5.25rem;
+  right: 1rem;
+  z-index: 40;
+  width: min(17.5rem, calc(100vw - 2rem));
+  padding: 0.7rem 0.75rem 0.65rem;
+  pointer-events: auto;
+  font-family: var(--mono);
+  color: var(--muted);
+  background: rgba(6, 8, 14, 0.88);
+  border: 1px solid rgba(201, 162, 39, 0.28);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+}
+
+.reclass-panel.hidden {
+  display: none;
+}
+
+.reclass-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.reclass-title {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--gold-bright);
+}
+
+.reclass-count {
+  font-size: 0.55rem;
+  letter-spacing: 0.12em;
+  color: #7ee8ff;
+  font-variant-numeric: tabular-nums;
+}
+
+.reclass-picked {
+  margin: 0 0 0.45rem;
+  font-size: 0.55rem;
+  letter-spacing: 0.06em;
+  line-height: 1.35;
+  color: var(--muted);
+  min-height: 2.4em;
+  word-break: break-word;
+}
+
+.reclass-picked.has-pick {
+  color: var(--gold-bright);
+}
+
+.reclass-row {
+  display: grid;
+  grid-template-columns: 1.6rem 1fr;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+}
+
+.reclass-label {
+  font-size: 0.5rem;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+.reclass-wave {
+  width: 100%;
+  height: 1.7rem;
+  padding: 0 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  color: #e8f0ff;
+  background: rgba(12, 16, 28, 0.95);
+  border: 1px solid rgba(126, 232, 255, 0.28);
+  border-radius: 0;
+  outline: none;
+  cursor: pointer;
+}
+
+.reclass-wave:focus-visible {
+  border-color: #7ee8ff;
+  box-shadow: 0 0 0 1px rgba(126, 232, 255, 0.35);
+}
+
+.reclass-note {
+  width: 100%;
+  height: 1.7rem;
+  margin-bottom: 0.4rem;
+  padding: 0 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.52rem;
+  letter-spacing: 0.04em;
+  color: #d8e4f4;
+  background: rgba(12, 16, 28, 0.95);
+  border: 1px solid rgba(201, 162, 39, 0.22);
+  outline: none;
+}
+
+.reclass-note::placeholder {
+  color: rgba(160, 170, 190, 0.45);
+}
+
+.reclass-note:focus-visible {
+  border-color: rgba(201, 162, 39, 0.55);
+}
+
+.reclass-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 0.3rem;
+  margin-bottom: 0.45rem;
+}
+
+.reclass-btn {
+  height: 1.65rem;
+  padding: 0 0.15rem;
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--gold);
+  background: transparent;
+  border: 1px solid rgba(201, 162, 39, 0.4);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.reclass-btn:hover:not(:disabled) {
+  background: rgba(201, 162, 39, 0.12);
+  border-color: var(--gold-bright);
+  color: var(--gold-bright);
+}
+
+.reclass-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.reclass-btn-primary {
+  color: #7ee8ff;
+  border-color: rgba(126, 232, 255, 0.4);
+}
+
+.reclass-btn-primary:hover:not(:disabled) {
+  background: rgba(126, 232, 255, 0.1);
+  border-color: #7ee8ff;
+  color: #9ef0ff;
+}
+
+.reclass-btn-ghost {
+  color: var(--muted);
+  border-color: rgba(140, 150, 170, 0.28);
+}
+
+.reclass-btn-ghost:hover:not(:disabled) {
+  color: #d0d8e8;
+  border-color: rgba(180, 190, 210, 0.4);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.reclass-list {
+  margin: 0 0 0.4rem;
+  padding: 0 0 0 1.05rem;
+  max-height: 9rem;
+  overflow-y: auto;
+  font-size: 0.5rem;
+  letter-spacing: 0.04em;
+  line-height: 1.45;
+  color: #c5d0e0;
+}
+
+.reclass-list:empty {
+  display: none;
+}
+
+.reclass-list li {
+  margin-bottom: 0.15rem;
+}
+
+.reclass-list .from-to {
+  color: #7ee8ff;
+}
+
+.reclass-hint {
+  margin: 0;
+  font-size: 0.48rem;
+  letter-spacing: 0.08em;
+  color: rgba(140, 150, 170, 0.75);
+  line-height: 1.35;
+}
+
+body.viewer-mode .reclass-panel {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .reclass-panel {
+    top: auto;
+    bottom: 5.5rem;
+    right: 0.5rem;
+    left: 0.5rem;
+    width: auto;
+  }
+}
+
 .debug-active-piece.has-active {
   color: #7ee8ff;
   text-shadow: 0 0 10px rgba(126, 232, 255, 0.25);

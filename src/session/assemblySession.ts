@@ -10,7 +10,7 @@ import type { OverlayHandles } from '../ui/overlay';
 const VIEWER_HINT =
   'Drag to orbit · R replay · Space pause · S skip · ←→ scrub';
 const DIRECTOR_HINT =
-  'Drag to orbit · click plate (path) · ←→ scrub · R · Space · S';
+  'Drag to orbit · click plate · RECLASS panel · A add · [ ] wave · ←→ scrub · R · Space · S';
 
 export interface AssemblySessionOptions {
   suit: Suit;
@@ -185,6 +185,7 @@ export function createAssemblySession(
   const clearPick = () => {
     onClearPick();
     ui.setDebugPickedPiece(null);
+    ui.setReclassPick(null);
   };
 
   const finishInstantly = () => {

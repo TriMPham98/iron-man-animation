@@ -272,6 +272,63 @@ describe('classifyWave', () => {
     expect(waveAt(0.02, 1.6, 0.08)).toBe('helmet');
   });
 
+  it('tags high pauldron / shoulder pads (reclass card stack)', () => {
+    // Runtime-like envelope: yNorm≈0.88 would hit blanket helmet gate
+    const rtMin = 0;
+    const rtRange = 1.713;
+    const rtMaxR = 0.41;
+    const rt = (
+      p: { x: number; y: number; z: number; maxAbsX?: number },
+    ) => classifyWave(p, rtMin, rtRange, rtMaxR);
+
+    // Outer stack
+    expect(
+      rt({ x: -0.1895, y: 1.5253, z: 0.0076, maxAbsX: 0.232 }),
+    ).toBe('shoulders'); // #392
+    expect(
+      rt({ x: 0.1816, y: 1.5375, z: 0.0755, maxAbsX: 0.2144 }),
+    ).toBe('shoulders'); // #409
+    expect(
+      rt({ x: -0.1556, y: 1.6053, z: 0.0121, maxAbsX: 0.2347 }),
+    ).toBe('shoulders'); // #395
+    expect(
+      rt({ x: 0.2165, y: 1.5869, z: -0.0368, maxAbsX: 0.2731 }),
+    ).toBe('shoulders'); // #438
+    expect(
+      rt({ x: -0.2165, y: 1.5869, z: -0.0368, maxAbsX: 0.2731 }),
+    ).toBe('shoulders'); // #439
+    expect(
+      rt({ x: 0.2901, y: 1.5228, z: 0.0043, maxAbsX: 0.3174 }),
+    ).toBe('shoulders'); // #449
+
+    // Mid-lateral
+    expect(
+      rt({ x: 0.15, y: 1.4861, z: 0.0698, maxAbsX: 0.1606 }),
+    ).toBe('shoulders'); // #318
+    expect(
+      rt({ x: 0.1484, y: 1.5355, z: 0.0833, maxAbsX: 0.1703 }),
+    ).toBe('shoulders'); // #364
+    expect(
+      rt({ x: 0.1477, y: 1.5336, z: -0.0964, maxAbsX: 0.1633 }),
+    ).toBe('shoulders'); // #376
+
+    // #405 high back-lateral trap
+    expect(
+      rt({ x: 0.122, y: 1.6418, z: -0.0856, maxAbsX: 0.1445 }),
+    ).toBe('shoulders');
+
+    // #244 true-centerline collar only
+    expect(
+      rt({ x: 0, y: 1.6002, z: 0.074, maxAbsX: 0.1409 }),
+    ).toBe('shoulders');
+
+    // Mid-face lobe must stay helmet (former shoulders#254)
+    expect(
+      rt({ x: -0.0296, y: 1.6063, z: 0.0709, maxAbsX: 0.1393 }),
+    ).toBe('helmet');
+    expect(rt({ x: 0.005, y: 1.669, z: 0.099 })).toBe('helmet');
+  });
+
   it('tags upper chest / collar plates as torso (former helmet#216–#343)', () => {
     // Runtime-like envelope: skull raises maxY so yRange ≈ 1.71 and these
     // plates sit at yNorm≈0.90 — past the yNorm≤0.85 collar gate.

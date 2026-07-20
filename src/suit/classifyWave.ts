@@ -42,6 +42,13 @@ export interface WavePoint {
  *     · front upper pec z≈0.10, |x|≈0.12 (former helmet#335)
  *     · lateral collar / trap low |z| (former helmet#336 / #343)
  *     · shoulder-pad lobes split off welded faceplate (former helmet#333 pads)
+ *   - high pauldron / shoulder pads (not helmet) — absolute Y before
+ *     yNorm>0.86 blanket helmet when the skull raises maxY:
+ *     · outer stack max|x|≳0.20 (former #392–#393, #409, #438–#439, #449, #395)
+ *     · mid-lateral pads max|x|≳0.155 (former #318, #364, #376)
+ *     · high back-lateral trap y≈1.64 (former #405)
+ *     · wide centerline collar y≈1.60, |x|≲0.02 (former #244 only —
+ *       not mid-face lobes like former shoulders#254)
  *
  * Typical envelope used by loadSuitModel (for tests / callers):
  *   minY ≈ 0, yRange ≈ 1.85, maxRadial ≈ 0.37
@@ -115,6 +122,64 @@ export function classifyWave(
     ) {
       return 'torso';
     }
+  }
+
+  // ── High pauldron / shoulder pads BEFORE blanket helmet ───────
+  // Outer pauldron stack — wide laterality at collar height
+  // (#392–#393, #409, #395, #438–#439, #449 and L/R mirrors).
+  if (
+    c.y >= 1.46 &&
+    c.y <= 1.62 &&
+    laterality >= 0.2 &&
+    ax >= 0.14 &&
+    ax <= 0.35
+  ) {
+    return 'shoulders';
+  }
+
+  // Mid-lateral pads / trap plates — tighter max|x| than outer stack
+  // (#318, #364, #376 and mirrors). Front, side, or back — not deep face.
+  if (
+    c.y >= 1.46 &&
+    c.y <= 1.58 &&
+    ax >= 0.14 &&
+    ax <= 0.22 &&
+    laterality >= 0.155 &&
+    laterality < 0.22 &&
+    (az <= 0.11 || c.z < 0)
+  ) {
+    return 'shoulders';
+  }
+
+  // High back-lateral trap / rear pauldron (#405 and L/R mirror)
+  if (
+    c.y >= 1.62 &&
+    c.y <= 1.66 &&
+    ax >= 0.1 &&
+    ax <= 0.15 &&
+    laterality >= 0.13 &&
+    laterality < 0.18 &&
+    c.z <= -0.05 &&
+    c.z >= -0.12 &&
+    radial >= 0.12 &&
+    radial <= 0.18
+  ) {
+    return 'shoulders';
+  }
+
+  // Wide *true-centerline* collar span (#244 only).
+  // ax≤0.02 keeps mid-face lobes (former shoulders#254 at |x|≈0.03, y→1.71)
+  // on the helmet where they belong.
+  if (
+    c.y >= 1.58 &&
+    c.y <= 1.605 &&
+    ax <= 0.02 &&
+    c.z >= 0.06 &&
+    c.z <= 0.1 &&
+    laterality >= 0.12 &&
+    laterality <= 0.16
+  ) {
+    return 'shoulders';
   }
 
   // ── Head ──────────────────────────────────────────────────────

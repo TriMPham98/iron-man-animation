@@ -46,6 +46,21 @@ In director mode you also get:
 - Timeline scrubber + pause
 - Active plate readout (**MOVING**)
 - Click a plate to highlight and inspect it
+- **RECLASS** panel (top-right): queue mis-tagged plates → **COPY** a pasteable card for chat
+
+### Reclass card workflow
+
+1. Enable **DIR** mode
+2. Click a plate → choose **TO** wave (or `[` / `]` to cycle)
+3. Optional note → **ADD** (or `A`)
+4. Repeat for more plates → **COPY**
+5. Paste the card in chat so wave gates can be updated
+
+Also update README controls table maybe? Optional - the director section is enough.
+
+Also implement the 392/393 reclass while we're at it? User asked for the card first - they already asked about 392/393 earlier and I implemented that. Good.
+
+Give user a clear how-to.
 
 ### Accessibility
 
