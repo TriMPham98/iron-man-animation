@@ -1,11 +1,13 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   shardGridForTier,
   type QualityTier,
 } from '../scene/quality';
 import { scatterRotation, scatterStart } from '../utils/easeHelpers';
+import { classifyWave } from './classifyWave';
 import {
   isHandRegionCentroid,
   refineHandShards,
@@ -13,20 +15,153 @@ import {
   splitMeshIntoShards,
   type MeshShard,
 } from './splitMesh';
-import type { ArmorPiece } from './waves';
-import { classifyWave } from './classifyWave';
 import {
   attachSystemsShader,
   darkenAlbedoGlowRegions,
   packSystemsEmissiveMap,
   type GlowMaterial,
 } from './systemsGlow';
+import type { ArmorPiece } from './waves';
 
 const MODEL_URL = '/models/ironman.glb';
 /** Local Draco wasm/js decoders vendored under public/draco/ (no CDN). */
 const DRACO_DECODER_PATH = '/draco/';
 
 export type { GlowMaterial } from './systemsGlow';
+
+/**
+ * Upper front faceplate dual shell (high-tier helmet#363 + #400).
+ *
+ * Two stacked front-center plates at y≈1.72–1.77, z≈0.09. Co-locate
+ * pairing often claims the lower one with mid-face helmet#333 first,
+ * leaving #400 as a thin floating fragment on its own beat. Merging
+ * them into one plate reads as a single clean mask surface.
+ *
+ * Match by rest pose (not shard index) so quality tiers stay stable.
+ */
+export function isUpperFaceplateShellRest(rest: THREE.Vector3): boolean {
+  return (
+    Math.abs(rest.x) < 0.04 &&
+    rest.z > 0.07 &&
+    rest.y > 1.7 &&
+    rest.y < 1.8
+  );
+}
+
+/**
+ * Merge secondary armor pieces into `keep` (geometry + rest centroid).
+ * Removes absorbed meshes from `group` and returns the kept piece.
+ */
+function absorbPiecesInto(
+  keep: ArmorPiece,
+  absorb: ArmorPiece[],
+  group: THREE.Group,
+): void {
+  if (absorb.length === 0) return;
+
+  const keepMesh = keep.mesh as THREE.Mesh;
+  const geos: THREE.BufferGeometry[] = [];
+
+  // Primary verts already live in keep-rest local space
+  geos.push(keepMesh.geometry.clone());
+
+  for (const other of absorb) {
+    const otherMesh = other.mesh as THREE.Mesh;
+    const geo = otherMesh.geometry.clone();
+    // Shift other-rest local → keep-rest local
+    const ox = other.restPosition.x - keep.restPosition.x;
+    const oy = other.restPosition.y - keep.restPosition.y;
+    const oz = other.restPosition.z - keep.restPosition.z;
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setXYZ(
+        i,
+        pos.getX(i) + ox,
+        pos.getY(i) + oy,
+        pos.getZ(i) + oz,
+      );
+    }
+    pos.needsUpdate = true;
+    geos.push(geo);
+  }
+
+  const merged = mergeGeometries(geos, false);
+  for (const g of geos) g.dispose();
+  if (!merged) return;
+
+  // Re-center so mesh.position can stay at the combined socket
+  merged.computeBoundingBox();
+  const box = merged.boundingBox;
+  if (box) {
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    if (center.lengthSq() > 1e-12) {
+      const pos = merged.getAttribute('position') as THREE.BufferAttribute;
+      for (let i = 0; i < pos.count; i++) {
+        pos.setXYZ(
+          i,
+          pos.getX(i) - center.x,
+          pos.getY(i) - center.y,
+          pos.getZ(i) - center.z,
+        );
+      }
+      pos.needsUpdate = true;
+      keep.restPosition.add(center);
+    }
+  }
+  merged.computeBoundingSphere();
+
+  keepMesh.geometry.dispose();
+  keepMesh.geometry = merged;
+
+  for (const other of absorb) {
+    group.remove(other.mesh);
+    const om = other.mesh as THREE.Mesh;
+    om.geometry?.dispose();
+  }
+
+  // Fresh scatter from the combined rest so the mask flies as one plate
+  keep.startPosition.copy(
+    scatterStart(keep.restPosition, keep.id, 3.5, 8.5, keep.wave),
+  );
+  keep.startRotation.copy(
+    scatterRotation(keep.id, { rest: keep.restPosition, wave: keep.wave }),
+  );
+  keepMesh.position.copy(keep.startPosition);
+  keepMesh.rotation.copy(keep.startRotation);
+  keepMesh.scale.copy(keep.startScale);
+}
+
+/**
+ * Fuse stacked upper faceplate shells (helmet#363 + #400 on high tier)
+ * into a single assembly piece.
+ */
+export function mergeUpperFaceplateShells(
+  pieces: ArmorPiece[],
+  group: THREE.Group,
+): ArmorPiece[] {
+  const shells = pieces.filter(
+    (p) => p.wave === 'helmet' && isUpperFaceplateShellRest(p.restPosition),
+  );
+  if (shells.length < 2) return pieces;
+
+  // Keep the shell with the most verts (usually the main mask surface)
+  let keep = shells[0];
+  let keepVerts = 0;
+  for (const p of shells) {
+    const mesh = p.mesh as THREE.Mesh;
+    const n = mesh.geometry?.getAttribute('position')?.count ?? 0;
+    if (n >= keepVerts) {
+      keepVerts = n;
+      keep = p;
+    }
+  }
+  const absorb = shells.filter((p) => p !== keep);
+  absorbPiecesInto(keep, absorb, group);
+
+  const drop = new Set(absorb.map((p) => p.id));
+  return pieces.filter((p) => !drop.has(p.id));
+}
 
 /**
  * Max |world X| of shard vertices. Geometry positions are local to the
@@ -380,8 +515,17 @@ export async function loadSuitModel(
     };
   });
 
+  // Upper faceplate dual shell (high-tier helmet#363 + #400) → one plate
+  const mergedPieces = mergeUpperFaceplateShells(pieces, group);
+
   onProgress?.(1);
   draco.dispose();
 
-  return { group, finalModel, pieces, sourceMeshes, glowMaterials };
+  return {
+    group,
+    finalModel,
+    pieces: mergedPieces,
+    sourceMeshes,
+    glowMaterials,
+  };
 }

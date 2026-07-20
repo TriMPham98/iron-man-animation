@@ -55,6 +55,9 @@ export const WAVE_STATUS: Record<PieceWave, string> = {
   shoulders: 'SHOULDER PODS ATTACHING…',
   arms: 'ARM SERVOS CALIBRATING…',
   gauntlets: 'GAUNTLETS CLAMPING…',
-  helmet: 'HELMET SEALING — FACEPLATE CLOSING…',
+  helmet: 'HELMET SEALING…',
   power: 'SYSTEMS ONLINE — ARC STABLE…',
 };
+
+/** Fired when the front mask begins its late hydraulic slam (after skull seats). */
+export const FACEPLATE_STATUS = 'FACEPLATE CLOSING…';

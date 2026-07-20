@@ -5,9 +5,15 @@ import {
   applyMirroredFlightStarts,
   planSymmetricLaunchGroups,
 } from '../suit/assemblyOrder';
-import { WAVE_ORDER, WAVE_STATUS } from '../suit/waves';
+import {
+  FACEPLATE_STATUS,
+  WAVE_ORDER,
+  WAVE_STATUS,
+  type ArmorPiece,
+} from '../suit/waves';
 import {
   flightPathKeysFrom,
+  isFaceplateRest,
   magneticPath,
   mirrorPathAroundRest,
   type MagneticPath,
@@ -111,15 +117,58 @@ const WAVE_SHAKE: Partial<Record<string, number>> = {
 
 /** Default plate travel — slightly snappier so same-wave clamps read as a burst */
 const PIECE_DURATION = 1.12;
-/** Helmet / faceplate — heavier, more movie-like hydraulic close */
+/** Cranial shell plates — heavy, deliberate helmet close */
 const HELMET_PIECE_DURATION = 2.05;
+/**
+ * Front faceplate / mask — longer hydraulic slam after the skull seats.
+ * Mark III beat: shell clamps first, then the mask drives home from +Z.
+ */
+const FACEPLATE_PIECE_DURATION = 2.55;
 /** Gauntlet / finger plates — a bit longer so multi-piece hands read */
 const GAUNTLET_PIECE_DURATION = 1.38;
+
+/**
+ * Seconds after the last *cranial* shell launches before the faceplate
+ * begins its approach. Long enough that the skull is deep into dock /
+ * nearly sealed — not a simultaneous head plop.
+ */
+const FACEPLATE_AFTER_CRANIAL_LAUNCH = HELMET_PIECE_DURATION * 0.52;
 
 /** Fraction of travel spent on the magnetic approach (rest is dock + clamp). */
 const APPROACH_FRAC = 0.78;
 const HELMET_APPROACH_FRAC = 0.82;
+/** Faceplate spends more time on the frontal approach before the final clamp. */
+const FACEPLATE_APPROACH_FRAC = 0.86;
 const GAUNTLET_APPROACH_FRAC = 0.8;
+
+/** True when any plate in a launch group is the front faceplate / mask. */
+export function groupHasFaceplate(group: ArmorPiece[]): boolean {
+  return group.some((p) => isFaceplateRest(p.restPosition));
+}
+
+/**
+ * Split helmet launch groups into cranial shells first, faceplate last.
+ * Empty faceplate (or all-faceplate) leaves order unchanged.
+ */
+export function orderHelmetLaunchGroups(groups: ArmorPiece[][]): {
+  ordered: ArmorPiece[][];
+  /** Index of the first faceplate group in `ordered`, or `ordered.length`. */
+  faceplateStart: number;
+} {
+  const cranial: ArmorPiece[][] = [];
+  const faceplate: ArmorPiece[][] = [];
+  for (const g of groups) {
+    if (groupHasFaceplate(g)) faceplate.push(g);
+    else cranial.push(g);
+  }
+  if (faceplate.length === 0 || cranial.length === 0) {
+    return { ordered: groups, faceplateStart: groups.length };
+  }
+  return {
+    ordered: cranial.concat(faceplate),
+    faceplateStart: cranial.length,
+  };
+}
 
 export function createAssemblyTimeline(
   suit: Suit,
@@ -303,6 +352,8 @@ export function createAssemblyTimeline(
     const waveLockEnd: Partial<Record<string, number>> = {};
     /** Actual scheduled start per wave (after foundation gating) */
     const waveStartAt: Partial<Record<string, number>> = {};
+    /** When the faceplate hero beat launches (0 if no faceplate split). */
+    let faceplateStartAt = 0;
     /**
      * All plates from completed waves — foundation stumps are selected
      * per-wave (arms←shoulders only, helmet←collar, never gauntlets).
@@ -333,26 +384,46 @@ export function createAssemblyTimeline(
 
       const isHelmet = wave === 'helmet';
       const isGauntlets = wave === 'gauntlets';
-      const duration = isHelmet
-        ? HELMET_PIECE_DURATION
-        : isGauntlets
-          ? GAUNTLET_PIECE_DURATION
-          : PIECE_DURATION;
       // Paired L/R launches: stagger between *pairs*, not individual plates
-      const launchGroups = planSymmetricLaunchGroups(pieces, wave);
+      const rawLaunchGroups = planSymmetricLaunchGroups(pieces, wave);
       // Mirror scatter starts so paths can be geometric L↔R reflections
-      applyMirroredFlightStarts(launchGroups);
+      applyMirroredFlightStarts(rawLaunchGroups);
+
+      // Helmet: cranial shells cascade first; faceplate is a late hero beat
+      const helmetOrder = isHelmet
+        ? orderHelmetLaunchGroups(rawLaunchGroups)
+        : { ordered: rawLaunchGroups, faceplateStart: rawLaunchGroups.length };
+      const launchGroups = helmetOrder.ordered;
+      const faceplateStartIdx = helmetOrder.faceplateStart;
+      const hasFaceplateBeat =
+        isHelmet && faceplateStartIdx < launchGroups.length;
+      const cranialGroupCount = hasFaceplateBeat
+        ? faceplateStartIdx
+        : launchGroups.length;
+      const faceplateGroupCount = hasFaceplateBeat
+        ? launchGroups.length - faceplateStartIdx
+        : 0;
+
       const staggerKind = isHelmet
         ? 'helmet'
         : isGauntlets
           ? 'gauntlets'
           : 'default';
-      const stagger = staggerFor(launchGroups.length, staggerKind);
-      const approachFrac = isHelmet
-        ? HELMET_APPROACH_FRAC
-        : isGauntlets
-          ? GAUNTLET_APPROACH_FRAC
-          : APPROACH_FRAC;
+      // Stagger only the cranial cascade (faceplate timed separately)
+      const stagger = staggerFor(cranialGroupCount, staggerKind);
+      const faceplateStagger = staggerFor(faceplateGroupCount, 'helmet');
+
+      // When the faceplate phase begins (first mask launch)
+      const lastCranialLaunch =
+        cranialGroupCount > 0
+          ? waveStart + (cranialGroupCount - 1) * stagger
+          : waveStart;
+      const faceplatePhaseStart = hasFaceplateBeat
+        ? lastCranialLaunch + FACEPLATE_AFTER_CRANIAL_LAUNCH
+        : waveStart;
+      if (hasFaceplateBeat) {
+        faceplateStartAt = faceplatePhaseStart;
+      }
 
       timeline.call(
         () => {
@@ -363,13 +434,43 @@ export function createAssemblyTimeline(
         waveStart,
       );
 
+      if (hasFaceplateBeat) {
+        timeline.call(
+          () => {
+            callbacks.onStatus?.(FACEPLATE_STATUS);
+          },
+          undefined,
+          faceplatePhaseStart,
+        );
+      }
+
       let lastEnd = waveStart;
       let lastLaunch = waveStart;
 
       launchGroups.forEach((group, groupIndex) => {
-        const t = waveStart + groupIndex * stagger;
+        const isFaceplateGroup =
+          hasFaceplateBeat && groupIndex >= faceplateStartIdx;
+        const duration = isFaceplateGroup
+          ? FACEPLATE_PIECE_DURATION
+          : isHelmet
+            ? HELMET_PIECE_DURATION
+            : isGauntlets
+              ? GAUNTLET_PIECE_DURATION
+              : PIECE_DURATION;
+        const approachFrac = isFaceplateGroup
+          ? FACEPLATE_APPROACH_FRAC
+          : isHelmet
+            ? HELMET_APPROACH_FRAC
+            : isGauntlets
+              ? GAUNTLET_APPROACH_FRAC
+              : APPROACH_FRAC;
+
+        const t = isFaceplateGroup
+          ? faceplatePhaseStart +
+            (groupIndex - faceplateStartIdx) * faceplateStagger
+          : waveStart + groupIndex * stagger;
         lastLaunch = t;
-        lastEnd = t + duration;
+        lastEnd = Math.max(lastEnd, t + duration);
 
         // Shared seed path on the left (lower rest X), then mirror for a true
         // L/R partner. Dual-layer co-located shells (same side / centerline)
@@ -389,18 +490,25 @@ export function createAssemblyTimeline(
               })()
             : null;
         const leftOfPair = mirrorPair;
+        const pathOpts = {
+          helmet: isHelmet,
+          faceplate: isFaceplateGroup,
+        };
         const primaryPath =
           leftOfPair != null
             ? magneticPath(
                 leftOfPair.startPosition,
                 leftOfPair.restPosition,
                 leftOfPair.id,
-                { helmet: isHelmet },
+                pathOpts,
               )
             : null;
 
         for (const piece of group) {
           const mesh = piece.mesh;
+          // Per-piece faceplate flag (dual-layer shells may co-group)
+          const pieceIsFaceplate =
+            isFaceplateGroup || isFaceplateRest(piece.restPosition);
           motionSpans.push({
             id: piece.id,
             wave,
@@ -421,7 +529,10 @@ export function createAssemblyTimeline(
                   piece.startPosition,
                   piece.restPosition,
                   piece.id,
-                  { helmet: isHelmet },
+                  {
+                    helmet: isHelmet,
+                    faceplate: pieceIsFaceplate,
+                  },
                 );
 
           // Director mode: click-to-inspect draws this flight curve
@@ -434,7 +545,9 @@ export function createAssemblyTimeline(
           const approachDur = duration * approachFrac;
           const dockDur = duration - approachDur;
           // Split dock: soft overshoot, then settle into socket
-          const slamDur = dockDur * (isHelmet ? 0.55 : 0.45);
+          // Faceplate: longer settle so the hydraulic clamp reads clearly
+          const slamFrac = pieceIsFaceplate ? 0.5 : isHelmet ? 0.55 : 0.45;
+          const slamDur = dockDur * slamFrac;
           const settleDur = dockDur - slamDur;
 
           // Explicit false at t=0 so reverse scrub restores hidden state
@@ -444,8 +557,9 @@ export function createAssemblyTimeline(
 
           // ── Position: magnetic arc → approach → overshoot → rest ──
           // Phase 1a: fly toward curved waypoint (magnetic pull-in)
-          const midApproach = approachDur * 0.62;
+          const midApproach = approachDur * (pieceIsFaceplate ? 0.58 : 0.62);
           const nearApproach = approachDur - midApproach;
+          const heavy = isHelmet || pieceIsFaceplate;
 
           timeline.fromTo(
             mesh.position,
@@ -459,7 +573,7 @@ export function createAssemblyTimeline(
               y: path.waypoint.y,
               z: path.waypoint.z,
               duration: midApproach,
-              ease: isHelmet ? 'power2.inOut' : 'power2.in',
+              ease: heavy ? 'power2.inOut' : 'power2.in',
             },
             t,
           );
@@ -472,7 +586,11 @@ export function createAssemblyTimeline(
               y: path.approach.y,
               z: path.approach.z,
               duration: nearApproach,
-              ease: isHelmet ? 'power3.inOut' : 'power3.in',
+              ease: pieceIsFaceplate
+                ? 'power2.inOut'
+                : isHelmet
+                  ? 'power3.inOut'
+                  : 'power3.in',
             },
             t + midApproach,
           );
@@ -485,7 +603,7 @@ export function createAssemblyTimeline(
               y: path.overshoot.y,
               z: path.overshoot.z,
               duration: slamDur,
-              ease: isHelmet ? 'power2.in' : 'power2.in',
+              ease: pieceIsFaceplate ? 'power3.in' : 'power2.in',
             },
             t + approachDur,
           );
@@ -498,13 +616,13 @@ export function createAssemblyTimeline(
               y: piece.restPosition.y,
               z: piece.restPosition.z,
               duration: settleDur,
-              ease: 'power3.out',
+              ease: pieceIsFaceplate ? 'power4.out' : 'power3.out',
             },
             t + approachDur + slamDur,
           );
 
           // ── Rotation: mostly during approach, final align on dock ──
-          const travelEase = isHelmet ? 'power3.inOut' : 'power2.inOut';
+          const travelEase = heavy ? 'power3.inOut' : 'power2.inOut';
           timeline.fromTo(
             mesh.rotation,
             {
@@ -524,8 +642,8 @@ export function createAssemblyTimeline(
 
           // ── Scale: grow on approach, light clamp seat on lock ─────
           const rs = piece.restScale;
-          const preLock = isHelmet ? 0.985 : 0.96;
-          const punch = isHelmet ? 1.008 : 1.02;
+          const preLock = pieceIsFaceplate ? 0.99 : isHelmet ? 0.985 : 0.96;
+          const punch = pieceIsFaceplate ? 1.012 : isHelmet ? 1.008 : 1.02;
 
           // Grow from tiny scatter scale → near rest during approach
           timeline.fromTo(
@@ -540,7 +658,7 @@ export function createAssemblyTimeline(
               y: rs.y * preLock,
               z: rs.z * preLock,
               duration: approachDur,
-              ease: isHelmet ? 'power2.inOut' : 'power2.out',
+              ease: heavy ? 'power2.inOut' : 'power2.out',
             },
             t,
           );
@@ -705,21 +823,41 @@ export function createAssemblyTimeline(
       reactorT - 0.55,
     );
 
-    // Helmet / faceplate beat — core already glowing from the chest
+    // Helmet cranial shells — core already glowing from the chest
+    const helmetCamStart =
+      (waveStartAt.helmet ?? WAVE_EARLIEST.helmet ?? 13.2) - 0.4;
     timeline.to(
       cameraProxy,
       {
-        x: 0.22,
-        y: 1.48,
-        z: 2.15,
-        ly: 1.55,
+        x: 0.28,
+        y: 1.5,
+        z: 2.25,
+        ly: 1.52,
         lx: 0,
-        duration: 3.4,
+        duration: 2.8,
         ease: 'power3.inOut',
         onUpdate: applyCamera,
       },
-      (waveStartAt.helmet ?? WAVE_EARLIEST.helmet ?? 13.2) - 0.4,
+      helmetCamStart,
     );
+
+    // Faceplate hero slam — push in tight on the mask as it drives home
+    if (faceplateStartAt > 0) {
+      timeline.to(
+        cameraProxy,
+        {
+          x: 0.12,
+          y: 1.52,
+          z: 1.95,
+          ly: 1.58,
+          lx: 0,
+          duration: 2.2,
+          ease: 'power2.inOut',
+          onUpdate: applyCamera,
+        },
+        faceplateStartAt - 0.2,
+      );
+    }
 
     // Hold on the eyes a moment, then pull back to hero
     timeline.to(
