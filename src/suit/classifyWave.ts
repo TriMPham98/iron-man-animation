@@ -48,6 +48,7 @@ export interface WavePoint {
  *     · mid-lateral pads max|x|≳0.14 (former #318, #364, #376, #299, #371)
  *     · high back-lateral trap y≈1.64 (former #405)
  *     · near-centerline wide collar y≈1.60 (former #244, #254)
+ *     · high mid-collar trap y≈1.61, ax≈0.10, max|x|≈0.15 (former #315)
  *
  * Typical envelope used by loadSuitModel (for tests / callers):
  *   minY ≈ 0, yRange ≈ 1.85, maxRadial ≈ 0.37
@@ -176,6 +177,21 @@ export function classifyWave(
     c.z <= 0.1 &&
     laterality >= 0.12 &&
     laterality <= 0.16
+  ) {
+    return 'shoulders';
+  }
+
+  // High mid-collar / trap pad (#315) — y≈1.61, maxAbsX≈0.15, slightly more
+  // medial than lateral collar torso (ax≥0.10). Front-biased; not back trap.
+  if (
+    c.y >= 1.59 &&
+    c.y <= 1.64 &&
+    ax >= 0.09 &&
+    ax < 0.11 &&
+    laterality >= 0.13 &&
+    laterality <= 0.16 &&
+    az <= 0.08 &&
+    c.z >= 0.02
   ) {
     return 'shoulders';
   }

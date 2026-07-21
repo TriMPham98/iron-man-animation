@@ -331,6 +331,19 @@ describe('classifyWave', () => {
       rt({ x: -0.0296, y: 1.6063, z: 0.0709, maxAbsX: 0.1393 }),
     ).toBe('shoulders'); // #254
 
+    // #315 high mid-collar / trap pad (reclass card)
+    expect(
+      rt({ x: -0.0957, y: 1.6147, z: 0.0476, maxAbsX: 0.1474 }),
+    ).toBe('shoulders');
+    // L/R mirror of the same pad
+    expect(
+      rt({ x: 0.0957, y: 1.6147, z: 0.0476, maxAbsX: 0.1474 }),
+    ).toBe('shoulders');
+    // More lateral upper pec at same height stays torso (#349 band)
+    expect(
+      rt({ x: 0.1172, y: 1.6147, z: 0.0457, maxAbsX: 0.1474 }),
+    ).toBe('torso');
+
     // Neck collar peeled from cranial shell (helmet#220 chest half) → torso
     expect(
       rt({ x: -0.049, y: 1.626, z: 0.01, maxAbsX: 0.148 }),

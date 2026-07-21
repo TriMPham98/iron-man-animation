@@ -163,6 +163,86 @@ export function mergeUpperFaceplateShells(
   return pieces.filter((p) => !drop.has(p.id));
 }
 
+function pieceVertCount(p: ArmorPiece): number {
+  const mesh = p.mesh as THREE.Mesh;
+  return mesh.geometry?.getAttribute('position')?.count ?? 0;
+}
+
+/**
+ * Tiny mid-face / crown scraps that fly as separate fragments after the
+ * helmet floater peel (high-tier helmet#318 / #353 / #364 / #378 and mirrors).
+ * Match by rest pose + vert count so quality tiers stay stable.
+ */
+export function isHelmetFaceFloater(
+  rest: THREE.Vector3,
+  verts: number,
+): boolean {
+  if (verts < 1 || verts > 64) return false;
+  if (rest.y < 1.65 || rest.y > 1.85) return false;
+  if (Math.abs(rest.x) > 0.08) return false;
+  // Front mid-face scraps (#318, #353, #364, #316–#319, #354, …)
+  if (rest.z >= 0.03 && rest.z <= 0.12) return true;
+  // High crown scrap (#378) — can sit closer to centerline |z|
+  if (rest.y >= 1.75 && Math.abs(rest.z) <= 0.09) return true;
+  return false;
+}
+
+/**
+ * Absorb helmet face floaters into the nearest large helmet host so they
+ * seat as one plate instead of raining in as 3–60 vert fragments.
+ */
+export function mergeHelmetFaceFloaters(
+  pieces: ArmorPiece[],
+  group: THREE.Group,
+): ArmorPiece[] {
+  const HOST_MIN_VERTS = 1000;
+  const MAX_DIST = 0.12;
+
+  const helmet = pieces.filter((p) => p.wave === 'helmet');
+  const floaters = helmet.filter((p) =>
+    isHelmetFaceFloater(p.restPosition, pieceVertCount(p)),
+  );
+  if (floaters.length === 0) return pieces;
+
+  const hosts = helmet.filter(
+    (p) =>
+      pieceVertCount(p) >= HOST_MIN_VERTS &&
+      !isHelmetFaceFloater(p.restPosition, pieceVertCount(p)),
+  );
+  if (hosts.length === 0) return pieces;
+
+  /** host id → floaters to absorb */
+  const byHost = new Map<string, ArmorPiece[]>();
+  const absorbed = new Set<string>();
+
+  for (const f of floaters) {
+    let best: ArmorPiece | null = null;
+    let bestD = MAX_DIST;
+    for (const h of hosts) {
+      const d = f.restPosition.distanceTo(h.restPosition);
+      if (d <= bestD) {
+        bestD = d;
+        best = h;
+      }
+    }
+    if (!best) continue;
+    const list = byHost.get(best.id) ?? [];
+    list.push(f);
+    byHost.set(best.id, list);
+    absorbed.add(f.id);
+  }
+
+  if (absorbed.size === 0) return pieces;
+
+  const hostById = new Map(hosts.map((h) => [h.id, h] as const));
+  for (const [hostId, absorb] of byHost) {
+    const host = hostById.get(hostId);
+    if (host) absorbPiecesInto(host, absorb, group);
+  }
+
+  return pieces.filter((p) => !absorbed.has(p.id));
+}
+
 /**
  * Max |world X| of shard vertices. Geometry positions are local to the
  * centroid; world X = local X + centroid.x.
@@ -516,7 +596,9 @@ export async function loadSuitModel(
   });
 
   // Upper faceplate dual shell (high-tier helmet#363 + #400) → one plate
-  const mergedPieces = mergeUpperFaceplateShells(pieces, group);
+  let mergedPieces = mergeUpperFaceplateShells(pieces, group);
+  // Tiny face/crown floaters → nearest large helmet host
+  mergedPieces = mergeHelmetFaceFloaters(mergedPieces, group);
 
   onProgress?.(1);
   draco.dispose();

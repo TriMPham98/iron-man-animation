@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
+  isHelmetFaceFloater,
   isUpperFaceplateShellRest,
+  mergeHelmetFaceFloaters,
   mergeUpperFaceplateShells,
 } from './loadSuitModel';
 import type { ArmorPiece } from './waves';
@@ -89,6 +91,123 @@ describe('mergeUpperFaceplateShells', () => {
     const a = piece('only', new THREE.Vector3(0, 1.74, 0.09));
     group.add(a.mesh);
     const out = mergeUpperFaceplateShells([a], group);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toBe(a);
+  });
+});
+
+describe('isHelmetFaceFloater', () => {
+  it('matches high-tier face/crown scraps (#318 / #353 / #364 / #378)', () => {
+    expect(
+      isHelmetFaceFloater(new THREE.Vector3(-0.0572, 1.6813, 0.0581), 21),
+    ).toBe(true); // #318
+    expect(
+      isHelmetFaceFloater(new THREE.Vector3(-0.0369, 1.6637, 0.0994), 24),
+    ).toBe(true); // #353
+    expect(
+      isHelmetFaceFloater(new THREE.Vector3(-0.048, 1.6871, 0.0903), 24),
+    ).toBe(true); // #364
+    expect(
+      isHelmetFaceFloater(new THREE.Vector3(0.0511, 1.7936, 0.0396), 57),
+    ).toBe(true); // #378
+  });
+
+  it('rejects large shells and lateral plates', () => {
+    // Main faceplate host
+    expect(
+      isHelmetFaceFloater(new THREE.Vector3(0.005, 1.671, 0.101), 5664),
+    ).toBe(false);
+    // Lateral back scrap (too far out)
+    expect(
+      isHelmetFaceFloater(new THREE.Vector3(0.165, 1.585, -0.075), 60),
+    ).toBe(false);
+    // Mid-face plate with enough mass stays its own piece
+    expect(
+      isHelmetFaceFloater(new THREE.Vector3(0.005, 1.669, 0.099), 200),
+    ).toBe(false);
+  });
+});
+
+describe('mergeHelmetFaceFloaters', () => {
+  it('absorbs #318/#353/#364/#378-style scraps into nearest large host', () => {
+    const group = new THREE.Group();
+    // Front faceplate host (~#347)
+    const hostFace = piece(
+      'shard-347-helmet',
+      new THREE.Vector3(0.005, 1.671, 0.101),
+      2000,
+    );
+    // Upper shell host (~#410)
+    const hostUpper = piece(
+      'shard-410-helmet',
+      new THREE.Vector3(0, 1.744, 0.089),
+      3000,
+    );
+    const f318 = piece(
+      'shard-318-helmet',
+      new THREE.Vector3(-0.057, 1.681, 0.058),
+      21,
+    );
+    const f353 = piece(
+      'shard-353-helmet',
+      new THREE.Vector3(-0.037, 1.664, 0.099),
+      24,
+    );
+    const f364 = piece(
+      'shard-364-helmet',
+      new THREE.Vector3(-0.048, 1.687, 0.09),
+      24,
+    );
+    const f378 = piece(
+      'shard-378-helmet',
+      new THREE.Vector3(0.051, 1.794, 0.04),
+      57,
+    );
+    // Unrelated large back shell must stay
+    const back = piece(
+      'shard-344-helmet',
+      new THREE.Vector3(0.012, 1.669, -0.1),
+      2500,
+    );
+    group.add(
+      hostFace.mesh,
+      hostUpper.mesh,
+      f318.mesh,
+      f353.mesh,
+      f364.mesh,
+      f378.mesh,
+      back.mesh,
+    );
+
+    const out = mergeHelmetFaceFloaters(
+      [hostFace, hostUpper, f318, f353, f364, f378, back],
+      group,
+    );
+
+    expect(out.map((p) => p.id).sort()).toEqual(
+      ['shard-347-helmet', 'shard-410-helmet', 'shard-344-helmet'].sort(),
+    );
+    expect(group.children).toHaveLength(3);
+
+    const face = out.find((p) => p.id === 'shard-347-helmet')!;
+    const faceVerts = (face.mesh as THREE.Mesh).geometry.getAttribute(
+      'position',
+    ).count;
+    // host + #318 + #353 + #364
+    expect(faceVerts).toBe(2000 + 21 + 24 + 24);
+
+    const upper = out.find((p) => p.id === 'shard-410-helmet')!;
+    const upperVerts = (upper.mesh as THREE.Mesh).geometry.getAttribute(
+      'position',
+    ).count;
+    expect(upperVerts).toBe(3000 + 57);
+  });
+
+  it('is a no-op when no floaters match', () => {
+    const group = new THREE.Group();
+    const a = piece('big', new THREE.Vector3(0, 1.72, 0.09), 2000);
+    group.add(a.mesh);
+    const out = mergeHelmetFaceFloaters([a], group);
     expect(out).toHaveLength(1);
     expect(out[0]).toBe(a);
   });
