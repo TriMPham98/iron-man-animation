@@ -371,6 +371,14 @@ describe('classifyWave', () => {
     expect(
       rt({ x: -0.0171, y: 1.6076, z: -0.1286, maxAbsX: 0.1445 }),
     ).toBe('shoulders');
+    // #344 trap half after nape peel (slight |x| bias, wide maxAbsX)
+    expect(
+      rt({ x: 0.0553, y: 1.6183, z: -0.1382, maxAbsX: 0.1502 }),
+    ).toBe('shoulders');
+    // #344 nape half stays helmet (high, narrow laterality)
+    expect(
+      rt({ x: 0, y: 1.6817, z: -0.0903, maxAbsX: 0.0625 }),
+    ).toBe('helmet');
     // Narrow rear skull plate stays helmet
     expect(
       rt({ x: -0.001, y: 1.629, z: -0.092, maxAbsX: 0.073 }),

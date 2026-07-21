@@ -173,11 +173,11 @@ export function classifyWave(
 
   // Rear mid-lateral trap / back pauldron pads — behind the neck, tighter
   // laterality than the outer stack (former helmet#430/#431, #434, #439,
-  // #441/#442, #446/#447 and L/R mirrors).
+  // #441/#442, #446/#447 and helmet#344 trap half + L/R mirrors).
   if (
     c.y >= 1.53 &&
     c.y <= 1.64 &&
-    ax >= 0.11 &&
+    ax >= 0.1 &&
     ax <= 0.18 &&
     laterality >= 0.14 &&
     laterality <= 0.19 &&
@@ -201,13 +201,14 @@ export function classifyWave(
     return 'shoulders';
   }
 
-  // Near-centerline wide rear collar / upper-back trap (#352) — centroid on
-  // the spine but verts span both traps (maxAbsX≈0.14). Narrow rear skull
-  // plates (maxAbsX≲0.09) and higher crown (y≳1.66) stay helmet.
+  // Near-centerline wide rear collar / upper-back trap (#352, #344 trap half)
+  // — centroid near the spine but verts span both traps (maxAbsX≈0.14–0.15).
+  // Slight |x| bias allowed after nape peel. Narrow rear skull (maxAbsX≲0.09)
+  // and higher crown (y≳1.66) stay helmet.
   if (
     c.y >= 1.58 &&
     c.y <= 1.64 &&
-    ax <= 0.05 &&
+    ax <= 0.08 &&
     c.z <= -0.08 &&
     c.z >= -0.18 &&
     laterality >= 0.12 &&

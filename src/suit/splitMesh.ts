@@ -300,6 +300,17 @@ export function splitMeshIntoShards(
     ) {
       return 'torso';
     }
+    // Rear trap / shoulder half peeled from nape shell (helmet#344). Must
+    // not re-merge with high nape under a shared helmet|in coarse key.
+    if (
+      y >= 1.55 &&
+      y < 1.66 &&
+      ax > 0.06 &&
+      ax < 0.18 &&
+      c.z < -0.08
+    ) {
+      return 'shoulders';
+    }
     if (y >= 1.5) return 'helmet';
     return 'torso';
   };
@@ -496,6 +507,65 @@ export function splitMeshIntoShards(
   };
 
   /**
+   * Rear nape shell welded to trap / shoulder plates (helmet#344).
+   * Tall back of skull (y→1.80) with lower lateral traps at y≈1.56–1.65,
+   * |x|→0.15. Pure Y cuts leave a medial lower slab still tagged helmet;
+   * peel lateral lower lobes onto shoulders so the nape seats alone.
+   */
+  const tryHelmetNapeShoulderSplit = (
+    tris: number[],
+  ): number[][] | null => {
+    if (tris.length < 120) return null;
+
+    let minYy = Infinity;
+    let maxYy = -Infinity;
+    let maxAx = 0;
+    let backish = 0;
+    for (const t of tris) {
+      const tc = centroids[t];
+      minYy = Math.min(minYy, tc.y);
+      maxYy = Math.max(maxYy, tc.y);
+      maxAx = Math.max(maxAx, Math.abs(tc.x));
+      if (tc.z < -0.05) backish++;
+    }
+    // Rear plate spanning collar + nape height with lateral trap reach
+    if (minYy > 1.6 || maxYy < 1.74) return null;
+    if (maxYy - minYy < 0.16) return null;
+    if (maxAx < 0.09) return null;
+    if (backish < tris.length * 0.55) return null;
+
+    const nape: number[] = [];
+    const shoulders: number[] = [];
+    const v = new THREE.Vector3();
+    for (const t of tris) {
+      const tc = centroids[t];
+      let triMaxAx = 0;
+      for (let k = 0; k < 3; k++) {
+        v.fromBufferAttribute(pos, t * 3 + k).applyMatrix4(world);
+        triMaxAx = Math.max(triMaxAx, Math.abs(v.x));
+      }
+      // Lower lateral trap lobes → shoulders; high center rear → nape
+      if (triMaxAx > 0.075 && tc.y < 1.66) shoulders.push(t);
+      else nape.push(t);
+    }
+    if (shoulders.length < 40 || nape.length < 80) return null;
+
+    const cSh = islandCentroid(shoulders);
+    const cNape = islandCentroid(nape);
+    // Nape should sit higher; trap mass more lateral on average
+    if (cNape.y - cSh.y < 0.03) return null;
+    let shMeanAx = 0;
+    let napeMeanAx = 0;
+    for (const t of shoulders) shMeanAx += Math.abs(centroids[t].x);
+    for (const t of nape) napeMeanAx += Math.abs(centroids[t].x);
+    shMeanAx /= shoulders.length;
+    napeMeanAx /= nape.length;
+    if (shMeanAx < napeMeanAx + 0.03) return null;
+
+    return [nape, shoulders];
+  };
+
+  /**
    * Shoulder collar welded with floating face/helmet scraps (shoulders#254).
    * Main pad mass sits at y≈1.56–1.62; two high floaters at y≳1.65 are
    * face geometry and must assemble with the helmet, not the pauldrons.
@@ -602,6 +672,9 @@ export function splitMeshIntoShards(
     // Cranial shell + upper-chest collar (helmet#220) — big Y span first
     const byHelmChest = tryHelmetChestCollarSplit(tris);
     if (byHelmChest) return byHelmChest;
+    // Rear nape + trap/shoulder weld (helmet#344)
+    const byNape = tryHelmetNapeShoulderSplit(tris);
+    if (byNape) return byNape;
     // Faceplate + dual collar pads (helmet#333) before generic |x| 2-means
     const byCollar = tryFaceplateCollarPadSplit(tris);
     if (byCollar) return byCollar;
