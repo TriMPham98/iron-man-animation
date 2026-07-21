@@ -163,6 +163,77 @@ export function mergeUpperFaceplateShells(
   return pieces.filter((p) => !drop.has(p.id));
 }
 
+/**
+ * Front sternum under-shell pair (high-tier torso#235 + #334).
+ *
+ * Centerline underlayer (#235 ≈ −0.03, 1.54, 0.09) and front-lateral
+ * underlayer (#334 ≈ 0.13, 1.52, 0.09) used to fly on separate beats and
+ * read as two thin plates. Fusing them into one plate seats the inner
+ * chest as a single clamp before outer reactor housing.
+ *
+ * Match by rest pose (not shard index) so quality tiers stay stable.
+ */
+export function isTorsoUnder235Rest(rest: THREE.Vector3): boolean {
+  // Measured high-tier torso#235
+  return (
+    Math.abs(rest.x - -0.0264) < 0.014 &&
+    Math.abs(rest.y - 1.5426) < 0.014 &&
+    Math.abs(rest.z - 0.0917) < 0.014
+  );
+}
+
+export function isTorsoUnder334Rest(rest: THREE.Vector3): boolean {
+  // Measured high-tier torso#334
+  return (
+    Math.abs(rest.x - 0.1252) < 0.014 &&
+    Math.abs(rest.y - 1.523) < 0.014 &&
+    Math.abs(rest.z - 0.089) < 0.014
+  );
+}
+
+/** Either half of the #235+#334 under-shell pair. */
+export function isTorsoUnderShellPairRest(rest: THREE.Vector3): boolean {
+  return isTorsoUnder235Rest(rest) || isTorsoUnder334Rest(rest);
+}
+
+/**
+ * Fuse torso#235 + #334 under-shells into one assembly piece.
+ * Marks the survivor so layer ranking still treats it as underlayer after
+ * the combined rest centroid moves between the two sockets.
+ */
+export function mergeTorsoUnderShells(
+  pieces: ArmorPiece[],
+  group: THREE.Group,
+): ArmorPiece[] {
+  const shells = pieces.filter(
+    (p) =>
+      p.wave === 'torso' && isTorsoUnderShellPairRest(p.restPosition),
+  );
+  if (shells.length < 2) return pieces;
+
+  // Need at least one from each family when both exist
+  const has235 = shells.some((p) => isTorsoUnder235Rest(p.restPosition));
+  const has334 = shells.some((p) => isTorsoUnder334Rest(p.restPosition));
+  if (!has235 || !has334) return pieces;
+
+  let keep = shells[0];
+  let keepVerts = 0;
+  for (const p of shells) {
+    const n = pieceVertCount(p);
+    if (n >= keepVerts) {
+      keepVerts = n;
+      keep = p;
+    }
+  }
+  const absorb = shells.filter((p) => p !== keep);
+  absorbPiecesInto(keep, absorb, group);
+  // Combined rest sits between medial + lateral — flag for order polish
+  keep.mesh.userData.torsoFrontUnderlayer = true;
+
+  const drop = new Set(absorb.map((p) => p.id));
+  return pieces.filter((p) => !drop.has(p.id));
+}
+
 function pieceVertCount(p: ArmorPiece): number {
   const mesh = p.mesh as THREE.Mesh;
   return mesh.geometry?.getAttribute('position')?.count ?? 0;
@@ -599,6 +670,8 @@ export async function loadSuitModel(
   let mergedPieces = mergeUpperFaceplateShells(pieces, group);
   // Tiny face/crown floaters → nearest large helmet host
   mergedPieces = mergeHelmetFaceFloaters(mergedPieces, group);
+  // Sternum under-shell pair (torso#235 + #334) → one plate
+  mergedPieces = mergeTorsoUnderShells(mergedPieces, group);
 
   onProgress?.(1);
   draco.dispose();

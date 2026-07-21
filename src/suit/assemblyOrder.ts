@@ -256,6 +256,9 @@ export function sortPiecesInWave(
  * those are exterior and must clamp after the underlayer.
  */
 export function isTorsoFrontUnderlayer(piece: ArmorPiece): boolean {
+  // Fused #235+#334 under-shell (combined rest may sit between sockets)
+  if (piece.mesh.userData?.torsoFrontUnderlayer) return true;
+
   const r = piece.restPosition;
   const ax = Math.abs(r.x);
   const radial = Math.hypot(r.x, r.z);
@@ -281,6 +284,19 @@ export function isTorsoFrontUnderlayer(piece: ArmorPiece): boolean {
     r.z >= 0.06 &&
     r.z <= 0.12 &&
     radial <= 0.17
+  ) {
+    return true;
+  }
+
+  // Combined #235+#334 centroid (≈ 0.05, 1.53, 0.09) — between medial + lateral
+  if (
+    ax >= 0.03 &&
+    ax <= 0.08 &&
+    r.y >= 1.5 &&
+    r.y <= 1.56 &&
+    r.z >= 0.07 &&
+    r.z <= 0.11 &&
+    radial <= 0.14
   ) {
     return true;
   }

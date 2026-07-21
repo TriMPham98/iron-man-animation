@@ -2,16 +2,21 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   isHelmetFaceFloater,
+  isTorsoUnder235Rest,
+  isTorsoUnder334Rest,
+  isTorsoUnderShellPairRest,
   isUpperFaceplateShellRest,
   mergeHelmetFaceFloaters,
+  mergeTorsoUnderShells,
   mergeUpperFaceplateShells,
 } from './loadSuitModel';
-import type { ArmorPiece } from './waves';
+import type { ArmorPiece, PieceWave } from './waves';
 
 function piece(
   id: string,
   rest: THREE.Vector3,
   verts = 9,
+  wave: PieceWave = 'helmet',
 ): ArmorPiece {
   const geo = new THREE.BufferGeometry();
   const positions = new Float32Array(verts * 3);
@@ -27,7 +32,7 @@ function piece(
   return {
     id,
     mesh,
-    wave: 'helmet',
+    wave,
     restPosition: rest.clone(),
     restRotation: new THREE.Euler(),
     restScale: new THREE.Vector3(1, 1, 1),
@@ -208,6 +213,77 @@ describe('mergeHelmetFaceFloaters', () => {
     const a = piece('big', new THREE.Vector3(0, 1.72, 0.09), 2000);
     group.add(a.mesh);
     const out = mergeHelmetFaceFloaters([a], group);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toBe(a);
+  });
+});
+
+describe('isTorsoUnderShellPairRest / mergeTorsoUnderShells', () => {
+  it('matches measured high-tier torso#235 and #334 rests', () => {
+    expect(
+      isTorsoUnder235Rest(new THREE.Vector3(-0.0264, 1.5426, 0.0917)),
+    ).toBe(true);
+    expect(
+      isTorsoUnder334Rest(new THREE.Vector3(0.1252, 1.523, 0.089)),
+    ).toBe(true);
+    expect(
+      isTorsoUnderShellPairRest(new THREE.Vector3(-0.0264, 1.5426, 0.0917)),
+    ).toBe(true);
+    // Outer reactor housing #281 — not under-shell
+    expect(
+      isTorsoUnderShellPairRest(new THREE.Vector3(-0.009, 1.441, 0.161)),
+    ).toBe(false);
+    // Centerline neighbor #230 (x≈0) stays separate
+    expect(
+      isTorsoUnderShellPairRest(new THREE.Vector3(0, 1.544, 0.092)),
+    ).toBe(false);
+  });
+
+  it('fuses #235 + #334 into one plate and flags underlayer', () => {
+    const group = new THREE.Group();
+    const a = piece(
+      'shard-235-torso',
+      new THREE.Vector3(-0.0264, 1.5426, 0.0917),
+      12,
+      'torso',
+    );
+    const b = piece(
+      'shard-334-torso',
+      new THREE.Vector3(0.1252, 1.523, 0.089),
+      6,
+      'torso',
+    );
+    const abs = piece(
+      'shard-162-torso',
+      new THREE.Vector3(0.12, 1.015, 0.1),
+      9,
+      'torso',
+    );
+    group.add(a.mesh, b.mesh, abs.mesh);
+
+    const out = mergeTorsoUnderShells([a, b, abs], group);
+
+    expect(out).toHaveLength(2);
+    expect(out.map((p) => p.id).sort()).toEqual(
+      ['shard-235-torso', 'shard-162-torso'].sort(),
+    );
+    expect(group.children).toHaveLength(2);
+    const kept = out.find((p) => p.id === 'shard-235-torso')!;
+    const pos = (kept.mesh as THREE.Mesh).geometry.getAttribute('position');
+    expect(pos.count).toBe(18);
+    expect(kept.mesh.userData.torsoFrontUnderlayer).toBe(true);
+  });
+
+  it('is a no-op when only one half of the pair exists', () => {
+    const group = new THREE.Group();
+    const a = piece(
+      'only-235',
+      new THREE.Vector3(-0.0264, 1.5426, 0.0917),
+      9,
+      'torso',
+    );
+    group.add(a.mesh);
+    const out = mergeTorsoUnderShells([a], group);
     expect(out).toHaveLength(1);
     expect(out[0]).toBe(a);
   });
