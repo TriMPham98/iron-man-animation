@@ -4,11 +4,13 @@ import {
   FOUNDATION_WAVES,
   applyMirroredFlightStarts,
   assemblyScore,
+  isTorsoAbsBand,
   isTorsoFrontUnderlayer,
   planSymmetricLaunchGroups,
   planWaveOrder,
   selectFoundation,
   sortPiecesInWave,
+  torsoLayerRank,
 } from './assemblyOrder';
 import type { ArmorPiece, PieceWave } from './waves';
 
@@ -186,38 +188,55 @@ describe('planWaveOrder / sortPiecesInWave', () => {
     expect(ordered[1].id).toBe('b-plate');
   });
 
-  it('seats front under-shells (torso#237 / #332) before outer chest plates', () => {
-    // Centerline underlayer (torso#237) + front-lateral underlayer (torso#332)
-    const under237 = piece('under-237', 'torso', -0.026, 1.543, 0.092);
-    const under332 = piece('under-332', 'torso', 0.125, 1.523, 0.089);
-    const under332L = piece('under-332-L', 'torso', -0.125, 1.523, 0.089);
-    const outerLow = piece('outer-low', 'torso', 0.15, 1.2, 0.1);
-    const outerHigh = piece('outer-high', 'torso', 0.2, 1.5, 0.12);
+  it('seats abs → under-shells (#235/#334) → outer reactor housing (#281)', () => {
+    // Measured high-tier rests
+    const under235 = piece('under-235', 'torso', -0.0264, 1.5426, 0.0917);
+    const under334 = piece('under-334', 'torso', 0.1252, 1.523, 0.089);
+    const under334L = piece('under-334-L', 'torso', -0.1252, 1.523, 0.089);
+    // Abs / lower front torso
+    const abs = piece('abs', 'torso', 0.11, 1.15, 0.1);
+    const absL = piece('abs-L', 'torso', -0.09, 1.2, 0.11);
+    // Exterior arc-reactor shell — sits *over* underlayer (must not clamp first)
+    const outer281 = piece('outer-281', 'torso', -0.009, 1.441, 0.161);
+    const outerHigh = piece('outer-high', 'torso', 0.2, 1.55, 0.12);
     const reactor = piece('reactor', 'torso', 0, 1.45, 0.15);
 
-    expect(isTorsoFrontUnderlayer(under237)).toBe(true);
-    expect(isTorsoFrontUnderlayer(under332)).toBe(true);
-    expect(isTorsoFrontUnderlayer(under332L)).toBe(true);
-    expect(isTorsoFrontUnderlayer(outerHigh)).toBe(false);
+    expect(isTorsoFrontUnderlayer(under235)).toBe(true);
+    expect(isTorsoFrontUnderlayer(under334)).toBe(true);
+    expect(isTorsoAbsBand(abs)).toBe(true);
+    expect(isTorsoAbsBand(outer281)).toBe(false);
+    expect(isTorsoFrontUnderlayer(outer281)).toBe(false);
+    expect(torsoLayerRank(abs)).toBe(0);
+    expect(torsoLayerRank(under235)).toBe(1);
+    expect(torsoLayerRank(outer281)).toBe(2);
 
     const ordered = sortPiecesInWave(
-      [outerHigh, reactor, outerLow, under332, under237],
+      [outerHigh, reactor, abs, under334, under235, absL, outer281],
       'torso',
     );
-    const early = ordered.slice(0, 2).map((p) => p.id);
-    expect(early).toContain('under-237');
-    expect(early).toContain('under-332');
-    // Reactor housing still last
+    const idx = (id: string) => ordered.findIndex((p) => p.id === id);
+
+    // Abs band before underlayers
+    expect(idx('abs')).toBeLessThan(idx('under-235'));
+    expect(idx('abs')).toBeLessThan(idx('under-334'));
+    expect(idx('abs-L')).toBeLessThan(idx('under-235'));
+    // Underlayers before exterior reactor housing (clip-through guard)
+    expect(idx('under-235')).toBeLessThan(idx('outer-281'));
+    expect(idx('under-334')).toBeLessThan(idx('outer-281'));
+    expect(idx('under-235')).toBeLessThan(idx('outer-high'));
+    expect(idx('under-334')).toBeLessThan(idx('outer-high'));
+    // Ignition housing still last among outer chest
     expect(ordered[ordered.length - 1].id).toBe('reactor');
 
     const groups = planSymmetricLaunchGroups(
-      [outerHigh, under332, under332L, outerLow],
+      [outer281, under334, under334L, abs, absL],
       'torso',
     );
-    // First launch is underlayer (paired L/R or solo)
-    expect(
-      groups[0].every((p) => isTorsoFrontUnderlayer(p)),
-    ).toBe(true);
+    // Layer order preserved in launch groups: abs first, under, then outer
+    expect(groups[0].every((p) => isTorsoAbsBand(p))).toBe(true);
+    const flat = groups.flat().map((p) => p.id);
+    expect(flat.indexOf('abs')).toBeLessThan(flat.indexOf('under-334'));
+    expect(flat.indexOf('under-334')).toBeLessThan(flat.indexOf('outer-281'));
   });
 });
 

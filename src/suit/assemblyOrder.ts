@@ -246,10 +246,14 @@ export function sortPiecesInWave(
 }
 
 /**
- * Inner chest shells that must seat before outer armor (clip-through guard).
+ * Inner chest shells that must seat before outer armor (clip-through guard),
+ * but *after* lower torso / abs (bottom → top).
  *
- * - Centerline under-shell (torso#237 family): rest ≈ (−0.03, 1.54, 0.09)
- * - Front-lateral under-shell (torso#332 family): rest ≈ (0.13, 1.52, 0.09)
+ * - Centerline under-shell (torso#235 / #237 family): rest ≈ (−0.03, 1.54, 0.09)
+ * - Front-lateral under-shell (torso#334 / #332 family): rest ≈ (0.13, 1.52, 0.09)
+ *
+ * Outer reactor housing (e.g. torso#281 at y≈1.44, z≈0.16) is *not* this —
+ * those are exterior and must clamp after the underlayer.
  */
 export function isTorsoFrontUnderlayer(piece: ArmorPiece): boolean {
   const r = piece.restPosition;
@@ -282,6 +286,28 @@ export function isTorsoFrontUnderlayer(piece: ArmorPiece): boolean {
   }
 
   return false;
+}
+
+/**
+ * Lower torso / abdominal band — seats before sternum underlayers.
+ *
+ * Kept well below the under-shell Y (~1.48+) so mid-chest exterior plates
+ * (torso#281 reactor housing at y≈1.44) are *not* treated as abs and do
+ * not clamp before the underlayer they sit on top of.
+ */
+export function isTorsoAbsBand(piece: ArmorPiece): boolean {
+  if (isTorsoFrontUnderlayer(piece)) return false;
+  return piece.restPosition.y < 1.3;
+}
+
+/**
+ * Torso layer for polish / launch priority:
+ * 0 = abs / lower ribs, 1 = front under-shell, 2 = outer / upper chest.
+ */
+export function torsoLayerRank(piece: ArmorPiece): number {
+  if (isTorsoAbsBand(piece)) return 0;
+  if (isTorsoFrontUnderlayer(piece)) return 1;
+  return 2;
 }
 
 /**
@@ -369,18 +395,24 @@ export function planWaveOrder(
   }
 
   // Torso dual-layer polish:
-  // 1) Front under-shells first (inner before outer — no clip-through)
-  // 2) Arc-reactor housing last so ignition waits on a finished chest
+  // 1) Abs / lower ribs first (bottom → top)
+  // 2) Front under-shells (torso#235 / #334) — after abs, before exterior
+  // 3) Outer chest / reactor housing (torso#281 etc.) so underlayers do
+  //    not clip through already-seated exterior shells
+  // 4) Arc-reactor ignition piece last among outer plates
   if (wave === 'torso' && ordered.length > 2) {
+    const abs: ArmorPiece[] = [];
     const under: ArmorPiece[] = [];
-    const rest: ArmorPiece[] = [];
+    const outer: ArmorPiece[] = [];
     for (const p of ordered) {
-      if (isTorsoFrontUnderlayer(p)) under.push(p);
-      else rest.push(p);
+      const rank = torsoLayerRank(p);
+      if (rank === 0) abs.push(p);
+      else if (rank === 1) under.push(p);
+      else outer.push(p);
     }
-    if (under.length > 0) {
+    if (under.length > 0 || abs.length > 0) {
       ordered.length = 0;
-      ordered.push(...under, ...rest);
+      ordered.push(...abs, ...under, ...outer);
     }
 
     let reactorIdx = 0;
@@ -388,6 +420,8 @@ export function planWaveOrder(
     for (let i = 0; i < ordered.length; i++) {
       // Never treat the under-shell as the reactor housing
       if (isTorsoFrontUnderlayer(ordered[i])) continue;
+      // Prefer ignition on outer chest, not abs band
+      if (isTorsoAbsBand(ordered[i])) continue;
       const p = ordered[i].restPosition;
       // Prefer front-center chest (low |x|, moderate y, positive z)
       const score =
@@ -401,7 +435,8 @@ export function planWaveOrder(
     }
     if (
       reactorIdx < ordered.length - 1 &&
-      !isTorsoFrontUnderlayer(ordered[reactorIdx])
+      !isTorsoFrontUnderlayer(ordered[reactorIdx]) &&
+      !isTorsoAbsBand(ordered[reactorIdx])
     ) {
       const [reactorPiece] = ordered.splice(reactorIdx, 1);
       ordered.push(reactorPiece);
@@ -473,13 +508,13 @@ export function planSymmetricLaunchGroups(
   const absorbDualLayer = wave === 'helmet';
 
   // Structural priority first so pairs march boots→thighs / shoulder→hand.
-  // Torso: front under-shells (inner) launch before outer chest plates so
-  // outer shells cannot clip through an empty underlayer (torso#237).
+  // Torso layers: abs → under-shell (#235/#334) → outer reactor housing
+  // (#281) so underlayers never clip through exterior shells.
   const priority = pieces.slice().sort((a, b) => {
     if (wave === 'torso') {
-      const ia = isTorsoFrontUnderlayer(a) ? 0 : 1;
-      const ib = isTorsoFrontUnderlayer(b) ? 0 : 1;
-      if (ia !== ib) return ia - ib;
+      const ra = torsoLayerRank(a);
+      const rb = torsoLayerRank(b);
+      if (ra !== rb) return ra - rb;
     }
     const sa = assemblyScore(restPoint(a), wave, bounds);
     const sb = assemblyScore(restPoint(b), wave, bounds);
