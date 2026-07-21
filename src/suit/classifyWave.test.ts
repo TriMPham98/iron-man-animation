@@ -323,6 +323,42 @@ describe('classifyWave', () => {
       rt({ x: 0.122, y: 1.6418, z: -0.0856, maxAbsX: 0.1445 }),
     ).toBe('shoulders');
 
+    // Rear mid-lateral trap / back pauldron (reclass card stack)
+    expect(
+      rt({ x: 0.1509, y: 1.6266, z: -0.0847, maxAbsX: 0.1563 }),
+    ).toBe('shoulders'); // #441
+    expect(
+      rt({ x: -0.1509, y: 1.6266, z: -0.0847, maxAbsX: 0.1563 }),
+    ).toBe('shoulders'); // #442
+    expect(
+      rt({ x: 0.1651, y: 1.5852, z: -0.0749, maxAbsX: 0.1781 }),
+    ).toBe('shoulders'); // #430
+    expect(
+      rt({ x: -0.1651, y: 1.5852, z: -0.0749, maxAbsX: 0.1781 }),
+    ).toBe('shoulders'); // #431
+    expect(
+      rt({ x: 0.1514, y: 1.6088, z: -0.1075, maxAbsX: 0.1656 }),
+    ).toBe('shoulders'); // #446
+    expect(
+      rt({ x: -0.1517, y: 1.6087, z: -0.1074, maxAbsX: 0.1656 }),
+    ).toBe('shoulders'); // #447 mirror
+    expect(
+      rt({ x: -0.1208, y: 1.6218, z: -0.125, maxAbsX: 0.1504 }),
+    ).toBe('shoulders'); // #439
+    expect(
+      rt({ x: 0.1208, y: 1.6218, z: -0.125, maxAbsX: 0.1504 }),
+    ).toBe('shoulders'); // #439 L/R mirror
+    expect(
+      rt({ x: 0.1192, y: 1.5492, z: -0.1609, maxAbsX: 0.151 }),
+    ).toBe('shoulders'); // #434
+    expect(
+      rt({ x: -0.1192, y: 1.5492, z: -0.1609, maxAbsX: 0.151 }),
+    ).toBe('shoulders'); // #434 L/R mirror
+    // Medial rear shell stays helmet (not this band)
+    expect(
+      rt({ x: 0.012, y: 1.669, z: -0.1, maxAbsX: 0.15 }),
+    ).toBe('helmet');
+
     // Near-centerline wide collar (#244, #254)
     expect(
       rt({ x: 0, y: 1.6002, z: 0.074, maxAbsX: 0.1409 }),
@@ -330,6 +366,19 @@ describe('classifyWave', () => {
     expect(
       rt({ x: -0.0296, y: 1.6063, z: 0.0709, maxAbsX: 0.1393 }),
     ).toBe('shoulders'); // #254
+
+    // #352 near-centerline wide rear collar / upper-back trap
+    expect(
+      rt({ x: -0.0171, y: 1.6076, z: -0.1286, maxAbsX: 0.1445 }),
+    ).toBe('shoulders');
+    // Narrow rear skull plate stays helmet
+    expect(
+      rt({ x: -0.001, y: 1.629, z: -0.092, maxAbsX: 0.073 }),
+    ).toBe('helmet');
+    // Higher crown / back-of-head shell stays helmet
+    expect(
+      rt({ x: 0.012, y: 1.669, z: -0.1, maxAbsX: 0.15 }),
+    ).toBe('helmet');
 
     // #315 high mid-collar / trap pad (reclass card)
     expect(

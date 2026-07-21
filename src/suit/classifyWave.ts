@@ -47,7 +47,11 @@ export interface WavePoint {
  *     · outer stack max|x|≳0.20 (former #392–#393, #409, #438–#439, #449, #395)
  *     · mid-lateral pads max|x|≳0.14 (former #318, #364, #376, #299, #371)
  *     · high back-lateral trap y≈1.64 (former #405)
+ *     · rear mid-lateral trap / back pauldron y≈1.55–1.63, ax≈0.12–0.17,
+ *       max|x|≈0.15–0.18 (former #430–#431, #434, #439, #441–#442, #446–#447)
  *     · near-centerline wide collar y≈1.60 (former #244, #254)
+ *     · near-centerline wide rear collar / upper-back trap y≈1.61,
+ *       max|x|≈0.14 (former #352) — centroid on spine, verts span traps
  *     · high mid-collar trap y≈1.61, ax≈0.10, max|x|≈0.15 (former #315)
  *
  * Typical envelope used by loadSuitModel (for tests / callers):
@@ -167,6 +171,22 @@ export function classifyWave(
     return 'shoulders';
   }
 
+  // Rear mid-lateral trap / back pauldron pads — behind the neck, tighter
+  // laterality than the outer stack (former helmet#430/#431, #434, #439,
+  // #441/#442, #446/#447 and L/R mirrors).
+  if (
+    c.y >= 1.53 &&
+    c.y <= 1.64 &&
+    ax >= 0.11 &&
+    ax <= 0.18 &&
+    laterality >= 0.14 &&
+    laterality <= 0.19 &&
+    c.z <= -0.055 &&
+    c.z >= -0.19
+  ) {
+    return 'shoulders';
+  }
+
   // Near-centerline wide collar span (#244, #254) — spans both shoulders.
   // Slight |x| offset allowed; true faceplate is taller (y≳1.65) or narrower.
   if (
@@ -177,6 +197,21 @@ export function classifyWave(
     c.z <= 0.1 &&
     laterality >= 0.12 &&
     laterality <= 0.16
+  ) {
+    return 'shoulders';
+  }
+
+  // Near-centerline wide rear collar / upper-back trap (#352) — centroid on
+  // the spine but verts span both traps (maxAbsX≈0.14). Narrow rear skull
+  // plates (maxAbsX≲0.09) and higher crown (y≳1.66) stay helmet.
+  if (
+    c.y >= 1.58 &&
+    c.y <= 1.64 &&
+    ax <= 0.05 &&
+    c.z <= -0.08 &&
+    c.z >= -0.18 &&
+    laterality >= 0.12 &&
+    laterality <= 0.17
   ) {
     return 'shoulders';
   }
