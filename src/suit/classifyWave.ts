@@ -53,6 +53,8 @@ export interface WavePoint {
  *     · near-centerline wide rear collar / upper-back trap y≈1.61,
  *       max|x|≈0.14 (former #352) — centroid on spine, verts span traps
  *     · high mid-collar trap y≈1.61, ax≈0.10, max|x|≈0.15 (former #315)
+ *     · centerline wide rear upper-back plate y≈1.49, max|x|≈0.17,
+ *       z≈−0.12 (former helmet#236) — lower than #352 collar band
  *
  * Typical envelope used by loadSuitModel (for tests / callers):
  *   minY ≈ 0, yRange ≈ 1.85, maxRadial ≈ 0.37
@@ -215,6 +217,22 @@ export function classifyWave(
     laterality <= 0.17
   ) {
     return 'shoulders';
+  }
+
+  // Centerline wide rear upper-back plate (#236) — spine centroid, trap span
+  // (maxAbsX≈0.17), lower than the #352 rear-collar shoulders band (y≈1.61).
+  // Bbox hangs into mid-back (y→1.29). Without this gate, skull maxY pushes
+  // yNorm past 0.86 → blanket helmet.
+  if (
+    c.y >= 1.45 &&
+    c.y <= 1.54 &&
+    ax <= 0.04 &&
+    c.z <= -0.08 &&
+    c.z >= -0.16 &&
+    laterality >= 0.14 &&
+    laterality <= 0.19
+  ) {
+    return 'torso';
   }
 
   // High mid-collar / trap pad (#315) — y≈1.61, maxAbsX≈0.15, slightly more

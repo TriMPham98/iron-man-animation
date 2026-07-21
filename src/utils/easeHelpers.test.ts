@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
+  approachDepthSign,
   flightPathKeysFrom,
   hashSeed,
   isFaceplateRest,
@@ -49,8 +50,12 @@ describe('scatterStart determinism', () => {
   });
 });
 
-describe('frontal scatter (whole suit)', () => {
-  const sampleRest = (wave: string, side: -1 | 0 | 1): THREE.Vector3 => {
+describe('depth-aware scatter (anterior + posterior)', () => {
+  const sampleRest = (
+    wave: string,
+    side: -1 | 0 | 1,
+    depth: 'front' | 'back' = 'front',
+  ): THREE.Vector3 => {
     const y: Record<string, number> = {
       boots: 0.08,
       calves: 0.4,
@@ -64,13 +69,22 @@ describe('frontal scatter (whole suit)', () => {
       power: 1.28,
     };
     const x = side * (wave === 'helmet' || wave === 'torso' ? 0.02 : 0.22);
-    return new THREE.Vector3(x, y[wave] ?? 1.0, 0.05);
+    const z = depth === 'back' ? -0.08 : 0.05;
+    return new THREE.Vector3(x, y[wave] ?? 1.0, z);
   };
 
-  it.each(WAVES)('%s starts in front of rest (+Z)', (wave) => {
-    const rest = sampleRest(wave, 1);
+  it.each(WAVES)('%s anterior starts in front of rest (+Z)', (wave) => {
+    const rest = sampleRest(wave, 1, 'front');
+    expect(approachDepthSign(rest)).toBe(1);
     const start = scatterStart(rest, `front-${wave}`, 3.5, 8.5, wave);
     expect(start.z).toBeGreaterThan(rest.z + 0.75);
+  });
+
+  it.each(WAVES)('%s posterior starts behind rest (−Z)', (wave) => {
+    const rest = sampleRest(wave, 1, 'back');
+    expect(approachDepthSign(rest)).toBe(-1);
+    const start = scatterStart(rest, `back-${wave}`, 3.5, 8.5, wave);
+    expect(start.z).toBeLessThan(rest.z - 0.75);
   });
 
   it('limb starts keep the same lateral side as rest', () => {
@@ -93,21 +107,29 @@ describe('frontal scatter (whole suit)', () => {
     expect(Math.abs(start.x - rest.x)).toBeLessThan(0.35);
   });
 
-  it('cranial shell helmet scatter is above-front (not pure side or sky drop)', () => {
+  it('cranial shell (posterior rest) flies in from behind with modest height', () => {
     const rest = new THREE.Vector3(0.02, 1.62, -0.05);
     expect(isFaceplateRest(rest)).toBe(false);
+    expect(approachDepthSign(rest)).toBe(-1);
     const start = scatterStart(rest, 'shell-seed', 3.5, 8.5, 'helmet');
-    expect(start.z).toBeGreaterThan(rest.z + 0.75);
+    expect(start.z).toBeLessThan(rest.z - 0.75);
     // Slightly above rest — not a multi-meter crown drop
     expect(start.y).toBeGreaterThan(rest.y);
     expect(start.y).toBeLessThan(rest.y + 1.15);
   });
 
-  it('boots scatter is front-and-below', () => {
+  it('boots scatter is front-and-below when rest is anterior', () => {
     const rest = new THREE.Vector3(0.12, 0.08, 0.05);
     const start = scatterStart(rest, 'boot-front', 3.5, 8.5, 'boots');
     expect(start.z).toBeGreaterThan(rest.z + 0.75);
     expect(start.y).toBeLessThan(rest.y);
+  });
+
+  it('side plates near z≈0 still approach from the front', () => {
+    const rest = new THREE.Vector3(0.22, 1.2, 0);
+    expect(approachDepthSign(rest)).toBe(1);
+    const start = scatterStart(rest, 'side-arm', 3.5, 8.5, 'arms');
+    expect(start.z).toBeGreaterThan(rest.z + 0.75);
   });
 });
 
@@ -172,5 +194,13 @@ describe('mirror helpers (bilateral flight)', () => {
     const start = scatterStart(rest, 'path-front', 3.5, 8.5, 'torso');
     const path = magneticPath(start, rest, 'path-front');
     expect(path.waypoint.z).toBeGreaterThan(rest.z);
+  });
+
+  it('posterior magneticPath keeps waypoint behind rest', () => {
+    const rest = new THREE.Vector3(0.1, 1.2, -0.08);
+    const start = scatterStart(rest, 'path-back', 3.5, 8.5, 'torso');
+    expect(start.z).toBeLessThan(rest.z);
+    const path = magneticPath(start, rest, 'path-back');
+    expect(path.waypoint.z).toBeLessThan(rest.z);
   });
 });

@@ -11,11 +11,12 @@ export function hashSeed(seed: string): number {
 }
 
 /**
- * Frontal scatter profile — every plate approaches from +Z (camera side)
- * with wave-specific height and limb lateral spread.
+ * Depth-aware scatter profile — anterior plates approach from +Z (camera),
+ * posterior plates from −Z (behind the suit). Wave owns height; limbs keep
+ * lateral spread on sign(rest.x).
  */
 export interface WaveScatterProfile {
-  /** Base meters in front of rest (+Z). */
+  /** Base meters along the approach axis (away from the body on ±Z). */
   frontDist: number;
   /** Extra meters added by seed (0–frontSpread). */
   frontSpread: number;
@@ -23,11 +24,11 @@ export interface WaveScatterProfile {
   y: number;
   /** Push outward on ±X using sign(rest.x); 0 for centerline waves. */
   lateral: number;
-  /** Seed jitter scale on X/Y (Z jitter stays small and front-safe). */
+  /** Seed jitter scale on X/Y (Z jitter stays on the approach side). */
   jitter: number;
 }
 
-const WAVE_FRONTAL: Record<string, WaveScatterProfile> = {
+const WAVE_SCATTER: Record<string, WaveScatterProfile> = {
   boots: { frontDist: 1.8, frontSpread: 0.9, y: -2.2, lateral: 0.45, jitter: 0.35 },
   calves: { frontDist: 2.0, frontSpread: 1.0, y: -1.0, lateral: 0.7, jitter: 0.4 },
   thighs: { frontDist: 2.1, frontSpread: 1.0, y: -0.25, lateral: 0.85, jitter: 0.4 },
@@ -36,13 +37,13 @@ const WAVE_FRONTAL: Record<string, WaveScatterProfile> = {
   shoulders: { frontDist: 2.2, frontSpread: 1.0, y: 1.1, lateral: 1.05, jitter: 0.4 },
   arms: { frontDist: 2.0, frontSpread: 1.1, y: 0.2, lateral: 1.35, jitter: 0.45 },
   gauntlets: { frontDist: 2.1, frontSpread: 1.0, y: -0.55, lateral: 1.5, jitter: 0.45 },
-  // Cranial shell — modest above-front (not a high crown drop that reads as
-  // “floating debris” when plates are mid-flight or partially seated)
+  // Cranial shell — modest height bias (not a multi-meter crown drop that
+  // reads as “floating debris” when plates are mid-flight or partially seated)
   helmet: { frontDist: 1.9, frontSpread: 0.8, y: 0.55, lateral: 0.15, jitter: 0.28 },
   power: { frontDist: 2.6, frontSpread: 0.7, y: 0.25, lateral: 0.1, jitter: 0.25 },
 };
 
-const DEFAULT_FRONTAL: WaveScatterProfile = {
+const DEFAULT_SCATTER: WaveScatterProfile = {
   frontDist: 2.2,
   frontSpread: 1.0,
   y: 0.4,
@@ -60,7 +61,19 @@ export function isFaceplateRest(rest: THREE.Vector3): boolean {
 }
 
 /**
- * Scatter start in the **front hemisphere** (+Z toward camera).
+ * Approach direction on Z: anterior rest → +1 (from camera), posterior → −1
+ * (from behind). Side plates near z≈0 default to the front hemisphere so they
+ * stay readable against the cinematic camera.
+ */
+export function approachDepthSign(rest: THREE.Vector3): 1 | -1 {
+  return rest.z < -0.02 ? -1 : 1;
+}
+
+/**
+ * Scatter start on the plate’s depth hemisphere:
+ *   anterior (rest.z ≳ 0) → +Z toward camera
+ *   posterior (rest.z ≪ 0) → −Z from behind the suit
+ *
  * Wave still owns height; limbs keep sign(rest.x) lateral for L/R mirrors.
  *
  * `radiusMin` / `radiusMax` are kept for API compatibility and scale frontDist
@@ -77,7 +90,7 @@ export function scatterStart(
   const r2 = hashSeed(seed + ':b');
   const r3 = hashSeed(seed + ':c');
 
-  // Faceplate: strong frontal slam near eye line
+  // Faceplate: strong frontal slam near eye line (always from +Z)
   if (wave === 'helmet' && isFaceplateRest(rest)) {
     const frontDist = 2.1 + r1 * 1.4;
     return new THREE.Vector3(
@@ -87,27 +100,28 @@ export function scatterStart(
     );
   }
 
-  const profile = (wave && WAVE_FRONTAL[wave]) || DEFAULT_FRONTAL;
+  const profile = (wave && WAVE_SCATTER[wave]) || DEFAULT_SCATTER;
+  const depthSign = approachDepthSign(rest);
 
-  // Map legacy radius range → scale so front cloud stays readable
+  // Map legacy radius range → scale so scatter cloud stays readable
   const midR = (radiusMin + radiusMax) * 0.5;
   const scale = THREE.MathUtils.clamp(midR / 6.5, 0.65, 1.35);
 
-  const frontDist =
+  const approachDist =
     (profile.frontDist + r1 * profile.frontSpread) * scale;
   const sideSign = Math.abs(rest.x) < 0.04 ? 0 : Math.sign(rest.x);
   const lateral =
     sideSign * (profile.lateral * scale) * (0.75 + r2 * 0.5);
   const yOff = profile.y * scale + (r3 - 0.5) * profile.jitter * scale;
 
-  // Front-safe jitter: never push start behind rest on Z
+  // Depth-safe jitter: only further along the approach axis (never flips side)
   const jx = (r1 - 0.5) * profile.jitter * scale;
-  const jz = r2 * 0.35 * scale; // only further forward
+  const jz = depthSign * r2 * 0.35 * scale;
 
   return new THREE.Vector3(
     rest.x + lateral + jx,
     rest.y + yOff,
-    rest.z + frontDist + jz,
+    rest.z + depthSign * approachDist + jz,
   );
 }
 
@@ -200,8 +214,9 @@ export function mirrorPathAroundRest(
  * Build a two-phase magnetic path: arc in → near-socket approach → overshoot
  * past rest for a mechanical clamp. Deterministic per seed.
  *
- * When the start is strongly in front of rest (+Z), arcs stay mild so the
- * whole suit reads as flying in from the camera (faceplate is the extreme).
+ * Strong depth approaches (start well in front or behind rest on Z) stay
+ * nearly linear so plates read as flying straight into their sockets —
+ * faceplate from +Z, back plates from −Z.
  */
 export function magneticPath(
   start: THREE.Vector3,
@@ -214,21 +229,27 @@ export function magneticPath(
   const r3 = hashSeed(seed + ':mw3');
 
   const faceplate = options.faceplate === true || isFaceplateRest(rest);
-  const frontDelta = start.z - rest.z;
-  const stronglyFrontal = frontDelta > 0.8;
+  const depthDelta = start.z - rest.z;
+  const stronglyFrontal = depthDelta > 0.8;
+  const stronglyPosterior = depthDelta < -0.8;
+  const depthLinear = faceplate || stronglyFrontal || stronglyPosterior;
 
   const dir = rest.clone().sub(start);
   const len = Math.max(dir.length(), 1e-4);
   const dirN = dir.clone().multiplyScalar(1 / len);
 
-  // Faceplate / strong frontal: nearly linear approach
-  if (faceplate || stronglyFrontal) {
+  // Faceplate / strong depth approach: nearly linear along the flight axis
+  if (depthLinear) {
     const waypoint = start.clone().lerp(rest, 0.55 + r1 * 0.08);
-    // Keep waypoint in front of rest; small height settle
+    // Small height settle; keep lateral wobble mild
     waypoint.y += (faceplate ? 0.06 : 0.03) + r1 * 0.04;
     waypoint.x += (r3 - 0.5) * (faceplate ? 0.08 : 0.14);
-    // Never pull waypoint behind the rest on Z
-    if (waypoint.z < rest.z + 0.05) {
+    // Keep waypoint on the same depth side of rest as the scatter start
+    if (stronglyPosterior && !faceplate) {
+      if (waypoint.z > rest.z - 0.05) {
+        waypoint.z = rest.z - 0.05 - r2 * 0.1;
+      }
+    } else if (waypoint.z < rest.z + 0.05) {
       waypoint.z = rest.z + 0.05 + r2 * 0.1;
     }
 
@@ -252,7 +273,7 @@ export function magneticPath(
     return { waypoint, approach, overshoot };
   }
 
-  // Fallback mild arc (rarely used once frontal scatter is default)
+  // Fallback mild arc (side / shallow-depth starts)
   const waypoint = start.clone().lerp(rest, 0.55 + r1 * 0.1);
   const up = new THREE.Vector3(0, 1, 0);
   let side = new THREE.Vector3().crossVectors(dirN, up);

@@ -388,6 +388,15 @@ describe('classifyWave', () => {
       rt({ x: 0.012, y: 1.669, z: -0.1, maxAbsX: 0.15 }),
     ).toBe('helmet');
 
+    // #236 centerline wide rear upper-back (lower than #352 collar) → torso
+    expect(
+      rt({ x: 0, y: 1.4904, z: -0.1186, maxAbsX: 0.1684 }),
+    ).toBe('torso');
+    // Narrow rear plate at same height stays out of this band (no wide span)
+    expect(
+      rt({ x: 0, y: 1.4904, z: -0.1186, maxAbsX: 0.08 }),
+    ).not.toBe('torso');
+
     // #315 high mid-collar / trap pad (reclass card)
     expect(
       rt({ x: -0.0957, y: 1.6147, z: 0.0476, maxAbsX: 0.1474 }),
