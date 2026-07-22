@@ -13,8 +13,6 @@ npm run dev
 
 Open the URL Vite prints (default `http://localhost:5173`).
 
-**Soundboard** (SFX authoring): `http://localhost:5173/soundboard.html` — play pads (default **1×**), record a timed sequence, **COPY CARD** to paste into chat for assembly audio cues.
-
 ```bash
 npm run build    # production bundle → dist/
 npm run preview  # serve dist locally
@@ -49,6 +47,7 @@ In director mode you also get:
 - Active plate readout (**MOVING**)
 - Click a plate to highlight and inspect it
 - **RECLASS** panel (top-right): queue mis-tagged plates → **COPY** a pasteable card for chat
+- **AUDIO** timeline (bottom): drag SFX onto a multi-lane track, crop clips, scrub assembly time, **COPY** a pasteable cue card
 
 ### Reclass card workflow
 
@@ -90,8 +89,10 @@ src/
     waves.ts              # PieceWave types + WAVE_ORDER / WAVE_STATUS
     classifyWave.ts       # pure body-region classification (unit tested)
   animation/              # GSAP assembly timeline
-  ui/                     # HUD overlay, viewer / director mode, pick
+  audio/                  # SFX catalog, engine, timeline model
+  ui/                     # HUD, director tools, audio timeline panel
   utils/                  # colors, scatter helpers
+public/sounds/            # assembly SFX library (.mp3)
 ```
 
 ```bash
