@@ -490,13 +490,16 @@ body.viewer-mode .hud-bottom-meta {
   min-width: 0;
 }
 
-/* —— director reclassifier card —— */
+/* —— director reclassifier card (top-right, clear of audio timeline) —— */
 .reclass-panel {
   position: fixed;
   top: 5.25rem;
   right: 1rem;
-  z-index: 40;
+  bottom: auto;
+  z-index: 50;
   width: min(17.5rem, calc(100vw - 2rem));
+  max-height: min(50vh, calc(100vh - min(42vh, 22rem) - 6.5rem));
+  overflow: auto;
   padding: 0.7rem 0.75rem 0.65rem;
   pointer-events: auto;
   font-family: var(--mono);
@@ -696,11 +699,12 @@ body.viewer-mode .reclass-panel {
 
 @media (max-width: 720px) {
   .reclass-panel {
-    top: auto;
-    bottom: 5.5rem;
+    top: 4.75rem;
+    bottom: auto;
     right: 0.5rem;
-    left: 0.5rem;
-    width: auto;
+    left: auto;
+    width: min(17.5rem, calc(100vw - 1rem));
+    max-height: min(40vh, calc(100vh - min(48vh, 24rem) - 6rem));
   }
 }
 
@@ -881,12 +885,7 @@ body.director-mode #hud-bottom {
   bottom: min(42vh, 22rem);
 }
 
-body.director-mode #reclass-panel {
-  bottom: calc(min(42vh, 22rem) + 0.5rem);
-  top: auto;
-  max-height: calc(100vh - min(42vh, 22rem) - 6rem);
-  overflow: auto;
-}
+/* Reclass stays top-right; do not pin above the audio timeline. */
 
 .atl-header {
   display: flex;

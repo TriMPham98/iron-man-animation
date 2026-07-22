@@ -146,7 +146,8 @@ export function createAssemblySession(
   };
 
   const audioPlayFromProgress = (p: number) => {
-    if (!audioTimeline || !ui.isDirectorMode()) return;
+    // Play in viewer and director — panel is authoring UI only.
+    if (!audioTimeline) return;
     audioTimeline.onTransportPlay(p * asmDuration());
   };
 
@@ -354,7 +355,7 @@ export function createAssemblySession(
   ui.onDirectorModeChange((enabled) => {
     if (!enabled) {
       clearPick();
-      audioStop();
+      // Keep SFX transport running — director only toggles authoring chrome.
     } else {
       syncAudioDuration();
       audioPlayhead(assembly.getProgress());
@@ -363,11 +364,9 @@ export function createAssemblySession(
     refreshHintCopy();
   });
 
-  // Initial visibility matches current director preference
+  // Panel chrome follows director preference; audio duration always tracked.
   audioTimeline?.setVisible(ui.isDirectorMode());
-  if (ui.isDirectorMode()) {
-    syncAudioDuration();
-  }
+  syncAudioDuration();
 
   audioTimeline?.onSeek((p) => {
     seek(p);

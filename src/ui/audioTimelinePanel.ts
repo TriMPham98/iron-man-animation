@@ -624,8 +624,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   return {
     setVisible: (v: boolean) => {
+      // Authoring chrome only — never stop transport when leaving director.
       root.classList.toggle('hidden', !v);
-      if (!v) onTransportStop();
     },
     setAssemblyDuration: (sec: number) => {
       assemblyDuration = Math.max(1, sec);
