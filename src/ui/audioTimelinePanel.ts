@@ -15,11 +15,12 @@ import {
 } from '../audio/timelineModel';
 import { colorForSoundId, SOUNDS } from '../audio/sounds';
 
-const LANE_H = 28;
-const LANE_GAP = 4;
-const RULER_H = 22;
+const LANE_H_MIN = 18;
+const LANE_GAP = 2;
+const RULER_H = 16;
 const MIN_CROP = 0.05;
-const PX_PER_SEC_DEFAULT = 48;
+/** Max simultaneous clip layers (includes room for a 4th layer). */
+const MAX_LANES = 4;
 
 export type AudioTimelinePanel = {
   /** Show/hide with director mode. */
@@ -98,7 +99,11 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   let selectedId: string | null = null;
   let assemblyDuration = 30;
   let playheadSec = 0;
-  let pxPerSec = PX_PER_SEC_DEFAULT;
+  /** Zoom multiplier on fit-to-width scale (1 = timeline spans full track). */
+  let zoomMul = 1;
+  let pxPerSec = 48;
+  /** Dynamic lane height (grows so few tracks fill the track pane). */
+  let laneH = LANE_H_MIN;
   let muted = false;
   let loopEnabled = false;
   try {
@@ -155,7 +160,22 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const selected = (): TimelineClip | null =>
     clips.find((c) => c.id === selectedId) ?? null;
 
-  const contentWidth = () => Math.max(320, assemblyDuration * pxPerSec + 80);
+  const trackViewportW = () => Math.max(trackScroll.clientWidth || 0, 200);
+
+  const trackViewportH = () => Math.max(trackScroll.clientHeight || 0, 48);
+
+  /** px/sec so full assembly spans the track (or wider when zoomed in). */
+  const syncScale = () => {
+    const vw = trackViewportW();
+    const fit = assemblyDuration > 0 ? vw / assemblyDuration : 48;
+    pxPerSec = Math.max(8, fit * zoomMul);
+  };
+
+  const contentWidth = () => {
+    syncScale();
+    // Always at least full viewport so the track never ends short of the edge
+    return Math.max(trackViewportW(), assemblyDuration * pxPerSec);
+  };
 
   const renderRuler = () => {
     const w = contentWidth();
@@ -212,25 +232,102 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     }
   };
 
-  const maxLane = () =>
-    clips.reduce((m, c) => Math.max(m, c.lane), -1) + 1;
+  /** Greedy pack into ≤ maxLanes rows (may overlap if more simultaneous than max). */
+  const packIntoLanes = (list: TimelineClip[], maxLanes: number): TimelineClip[] => {
+    const sorted = [...list].sort(
+      (a, b) => a.start - b.start || a.id.localeCompare(b.id),
+    );
+    const laneEnds = Array.from({ length: maxLanes }, () => 0);
+    const out: TimelineClip[] = [];
+    for (const c of sorted) {
+      const end = c.start + Math.max(0, c.cropOut - c.cropIn);
+      let free = -1;
+      for (let i = 0; i < maxLanes; i++) {
+        if (laneEnds[i]! <= c.start + 1e-4) {
+          free = i;
+          break;
+        }
+      }
+      let lane: number;
+      if (free >= 0) {
+        lane = free;
+      } else {
+        // All busy — stack on the lane that frees first
+        let best = 0;
+        for (let i = 1; i < maxLanes; i++) {
+          if (laneEnds[i]! < laneEnds[best]!) best = i;
+        }
+        lane = best;
+      }
+      laneEnds[lane] = Math.max(laneEnds[lane]!, end);
+      out.push({ ...c, lane });
+    }
+    return out;
+  };
 
-  const renderLanesBg = () => {
-    const n = Math.max(2, maxLane() + 1, 2);
-    const h = n * (LANE_H + LANE_GAP) + LANE_GAP;
-    lanesEl.style.height = `${h}px`;
-    lanesEl.style.backgroundImage = `repeating-linear-gradient(
-      to bottom,
-      transparent 0,
-      transparent ${LANE_GAP}px,
-      rgba(255,255,255,0.03) ${LANE_GAP}px,
-      rgba(255,255,255,0.03) ${LANE_GAP + LANE_H}px
-    )`;
+  /** Occupied clip rows (0…MAX_LANES). */
+  const occupiedLaneCount = () => {
+    if (clips.length === 0) return 0;
+    return Math.min(
+      MAX_LANES,
+      clips.reduce((m, c) => Math.max(m, c.lane), 0) + 1,
+    );
+  };
+
+  /**
+   * Visible rows = occupied + one spare drop lane (until all 4 layers used).
+   * Lane height flexes: fewer rows → taller bars; more rows → shorter bars.
+   */
+  const visibleLaneCount = () => {
+    const used = occupiedLaneCount();
+    if (used === 0) return 1; // single empty drop row
+    if (used >= MAX_LANES) return MAX_LANES;
+    return used + 1; // spare track for the next layer
+  };
+
+  const layoutLanes = () => {
+    clips = packIntoLanes(clips, MAX_LANES);
+    const n = visibleLaneCount();
+    const avail = Math.max(
+      trackViewportH() - RULER_H,
+      n * LANE_H_MIN + LANE_GAP * (n + 1),
+    );
+    const gaps = LANE_GAP * (n + 1);
+    // Flex row height across however many tracks are showing
+    laneH = Math.max(LANE_H_MIN, Math.floor((avail - gaps) / n));
+    const contentH = n * (laneH + LANE_GAP) + LANE_GAP;
+    lanesEl.style.minHeight = `${Math.max(contentH, avail)}px`;
+    lanesEl.style.height = '100%';
+
+    const band = laneH + LANE_GAP;
+    const used = occupiedLaneCount();
+    const stops: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const y0 = LANE_GAP + i * band;
+      const y1 = y0 + laneH;
+      // Spare (empty) row slightly quieter so it reads as a drop target
+      const fill =
+        i < used || used === 0
+          ? 'rgba(255,255,255,0.05)'
+          : 'rgba(255,255,255,0.028)';
+      stops.push(
+        `transparent ${y0}px`,
+        `${fill} ${y0}px`,
+        `${fill} ${y1}px`,
+        `transparent ${y1}px`,
+      );
+    }
+    lanesEl.style.backgroundImage =
+      stops.length > 0
+        ? `linear-gradient(to bottom, ${stops.join(', ')})`
+        : 'none';
+    lanesEl.style.backgroundSize = '100% 100%';
+    lanesEl.style.backgroundRepeat = 'no-repeat';
   };
 
   const renderClips = () => {
-    clips = assignLanes(clips);
-    renderLanesBg();
+    layoutLanes();
+    syncScale();
 
     // Remove old clip nodes (keep playhead)
     for (const node of [...lanesEl.querySelectorAll('.atl-clip')]) {
@@ -244,11 +341,11 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       const dur = clipDuration(c);
       const left = c.start * pxPerSec;
       const width = Math.max(8, dur * pxPerSec);
-      const top = LANE_GAP + c.lane * (LANE_H + LANE_GAP);
+      const top = LANE_GAP + c.lane * (laneH + LANE_GAP);
       node.style.left = `${left}px`;
       node.style.width = `${width}px`;
       node.style.top = `${top}px`;
-      node.style.height = `${LANE_H}px`;
+      node.style.height = `${laneH}px`;
       node.style.setProperty('--clip', colorForSoundId(c.soundId));
 
       const trimmed =
@@ -587,15 +684,25 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   });
 
   btnZoomIn.addEventListener('click', () => {
-    pxPerSec = Math.min(160, pxPerSec + 12);
+    zoomMul = Math.min(4, zoomMul * 1.25);
     renderRuler();
     renderClips();
   });
   btnZoomOut.addEventListener('click', () => {
-    pxPerSec = Math.max(16, pxPerSec - 12);
+    // Never zoom out past fit-to-width — track always reaches the edge
+    zoomMul = Math.max(1, zoomMul / 1.25);
     renderRuler();
     renderClips();
   });
+
+  const ro =
+    typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => {
+          renderRuler();
+          renderClips();
+        })
+      : null;
+  ro?.observe(trackScroll);
 
   // Keyboard: Delete / Backspace removes selected when panel focused
   root.addEventListener('keydown', (e) => {
@@ -672,9 +779,17 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     setVisible: (v: boolean) => {
       // Authoring chrome only — never stop transport when leaving director.
       root.classList.toggle('hidden', !v);
+      if (v) {
+        // Layout after becoming visible (clientWidth was 0 while hidden)
+        requestAnimationFrame(() => {
+          renderRuler();
+          renderClips();
+        });
+      }
     },
     setAssemblyDuration: (sec: number) => {
       assemblyDuration = Math.max(1, sec);
+      // Re-fit so the full cycle spans the track width
       renderRuler();
       renderClips();
     },
@@ -706,6 +821,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     engine,
     destroy: () => {
       onTransportStop();
+      ro?.disconnect();
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
