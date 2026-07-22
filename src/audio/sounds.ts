@@ -19,6 +19,7 @@ export const SOUNDS: SoundDef[] = [
   { id: 'metal-sliding', label: 'Metal Sliding', file: 'metal-sliding.mp3' },
   { id: 'ratchet', label: 'Ratchet', file: 'ratchet.mp3' },
   { id: 'robot-movement', label: 'Robot Movement', file: 'robot-movement.mp3' },
+  { id: 'steam-hiss', label: 'Steam Hiss', file: 'steam-hiss.mp3' },
 ];
 
 export function soundUrl(file: string): string {
