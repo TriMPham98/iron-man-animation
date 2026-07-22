@@ -7,6 +7,7 @@ import {
 } from '../suit/assemblyOrder';
 import {
   FACEPLATE_STATUS,
+  REPULSOR_STATUS,
   WAVE_ORDER,
   WAVE_STATUS,
   type ArmorPiece,
@@ -133,6 +134,26 @@ const GAUNTLET_PIECE_DURATION = 1.38;
  * nearly sealed — not a simultaneous head plop.
  */
 const FACEPLATE_AFTER_CRANIAL_LAUNCH = HELMET_PIECE_DURATION * 0.52;
+
+/**
+ * Palm-repulsor hero beat (owns the timeline after gauntlets seat).
+ * Helmet plates must not launch until this beat fully ends — otherwise
+ * the skull is mid-flight while the camera is still on the hands.
+ *
+ * Camera must finish framing *before* the ramp so cold → hot reads on the
+ * palm disk (not mid-pan onto an already-lit thruster).
+ */
+/** Cold palms hold after both hands lock (settled cam on “off”). */
+const PALM_PRE_HOLD = 0.7;
+/** Cold → hot thruster ramp duration. */
+const REPULSOR_RAMP = 1.25;
+/** Beat hold after “REPULSORS ONLINE” before helmet may launch. */
+const PALM_POST_HOLD = 0.4;
+
+/** Absolute end of the palm-repulsor beat given when hands finished locking. */
+export function palmBeatEndFromHandsLock(handsLock: number): number {
+  return handsLock + PALM_PRE_HOLD + REPULSOR_RAMP + PALM_POST_HOLD;
+}
 
 /** Fraction of travel spent on the magnetic approach (rest is dock + clamp). */
 const APPROACH_FRAC = 0.78;
@@ -331,14 +352,18 @@ export function createAssemblyTimeline(
     shake.z = 0;
     motionSpans = [];
 
-    // Opening camera — closer for detail
-    cameraProxy.x = 1.85;
-    cameraProxy.y = 1.35;
-    cameraProxy.z = 4.15;
-    cameraProxy.lx = 0;
-    cameraProxy.ly = 0.95;
-    cameraProxy.lz = 0;
-    cameraProxy.fov = BASE_FOV;
+    // Opening camera — 3/4 hero on the full suit (must be a timeline.set at
+    // t=0 so later FOV / look-target tweens cannot poison playhead 0).
+    const OPEN_CAM = {
+      x: 1.85,
+      y: 1.35,
+      z: 4.15,
+      lx: 0,
+      ly: 0.95,
+      lz: 0,
+      fov: BASE_FOV,
+    };
+    Object.assign(cameraProxy, OPEN_CAM);
     applyCamera();
 
     const timeline = gsap.timeline({
@@ -354,6 +379,11 @@ export function createAssemblyTimeline(
         callbacks.onComplete?.();
       },
     });
+
+    // Authoritative t=0 framing — survives reverse scrub / replay / property
+    // pollution from palm + faceplate FOV keyframes later on the same proxy.
+    timeline.set(cameraProxy, { ...OPEN_CAM }, 0);
+    timeline.call(applyCamera, undefined, 0);
 
     timeline.call(() => {
       callbacks.onStatus?.('ASSEMBLY SEQUENCE INITIATED');
@@ -390,11 +420,23 @@ export function createAssemblyTimeline(
       // the final plates of a section are still mid-flight.
       const afterPrev =
         prevWave != null ? prevLastLaunch + WAVE_CHAIN_GAP : 0;
-      const waveStart = Math.max(earliest, afterPrev);
-      waveStartAt[wave] = waveStart;
+      let waveStart = Math.max(earliest, afterPrev);
 
       const isHelmet = wave === 'helmet';
       const isGauntlets = wave === 'gauntlets';
+
+      // Helmet is a later act: wait for the full palm-repulsor beat so the
+      // head does not assemble under (or finish during) the hand close-up.
+      if (isHelmet) {
+        const handsLock = Math.max(
+          waveLockEnd.gauntlets ?? 0,
+          waveLockEnd.arms ?? 0,
+          prevLockEnd,
+        );
+        waveStart = Math.max(waveStart, palmBeatEndFromHandsLock(handsLock));
+      }
+
+      waveStartAt[wave] = waveStart;
       // Paired L/R launches: stagger between *pairs*, not individual plates
       const rawLaunchGroups = planSymmetricLaunchGroups(pieces, wave);
       // Mirror scatter starts so paths can be geometric L↔R reflections
@@ -714,8 +756,9 @@ export function createAssemblyTimeline(
 
     // ── Sequenced systems ──────────────────────────────────────────
     // Reactor: when the chest / reactor housing seats — power source for
-    // the rest of the suit-up (arms, gauntlets, helmet still fly with
-    // the core already alive). Eyes wait for the helmet seal.
+    // the rest of the suit-up (arms + gauntlets still fly with the core
+    // already alive). Palm thrusters get their own beat after hands lock;
+    // helmet plates only launch after that beat ends. Eyes wait for seal.
     const helmetDone = waveLockEnd.helmet ?? 16.0;
     const torsoDone = waveLockEnd.torso ?? 7.2;
     const reactorT = torsoDone + 0.25;
@@ -747,21 +790,37 @@ export function createAssemblyTimeline(
     // Hand + boot thrusters once BOTH gauntlets are fully home (shared
     // material — lighting earlier makes mid-flight palms glow on L and R).
     // Fall back to arms only when the gauntlet wave is empty.
+    // This beat fully owns the timeline; helmet start is gated on palmBeatEnd.
     const handsLock = Math.max(
       waveLockEnd.gauntlets ?? 0,
       waveLockEnd.arms ?? 0,
       0.01,
     );
-    const handsT = handsLock + 0.35;
+    const handsT = handsLock + PALM_PRE_HOLD;
+    const palmBeatEnd = palmBeatEndFromHandsLock(handsLock);
+    timeline.call(
+      () => {
+        callbacks.onStatus?.(REPULSOR_STATUS);
+      },
+      undefined,
+      handsT,
+    );
     timeline.to(
       repulsorsProxy,
       {
         v: 1,
-        duration: 0.85,
-        ease: 'power2.out',
+        duration: REPULSOR_RAMP,
+        ease: 'power2.inOut',
         onUpdate: syncSystems,
       },
       handsT,
+    );
+    timeline.call(
+      () => {
+        callbacks.onStatus?.('REPULSORS ONLINE');
+      },
+      undefined,
+      handsT + REPULSOR_RAMP - 0.08,
     );
 
     // Face-mask eyes after the helmet seals (reactor already online from torso)
@@ -804,13 +863,18 @@ export function createAssemblyTimeline(
     );
 
     // ── Camera path ────────────────────────────────────────────────
+    // Boots cascade — keep full-suit look target; never leave lx/lz/fov
+    // undefined or a later palm ECU can bleed into the recorded start.
     timeline.to(
       cameraProxy,
       {
         x: 0.9,
         y: 0.95,
         z: 3.15,
+        lx: 0,
         ly: 0.75,
+        lz: 0,
+        fov: BASE_FOV,
         duration: 4.2,
         ease: 'power2.inOut',
         onUpdate: applyCamera,
@@ -825,8 +889,10 @@ export function createAssemblyTimeline(
         x: 0.45,
         y: 1.25,
         z: 2.55,
-        ly: 1.22,
         lx: 0,
+        ly: 1.22,
+        lz: 0,
+        fov: BASE_FOV,
         duration: 2.2,
         ease: 'power2.inOut',
         onUpdate: applyCamera,
@@ -834,9 +900,52 @@ export function createAssemblyTimeline(
       reactorT - 0.55,
     );
 
-    // Helmet cranial shells — core already glowing from the chest
-    const helmetCamStart =
-      (waveStartAt.helmet ?? WAVE_EARLIEST.helmet ?? 13.2) - 0.4;
+    // ── Palm repulsor ignition (dedicated beat — helmet plates wait) ──
+    // Continuous suit-locked pan. immediateRender:false so FOV/look keyframes
+    // never rewrite t=0 framing. Thruster from scripts/find-palm-cam.mjs.
+    const palmCamStart = handsT - 1.35;
+    const palmArriveDur = 1.15; // land face-on while still cold
+    const palmRiseDur = Math.max(0.5, palmBeatEnd - palmCamStart - palmArriveDur);
+    const palmLx = 0.376;
+    const palmLy = 0.952;
+    const palmLz = 0.032;
+    timeline.to(
+      cameraProxy,
+      {
+        keyframes: [
+          {
+            // Face-on, clear of thumb/thigh
+            x: -0.213,
+            y: 0.864,
+            z: 0.435,
+            lx: palmLx,
+            ly: palmLy,
+            lz: palmLz,
+            fov: 28,
+            duration: palmArriveDur,
+            ease: 'power2.inOut',
+          },
+          {
+            // Continuous rise into superior look-down as thruster lights
+            x: -0.165,
+            y: 1.28,
+            z: 0.38,
+            lx: palmLx,
+            ly: palmLy - 0.03,
+            lz: palmLz + 0.02,
+            fov: 22,
+            duration: palmRiseDur,
+            ease: 'power1.inOut',
+          },
+        ],
+        immediateRender: false,
+        onUpdate: applyCamera,
+      },
+      palmCamStart,
+    );
+
+    // Helmet cranial shells — plates + camera only after palm beat ends
+    const helmetCamStart = (waveStartAt.helmet ?? palmBeatEnd) - 0.15;
     timeline.to(
       cameraProxy,
       {
@@ -845,7 +954,9 @@ export function createAssemblyTimeline(
         z: 2.25,
         ly: 1.52,
         lx: 0,
-        duration: 2.8,
+        lz: 0,
+        fov: BASE_FOV,
+        duration: 2.4,
         ease: 'power3.inOut',
         onUpdate: applyCamera,
       },
@@ -978,7 +1089,11 @@ export function createAssemblyTimeline(
       // Fresh play-from-start reclaims the cinematic path
       userOwnsCamera = false;
       playing = true;
-      timeline.play(0);
+      // progress(0) re-applies timeline.set OPEN_CAM before play
+      timeline.pause();
+      timeline.progress(0, true);
+      applyCamera();
+      timeline.play();
     },
     pause: () => {
       const timeline = ensureTl();

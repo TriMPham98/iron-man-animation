@@ -61,3 +61,6 @@ export const WAVE_STATUS: Record<PieceWave, string> = {
 
 /** Fired when the front mask begins its late hydraulic slam (after skull seats). */
 export const FACEPLATE_STATUS = 'FACEPLATE CLOSING…';
+
+/** Fired when palm / boot thrusters ignite after gauntlets seat. */
+export const REPULSOR_STATUS = 'PALM REPULSORS IGNITION…';
