@@ -229,6 +229,11 @@ export function createAssemblyTimeline(
     return Math.min(0.1, Math.max(0.022, 0.65 / count));
   };
 
+  /** Default cinematic FOV — matches createCamera. */
+  const BASE_FOV = 34;
+  /** Extreme faceplate ECU — compressed, mask-filling. */
+  const FACEPLATE_FOV = 20;
+
   const cameraProxy = {
     x: camera.position.x,
     y: camera.position.y,
@@ -236,6 +241,7 @@ export function createAssemblyTimeline(
     lx: lookTarget.x,
     ly: lookTarget.y,
     lz: lookTarget.z,
+    fov: camera.fov,
   };
 
   /** Additive shake so path tweens stay stable while locks punch the frame. */
@@ -256,6 +262,10 @@ export function createAssemblyTimeline(
     );
     lookTarget.set(cameraProxy.lx, cameraProxy.ly, cameraProxy.lz);
     camera.lookAt(lookTarget);
+    if (Math.abs(camera.fov - cameraProxy.fov) > 1e-4) {
+      camera.fov = cameraProxy.fov;
+      camera.updateProjectionMatrix();
+    }
   };
 
   /** Suit emissive only — scene lights stay constant. */
@@ -328,6 +338,7 @@ export function createAssemblyTimeline(
     cameraProxy.lx = 0;
     cameraProxy.ly = 0.95;
     cameraProxy.lz = 0;
+    cameraProxy.fov = BASE_FOV;
     applyCamera();
 
     const timeline = gsap.timeline({
@@ -841,25 +852,64 @@ export function createAssemblyTimeline(
       helmetCamStart,
     );
 
-    // Faceplate hero slam — push in tight on the mask as it drives home
+    // Faceplate hero slam — full cinematic ECU (dolly + FOV crush).
+    // Staged late so the frontal plate has mostly cleared the lens path;
+    // slight +X keeps the slam readable without flying into the camera.
     if (faceplateStartAt > 0) {
+      // Commit to face framing mid-approach
       timeline.to(
         cameraProxy,
         {
           x: 0.12,
-          y: 1.52,
-          z: 1.95,
-          ly: 1.58,
-          lx: 0,
-          duration: 2.2,
-          ease: 'power2.inOut',
+          y: 1.6,
+          z: 1.05,
+          ly: 1.63,
+          lx: 0.02,
+          lz: 0.06,
+          fov: 26,
+          duration: 1.35,
+          ease: 'power3.inOut',
           onUpdate: applyCamera,
         },
-        faceplateStartAt - 0.2,
+        faceplateStartAt + 0.55,
+      );
+      // Drive all the way into the clamp — mask fills the frame
+      timeline.to(
+        cameraProxy,
+        {
+          x: 0.04,
+          y: 1.62,
+          z: 0.68,
+          ly: 1.655,
+          lx: 0,
+          lz: 0.08,
+          fov: FACEPLATE_FOV,
+          duration: 1.15,
+          ease: 'power3.in',
+          onUpdate: applyCamera,
+        },
+        faceplateStartAt + 1.65,
+      );
+      // Hold the ECU through eye ignition (tiny settle, no retreat)
+      timeline.to(
+        cameraProxy,
+        {
+          x: 0.03,
+          y: 1.625,
+          z: 0.62,
+          ly: 1.66,
+          lx: 0,
+          lz: 0.09,
+          fov: FACEPLATE_FOV - 1,
+          duration: 1.1,
+          ease: 'power1.out',
+          onUpdate: applyCamera,
+        },
+        faceplateStartAt + 2.55,
       );
     }
 
-    // Hold on the eyes a moment, then pull back to hero
+    // Hold the tight faceplate/eyes beat, then pull back to hero
     timeline.to(
       cameraProxy,
       {
@@ -869,11 +919,12 @@ export function createAssemblyTimeline(
         lx: 0,
         ly: 0.95,
         lz: 0,
-        duration: 3.2,
+        fov: BASE_FOV,
+        duration: 3.4,
         ease: 'power3.inOut',
         onUpdate: applyCamera,
       },
-      eyesT + 1.4,
+      eyesT + 1.85,
     );
 
     return timeline;
