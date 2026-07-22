@@ -76,8 +76,6 @@ export function bindInput(options: BindInputOptions): void {
     // ← / → — scrub assembly progress (Shift = coarser steps)
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       if (isTypingTarget(e.target)) return;
-      // Range input already handles arrows natively — let it
-      if ((e.target as HTMLElement | null)?.id === 'debug-progress') return;
       e.preventDefault();
       const cur = session.assembly?.getProgress() ?? 0;
       const step = e.shiftKey ? SCRUB_STEP_COARSE : SCRUB_STEP;

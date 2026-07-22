@@ -37,6 +37,10 @@ export type AudioTimelinePanel = {
    * Progress is 0–1 relative to assembly duration.
    */
   onSeek: (cb: (progress01: number) => void) => void;
+  /** Play / pause control on the timeline toolbar (Space still works globally). */
+  onTogglePause: (cb: () => void) => void;
+  /** Reflect assembly pause state on the toolbar button. */
+  setPaused: (paused: boolean) => void;
   /** True while the user is dragging the audio playhead. */
   isScrubbing: () => boolean;
   /** Preview single library pad (optional). */
@@ -71,6 +75,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const cropInInput = el<HTMLInputElement>('atl-crop-in');
   const cropOutInput = el<HTMLInputElement>('atl-crop-out');
   const startInput = el<HTMLInputElement>('atl-start');
+  const btnPause = el<HTMLButtonElement>('atl-pause');
   const btnMute = el<HTMLButtonElement>('atl-mute');
   const btnClear = el<HTMLButtonElement>('atl-clear');
   const btnCopy = el<HTMLButtonElement>('atl-copy');
@@ -87,6 +92,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   let pxPerSec = PX_PER_SEC_DEFAULT;
   let muted = false;
   let seekHandler: ((progress01: number) => void) | null = null;
+  let togglePauseHandler: (() => void) | null = null;
   let scrubbing = false;
 
   /** Source durations cache (file → seconds). */
@@ -532,6 +538,10 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     }
   });
 
+  btnPause.addEventListener('click', () => {
+    togglePauseHandler?.();
+  });
+
   btnMute.addEventListener('click', () => {
     muted = !muted;
     engine.setMuted(muted);
@@ -642,6 +652,13 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     onTransportStop,
     onSeek: (cb) => {
       seekHandler = cb;
+    },
+    onTogglePause: (cb) => {
+      togglePauseHandler = cb;
+    },
+    setPaused: (paused: boolean) => {
+      btnPause.textContent = paused ? 'PLAY' : 'PAUSE';
+      btnPause.classList.toggle('is-paused', paused);
     },
     isScrubbing: () => scrubbing,
     engine,

@@ -142,25 +142,6 @@
             <span id="hint" class="hint">Drag to orbit · R replay · Space pause · S skip</span>
           </div>
 
-          <div id="debug-scrubber" class="debug-scrubber hidden" aria-label="Assembly progress">
-            <div class="debug-scrubber-row">
-              <button id="debug-pause-btn" type="button" class="debug-pause-btn" title="Pause / play (Space)">
-                PAUSE
-              </button>
-              <input
-                id="debug-progress"
-                class="debug-progress"
-                type="range"
-                min="0"
-                max="1000"
-                value="0"
-                step="1"
-                aria-label="Assembly progress"
-              />
-              <span id="debug-progress-label" class="debug-progress-label">0%</span>
-            </div>
-          </div>
-
           <div class="hud-actions">
             <button id="skip-btn" type="button" class="skip-btn" disabled>
               SKIP
@@ -178,7 +159,6 @@
           <div id="debug-picked-piece" class="debug-picked-piece" aria-live="polite">
             PICK · click a plate
           </div>
-          <div class="hud-bottom-meta-spacer" aria-hidden="true"></div>
         </div>
       </footer>
 
@@ -247,6 +227,14 @@
             <span id="atl-clip-count" class="atl-clip-count">0 clips</span>
           </div>
           <div class="atl-toolbar">
+            <button
+              id="atl-pause"
+              type="button"
+              class="atl-btn atl-btn-pause"
+              title="Pause / play (Space)"
+            >
+              PAUSE
+            </button>
             <button id="atl-zoom-out" type="button" class="atl-btn" title="Zoom out">−</button>
             <button id="atl-zoom-in" type="button" class="atl-btn" title="Zoom in">+</button>
             <button id="atl-mute" type="button" class="atl-btn" aria-pressed="false">MUTE</button>

@@ -11,7 +11,7 @@ import type { OverlayHandles } from '../ui/overlay';
 const VIEWER_HINT =
   'Drag to orbit · R replay · Space pause · S skip · ←→ scrub';
 const DIRECTOR_HINT =
-  'Drag to orbit · plate · RECLASS · AUDIO timeline · A add · [ ] wave · ←→ scrub · R · Space · S';
+  'Drag to orbit · plate · RECLASS · AUDIO scrub · A add · [ ] wave · ←→ · R · Space · S';
 
 export interface AssemblySessionOptions {
   suit: Suit;
@@ -160,6 +160,12 @@ export function createAssemblySession(
     audioTimeline.setPlayhead(p * asmDuration());
   };
 
+  const syncDebugPauseLabel = () => {
+    const paused = assembly.isPaused() || assemblyComplete;
+    ui.setDebugPaused(paused);
+    audioTimeline?.setPaused(paused);
+  };
+
   const markCompleteClock = () => {
     // Only stamp once per complete stretch so scrubbing to end mid-showcase
     // does not zero the post-duration counter.
@@ -204,10 +210,10 @@ export function createAssemblySession(
     ui.setIntegrity('INTEGRITY 100%');
     ui.setStatus('SYSTEMS ONLINE', true);
     ui.setDebugProgress(1);
-    ui.setDebugPaused(true);
     ui.setDebugActivePieces([]);
     audioStop();
     audioPlayhead(1);
+    syncDebugPauseLabel();
     refreshHintCopy();
   };
 
@@ -279,13 +285,13 @@ export function createAssemblySession(
     ui.setIntegrity('INTEGRITY   0%');
     ui.setStatus('ASSEMBLY SEQUENCE INITIATED');
     ui.setDebugProgress(0);
-    ui.setDebugPaused(false);
     assembly.rebuild();
     syncAudioDuration();
     audioStop();
     assembly.play();
     audioPlayFromProgress(0);
     audioPlayhead(0);
+    syncDebugPauseLabel();
     clockStart = clock.getElapsedTime();
   };
 
@@ -295,10 +301,6 @@ export function createAssemblySession(
     audioStop();
     assembly.seek(1);
     applyCompleteUi();
-  };
-
-  const syncDebugPauseLabel = () => {
-    ui.setDebugPaused(assembly.isPaused() || assemblyComplete);
   };
 
   const togglePause = () => {
@@ -372,11 +374,7 @@ export function createAssemblySession(
     seek(p);
   });
 
-  ui.onDebugSeek((p) => {
-    seek(p);
-  });
-
-  ui.onDebugTogglePause(() => {
+  audioTimeline?.onTogglePause(() => {
     togglePause();
   });
 

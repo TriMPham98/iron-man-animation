@@ -31,14 +31,21 @@ export interface OverlayHandles {
   onSkip: (cb: () => void) => void;
   updateClock: (elapsedSec: number) => void;
   fadeTitle: (hide: boolean) => void;
-  /** Whether director tools (scrubber, pick meta) are visible. */
+  /** Whether director tools (audio timeline, reclass, pick meta) are visible. */
   isDirectorMode: () => boolean;
   setDirectorMode: (enabled: boolean) => void;
   onDirectorModeChange: (cb: (enabled: boolean) => void) => void;
-  /** Show/hide director scrubber based on current mode. */
+  /** Show/hide director chrome based on current mode. */
   syncDirectorChrome: () => void;
-  /** Update slider from live timeline progress (ignored while user drags). */
+  /**
+   * Legacy no-op — assembly progress is scrubbed on the audio timeline.
+   * Kept so session code can call without branching.
+   */
   setDebugProgress: (p: number) => void;
+  /**
+   * Legacy no-op — pause label lives on the audio timeline toolbar.
+   * Session should also call audioTimeline.setPaused when present.
+   */
   setDebugPaused: (paused: boolean) => void;
   /** Labels for plates currently mid-flight (director only). */
   setDebugActivePieces: (pieces: DebugActivePiece[]) => void;
@@ -55,9 +62,6 @@ export interface OverlayHandles {
   cycleReclassTargetWave: (delta: number) => void;
   /** Queue current pick → target wave. Returns false if nothing to add. */
   addReclassEntry: () => boolean;
-  /** Fired while scrubbing / on commit — progress 0–1. */
-  onDebugSeek: (cb: (progress01: number) => void) => void;
-  onDebugTogglePause: (cb: () => void) => void;
 }
 
 export interface DebugPickedPiece {
@@ -91,24 +95,14 @@ export function createOverlay(): OverlayHandles {
   const directorBtn = el<HTMLButtonElement>('director-btn');
   const clock = el<HTMLSpanElement>('hud-clock');
   const title = el<HTMLHeadingElement>('title');
-  const debugScrubber = el<HTMLDivElement>('debug-scrubber');
-  const debugPauseBtn = el<HTMLButtonElement>('debug-pause-btn');
-  const debugProgress = el<HTMLInputElement>('debug-progress');
-  const debugLabel = el<HTMLSpanElement>('debug-progress-label');
   const debugActive = el<HTMLDivElement>('debug-active-piece');
   const debugPicked = el<HTMLDivElement>('debug-picked-piece');
   const hudBottomMeta = el<HTMLDivElement>('hud-bottom-meta');
 
   let replayHandler: (() => void) | null = null;
   let skipHandler: (() => void) | null = null;
-  let seekHandler: ((p: number) => void) | null = null;
-  let togglePauseHandler: (() => void) | null = null;
   let directorModeHandler: ((enabled: boolean) => void) | null = null;
-  let userScrubbing = false;
   let directorMode = readDirectorPreference();
-
-  const formatPct = (p: number) =>
-    `${Math.round(THREE_Math_clamp01(p) * 100)}%`;
 
   const shortPieceId = formatShortId;
 
@@ -231,12 +225,6 @@ export function createOverlay(): OverlayHandles {
   renderReclassList();
   renderReclassPick();
 
-  const applySliderVisual = (p: number) => {
-    const clamped = THREE_Math_clamp01(p);
-    debugProgress.value = String(Math.round(clamped * 1000));
-    debugLabel.textContent = formatPct(clamped);
-  };
-
   const applyDirectorChrome = () => {
     document.body.classList.toggle('director-mode', directorMode);
     document.body.classList.toggle('viewer-mode', !directorMode);
@@ -244,14 +232,12 @@ export function createOverlay(): OverlayHandles {
     directorBtn.setAttribute('aria-pressed', directorMode ? 'true' : 'false');
     directorBtn.title = directorMode
       ? 'Director mode on — hide tools'
-      : 'Director mode — scrubber & plate pick';
+      : 'Director mode — audio timeline & plate pick';
 
     if (directorMode) {
-      debugScrubber.classList.remove('hidden');
       hudBottomMeta.classList.remove('hidden');
       reclassPanel.classList.remove('hidden');
     } else {
-      debugScrubber.classList.add('hidden');
       hudBottomMeta.classList.add('hidden');
       reclassPanel.classList.add('hidden');
     }
@@ -270,36 +256,6 @@ export function createOverlay(): OverlayHandles {
     writeDirectorPreference(directorMode);
     applyDirectorChrome();
     directorModeHandler?.(directorMode);
-  });
-
-  debugPauseBtn.addEventListener('click', () => {
-    togglePauseHandler?.();
-  });
-
-  const emitSeek = () => {
-    const p = Number(debugProgress.value) / 1000;
-    debugLabel.textContent = formatPct(p);
-    seekHandler?.(p);
-  };
-
-  debugProgress.addEventListener('pointerdown', () => {
-    userScrubbing = true;
-  });
-  debugProgress.addEventListener('pointerup', () => {
-    userScrubbing = false;
-    emitSeek();
-  });
-  debugProgress.addEventListener('pointercancel', () => {
-    userScrubbing = false;
-  });
-  // Live scrub while dragging
-  debugProgress.addEventListener('input', () => {
-    userScrubbing = true;
-    emitSeek();
-  });
-  debugProgress.addEventListener('change', () => {
-    userScrubbing = false;
-    emitSeek();
   });
 
   applyDirectorChrome();
@@ -369,13 +325,11 @@ export function createOverlay(): OverlayHandles {
     syncDirectorChrome: () => {
       applyDirectorChrome();
     },
-    setDebugProgress: (p: number) => {
-      if (userScrubbing) return;
-      applySliderVisual(p);
+    setDebugProgress: (_p: number) => {
+      /* progress scrub lives on the audio timeline playhead */
     },
-    setDebugPaused: (paused: boolean) => {
-      debugPauseBtn.textContent = paused ? 'PLAY' : 'PAUSE';
-      debugPauseBtn.classList.toggle('is-paused', paused);
+    setDebugPaused: (_paused: boolean) => {
+      /* pause control lives on the audio timeline toolbar */
     },
     setDebugActivePieces: (pieces: DebugActivePiece[]) => {
       if (!directorMode) return;
@@ -456,15 +410,5 @@ export function createOverlay(): OverlayHandles {
       cycleTargetWave(delta);
     },
     addReclassEntry: () => addReclassEntry(),
-    onDebugSeek: (cb: (progress01: number) => void) => {
-      seekHandler = cb;
-    },
-    onDebugTogglePause: (cb: () => void) => {
-      togglePauseHandler = cb;
-    },
   };
-}
-
-function THREE_Math_clamp01(p: number): number {
-  return Math.min(1, Math.max(0, p));
 }

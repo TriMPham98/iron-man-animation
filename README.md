@@ -43,11 +43,10 @@ Author tools are **off by default** for a clean portfolio surface.
 
 In director mode you also get:
 
-- Timeline scrubber + pause
 - Active plate readout (**MOVING**)
 - Click a plate to highlight and inspect it
 - **RECLASS** panel (top-right): queue mis-tagged plates → **COPY** a pasteable card for chat
-- **AUDIO** timeline (bottom): drag SFX onto a multi-lane track, crop clips, scrub assembly time, **COPY** a pasteable cue card
+- **AUDIO** timeline (bottom): scrub assembly time, pause, drag SFX, crop clips, **COPY** a pasteable cue card
 
 ### Reclass card workflow
 

@@ -236,21 +236,21 @@ body.scene-ready #app {
 
 .director-btn:focus-visible,
 .replay-btn:focus-visible,
-.skip-btn:focus-visible,
-.debug-pause-btn:focus-visible {
+.skip-btn:focus-visible {
   outline: 2px solid rgba(232, 197, 71, 0.65);
   outline-offset: 2px;
 }
 
 .hud-bottom {
-  --hud-bottom-cols: minmax(0, 1fr) minmax(14rem, 2.4fr) minmax(0, 1fr);
+  /* Compact bar — progress scrub lives on the audio timeline */
+  --hud-bottom-cols: minmax(0, 1fr) auto;
   --hud-bottom-gap: 0.85rem 1.1rem;
   bottom: 0;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.4rem;
-  padding-top: 0.85rem;
-  padding-bottom: 0.85rem;
+  gap: 0.35rem;
+  padding-top: 0.65rem;
+  padding-bottom: 0.65rem;
   border-top: 1px solid rgba(201, 162, 39, 0.18);
   background: linear-gradient(to top, rgba(5, 5, 8, 0.88) 55%, transparent);
   pointer-events: none;
@@ -318,24 +318,11 @@ body.scene-ready #app {
   visibility: hidden;
 }
 
-/* Viewer: hide director column so integrity / actions stay balanced */
-body.viewer-mode .hud-bottom {
-  --hud-bottom-cols: minmax(0, 1fr) auto;
-}
-
-body.viewer-mode .hud-bottom-row {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-body.viewer-mode .debug-scrubber {
-  display: none;
-}
-
 body.viewer-mode .hud-bottom-meta {
   display: none;
 }
 
-/* Same 3 columns as the control row so MOVING / PICK line up with integrity / scrubber / replay */
+/* MOVING / PICK under integrity · actions */
 .hud-bottom-meta {
   display: grid;
   grid-template-columns: var(--hud-bottom-cols);
@@ -431,34 +418,6 @@ body.viewer-mode .hud-bottom-meta {
   cursor: default;
 }
 
-/* —— progress scrubber (inside bottom HUD) —— */
-.debug-scrubber {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: stretch;
-  min-width: 0;
-  width: 100%;
-  max-width: 38rem;
-  justify-self: center;
-  pointer-events: auto;
-  transition: opacity 0.35s ease;
-}
-
-.debug-scrubber.hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.debug-scrubber-row {
-  display: grid;
-  grid-template-columns: 4.25rem minmax(0, 1fr) 2.75rem;
-  align-items: center;
-  column-gap: 0.65rem;
-  width: 100%;
-  padding: 0.15rem 0;
-}
-
 .debug-active-piece,
 .debug-picked-piece {
   font-size: 0.55rem;
@@ -473,21 +432,14 @@ body.viewer-mode .hud-bottom-meta {
   min-width: 0;
 }
 
-/* Under integrity — left column */
 .debug-active-piece {
   justify-self: stretch;
   text-align: left;
 }
 
-/* Under scrubber — true center of the middle column */
 .debug-picked-piece {
-  justify-self: stretch;
-  text-align: center;
-}
-
-/* Balances the right column under REPLAY */
-.hud-bottom-meta-spacer {
-  min-width: 0;
+  justify-self: end;
+  text-align: right;
 }
 
 /* —— director reclassifier card (top-right, clear of audio timeline) —— */
@@ -718,141 +670,6 @@ body.viewer-mode .reclass-panel {
   text-shadow: 0 0 10px rgba(232, 197, 71, 0.28);
 }
 
-.debug-pause-btn {
-  justify-self: start;
-  font-family: var(--mono);
-  font-size: 0.58rem;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  padding: 0.45rem 0.7rem;
-  width: 100%;
-  min-width: 0;
-  height: 2rem;
-  color: var(--gold);
-  background: transparent;
-  border: 1px solid rgba(201, 162, 39, 0.45);
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.debug-pause-btn:hover {
-  background: rgba(201, 162, 39, 0.12);
-  border-color: var(--gold-bright);
-  color: var(--gold-bright);
-}
-
-.debug-pause-btn.is-paused {
-  color: #7ee8ff;
-  border-color: rgba(126, 232, 255, 0.45);
-}
-
-.debug-pause-btn.is-paused:hover {
-  background: rgba(126, 232, 255, 0.1);
-  border-color: #7ee8ff;
-  color: #9ef0ff;
-}
-
-/* Range: transparent shell + explicit track/thumb so WebKit centers correctly */
-.debug-progress {
-  flex: 1 1 auto;
-  min-width: 0;
-  width: 100%;
-  height: 1.25rem;
-  margin: 0;
-  padding: 0;
-  appearance: none;
-  -webkit-appearance: none;
-  background: transparent;
-  border: none;
-  outline: none;
-  cursor: pointer;
-  vertical-align: middle;
-}
-
-.debug-progress:focus {
-  outline: none;
-}
-
-.debug-progress:focus-visible::-webkit-slider-thumb {
-  box-shadow:
-    0 0 0 2px rgba(5, 5, 8, 0.9),
-    0 0 0 4px rgba(232, 197, 71, 0.45),
-    0 0 10px rgba(201, 162, 39, 0.5);
-}
-
-.debug-progress::-webkit-slider-runnable-track {
-  -webkit-appearance: none;
-  height: 3px;
-  border-radius: 999px;
-  background: rgba(201, 162, 39, 0.28);
-  border: none;
-}
-
-.debug-progress::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  margin-top: -5.5px; /* center 14px thumb on 3px track */
-  border-radius: 50%;
-  background: var(--gold-bright);
-  border: 1px solid rgba(5, 5, 8, 0.85);
-  box-shadow: 0 0 10px rgba(201, 162, 39, 0.55);
-  cursor: grab;
-}
-
-.debug-progress:active::-webkit-slider-thumb {
-  cursor: grabbing;
-}
-
-.debug-progress::-moz-range-track {
-  height: 3px;
-  border-radius: 999px;
-  background: rgba(201, 162, 39, 0.28);
-  border: none;
-}
-
-.debug-progress::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--gold-bright);
-  border: 1px solid rgba(5, 5, 8, 0.85);
-  box-shadow: 0 0 10px rgba(201, 162, 39, 0.55);
-  cursor: grab;
-}
-
-.debug-progress::-moz-range-progress {
-  height: 3px;
-  border-radius: 999px;
-  background: rgba(232, 197, 71, 0.55);
-  border: none;
-}
-
-/* Hide default focus ring / fill quirks */
-.debug-progress::-ms-track {
-  height: 3px;
-  background: transparent;
-  border-color: transparent;
-  color: transparent;
-}
-
-.debug-progress-label {
-  justify-self: end;
-  font-size: 0.58rem;
-  letter-spacing: 0.12em;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 2.75rem;
-  width: 100%;
-  text-align: right;
-  line-height: 2rem;
-  box-sizing: border-box;
-}
-
 /* —— director audio timeline —— */
 .audio-timeline {
   position: fixed;
@@ -959,6 +776,17 @@ body.director-mode #hud-bottom {
 .atl-btn.is-muted {
   color: #f87171;
   border-color: rgba(248, 113, 113, 0.45);
+}
+
+.atl-btn-pause {
+  color: var(--gold);
+  border-color: rgba(201, 162, 39, 0.4);
+  min-width: 3.4rem;
+}
+
+.atl-btn-pause.is-paused {
+  color: #7ee8ff;
+  border-color: rgba(126, 232, 255, 0.45);
 }
 
 .atl-body {
@@ -1342,12 +1170,6 @@ body.director-mode #hud-bottom {
 
   .hud-actions {
     justify-self: center;
-    order: 3;
-  }
-
-  .debug-scrubber {
-    max-width: none;
-    order: 2;
   }
 
   .hud-bottom-meta {
@@ -1361,20 +1183,6 @@ body.director-mode #hud-bottom {
   .debug-picked-piece {
     text-align: center;
     width: 100%;
-  }
-
-  .hud-bottom-meta-spacer {
-    display: none;
-  }
-
-  .debug-scrubber-row {
-    grid-template-columns: 3.75rem minmax(0, 1fr) 2.5rem;
-    column-gap: 0.5rem;
-  }
-
-  .debug-pause-btn {
-    padding: 0.4rem 0.45rem;
-    font-size: 0.52rem;
   }
 
   .hud-brand,
