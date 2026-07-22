@@ -254,11 +254,37 @@ body {
   box-shadow: 0 0 0 1px rgba(201, 162, 39, 0.15);
 }
 
-.pad:active,
-.pad.hit {
+.pad:active {
   transform: scale(0.97);
   border-color: var(--gold-bright);
   box-shadow: 0 0 20px rgba(201, 162, 39, 0.25), inset 0 0 24px rgba(176, 16, 32, 0.15);
+}
+
+/* Brief flash on pad hit / keyboard — must not stick after the animation */
+.pad.hit {
+  animation: pad-hit 0.28s ease-out;
+}
+
+@keyframes pad-hit {
+  0% {
+    transform: scale(0.97);
+    border-color: var(--gold-bright);
+    box-shadow: 0 0 20px rgba(201, 162, 39, 0.25), inset 0 0 24px rgba(176, 16, 32, 0.15);
+  }
+  100% {
+    transform: scale(1);
+    border-color: rgba(201, 162, 39, 0.22);
+    box-shadow: none;
+  }
+}
+
+.pad:focus {
+  outline: none;
+}
+
+.pad:focus-visible {
+  outline: 1px solid var(--gold);
+  outline-offset: 2px;
 }
 
 .pad-key {

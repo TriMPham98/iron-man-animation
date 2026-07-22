@@ -16,7 +16,7 @@ const eventList = document.getElementById('event-list')!;
 const eventCount = document.getElementById('event-count')!;
 const exportOut = document.getElementById('export-out') as HTMLTextAreaElement;
 
-let playbackRate = 0.5;
+let playbackRate = 1;
 let recording = false;
 let recStart = 0;
 let clockRaf = 0;
@@ -74,9 +74,14 @@ function flashPad(id: string): void {
   const pad = padsEl.querySelector<HTMLElement>(`[data-id="${id}"]`);
   if (!pad) return;
   pad.classList.remove('hit');
-  // reflow to retrigger animation
+  // reflow so rapid re-hits restart the flash animation
   void pad.offsetWidth;
   pad.classList.add('hit');
+  const onEnd = () => {
+    pad.classList.remove('hit');
+    pad.removeEventListener('animationend', onEnd);
+  };
+  pad.addEventListener('animationend', onEnd);
 }
 
 function onPad(def: SoundDef): void {
