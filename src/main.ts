@@ -16,6 +16,7 @@ import {
 import { createAssemblySession } from './session/assemblySession';
 import { Suit } from './suit/Suit';
 import { bindInput } from './ui/bindInput';
+import { createAudioTimelinePanel } from './ui/audioTimelinePanel';
 import { createOverlay } from './ui/overlay';
 import { createPickHighlight } from './ui/pickHighlight';
 import { prefersReducedMotion } from './ui/viewerMode';
@@ -85,6 +86,8 @@ async function boot(): Promise<void> {
 
   const clock = new THREE.Clock();
 
+  const audioTimeline = createAudioTimelinePanel();
+
   const session = createAssemblySession({
     suit,
     camera,
@@ -94,6 +97,7 @@ async function boot(): Promise<void> {
     clock,
     reducedMotion,
     onClearPick: () => pick.clear(),
+    audioTimeline,
   });
 
   bindInput({
@@ -131,7 +135,6 @@ async function boot(): Promise<void> {
     if (!visible) return;
     raf = requestAnimationFrame(loop);
 
-    const t = clock.getElapsedTime();
     const delta = clock.getDelta();
 
     // Orbit is live mid-assembly; cinematic path yields once the user claims free-look.
@@ -151,7 +154,8 @@ async function boot(): Promise<void> {
     // Finished suit: after a full idle 360°, restart the assembly sequence.
     session.update();
 
-    ui.updateClock(Math.max(0, t - session.getClockStart()));
+    // Timeline-synced HUD clock (scrub-aware; keeps counting after complete).
+    ui.updateClock(session.getHudElapsed());
     post.render(delta);
   };
 

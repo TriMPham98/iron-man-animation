@@ -5,12 +5,13 @@ import {
   type AssemblyController,
 } from '../animation/assemblyTimeline';
 import type { Suit } from '../suit/Suit';
+import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
 
 const VIEWER_HINT =
   'Drag to orbit · R replay · Space pause · S skip · ←→ scrub';
 const DIRECTOR_HINT =
-  'Drag to orbit · click plate · RECLASS panel · A add · [ ] wave · ←→ scrub · R · Space · S';
+  'Drag to orbit · plate · RECLASS · AUDIO timeline · A add · [ ] wave · ←→ scrub · R · Space · S';
 
 export interface AssemblySessionOptions {
   suit: Suit;
@@ -21,6 +22,8 @@ export interface AssemblySessionOptions {
   clock: THREE.Clock;
   reducedMotion: boolean;
   onClearPick: () => void;
+  /** Optional director audio timeline (playhead + transport sync). */
+  audioTimeline?: AudioTimelinePanel | null;
 }
 
 export interface AssemblySession {
@@ -32,6 +35,12 @@ export interface AssemblySession {
   update: () => void;
   assembly: AssemblyController;
   isComplete: () => boolean;
+  /**
+   * HUD timer seconds: assembly timeline time while building/scrubbing;
+   * after complete, keeps counting past the sequence duration (showcase).
+   */
+  getHudElapsed: () => number;
+  /** @deprecated Prefer getHudElapsed — kept for boot handoff. */
   getClockStart: () => number;
   setClockStart: (t: number) => void;
   refreshHintCopy: () => void;
@@ -53,10 +62,17 @@ export function createAssemblySession(
     clock,
     reducedMotion,
     onClearPick,
+    audioTimeline = null,
   } = options;
 
   let assemblyComplete = false;
   let clockStart = 0;
+  /**
+   * Wall-clock time when we entered complete (progress ≥ 1).
+   * HUD shows assemblyDuration + (now − completeAnchor) so the timer
+   * keeps running through the finished-suit showcase.
+   */
+  let completeAnchor: number | null = null;
 
   /**
    * After assembly finishes, OrbitControls auto-rotates the finished suit.
@@ -121,8 +137,54 @@ export function createAssemblySession(
   // Declared before callbacks so they can call into the controller once assigned.
   let assembly!: ReturnType<typeof createAssemblyTimeline>;
 
+  const asmDuration = () => Math.max(assembly.getDuration(), 1e-6);
+
+  const syncAudioDuration = () => {
+    if (!audioTimeline) return;
+    const dur = assembly.getDuration();
+    if (dur > 0) audioTimeline.setAssemblyDuration(dur);
+  };
+
+  const audioPlayFromProgress = (p: number) => {
+    if (!audioTimeline || !ui.isDirectorMode()) return;
+    audioTimeline.onTransportPlay(p * asmDuration());
+  };
+
+  const audioStop = () => {
+    audioTimeline?.onTransportStop();
+  };
+
+  const audioPlayhead = (p: number) => {
+    if (!audioTimeline) return;
+    audioTimeline.setPlayhead(p * asmDuration());
+  };
+
+  const markCompleteClock = () => {
+    // Only stamp once per complete stretch so scrubbing to end mid-showcase
+    // does not zero the post-duration counter.
+    if (completeAnchor == null) {
+      completeAnchor = clock.getElapsedTime();
+    }
+  };
+
+  const clearCompleteClock = () => {
+    completeAnchor = null;
+  };
+
+  const getHudElapsed = (): number => {
+    const dur = assembly.getDuration();
+    const p = assembly.getProgress();
+    if (assemblyComplete || p >= 0.999) {
+      const base = Math.max(dur, 0);
+      const anchor = completeAnchor ?? clock.getElapsedTime();
+      return base + Math.max(0, clock.getElapsedTime() - anchor);
+    }
+    return Math.max(0, p * Math.max(dur, 0));
+  };
+
   const applyCompleteUi = (opts?: { preserveCamera?: boolean }) => {
     assemblyComplete = true;
+    markCompleteClock();
     suit.showFinal(); // seamless mesh — no grid-shard square blooms
     // Preserve free-look framing (no idle auto-rotate snap)
     const preserve = opts?.preserveCamera || assembly.userOwnsCamera();
@@ -143,11 +205,14 @@ export function createAssemblySession(
     ui.setDebugProgress(1);
     ui.setDebugPaused(true);
     ui.setDebugActivePieces([]);
+    audioStop();
+    audioPlayhead(1);
     refreshHintCopy();
   };
 
   const applyAssemblyUi = (opts?: { preserveTarget?: boolean }) => {
     assemblyComplete = false;
+    clearCompleteClock();
     stopCompleteSpinTracking();
     // Keep orbit live so a mid-play drag can override the cinematic path
     setOrbitMode('free', { preserveTarget: opts?.preserveTarget });
@@ -166,6 +231,7 @@ export function createAssemblySession(
       const pct = Math.round(t * 100);
       ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
       ui.setDebugProgress(t);
+      audioPlayhead(t);
       if (t < 0.999 && assemblyComplete) {
         // Scrubbed back from the end — keep free-look if user owns the camera
         applyAssemblyUi({
@@ -182,6 +248,8 @@ export function createAssemblySession(
     },
   });
 
+  syncAudioDuration();
+
   const clearPick = () => {
     onClearPick();
     ui.setDebugPickedPiece(null);
@@ -190,6 +258,7 @@ export function createAssemblySession(
 
   const finishInstantly = () => {
     clearPick();
+    clearCompleteClock();
     assembly.seek(1);
     applyCompleteUi();
     clockStart = clock.getElapsedTime();
@@ -197,6 +266,7 @@ export function createAssemblySession(
 
   const startSequence = () => {
     clearPick();
+    clearCompleteClock();
 
     if (reducedMotion) {
       finishInstantly();
@@ -210,13 +280,18 @@ export function createAssemblySession(
     ui.setDebugProgress(0);
     ui.setDebugPaused(false);
     assembly.rebuild();
+    syncAudioDuration();
+    audioStop();
     assembly.play();
+    audioPlayFromProgress(0);
+    audioPlayhead(0);
     clockStart = clock.getElapsedTime();
   };
 
   const skipToEnd = () => {
     if (assemblyComplete) return;
     clearPick();
+    audioStop();
     assembly.seek(1);
     applyCompleteUi();
   };
@@ -228,6 +303,7 @@ export function createAssemblySession(
   const togglePause = () => {
     if (assembly.isPlaying()) {
       assembly.pause();
+      audioStop();
       // Orbit stays enabled; path is frozen at this frame until resume
       setOrbitMode('free', {
         preserveTarget: assembly.userOwnsCamera(),
@@ -242,6 +318,7 @@ export function createAssemblySession(
         ui.isDirectorMode() || assembly.userOwnsCamera();
       applyAssemblyUi({ preserveTarget: preserveCamera });
       assembly.resume({ preserveCamera });
+      audioPlayFromProgress(assembly.getProgress());
     }
     syncDebugPauseLabel();
   };
@@ -251,7 +328,9 @@ export function createAssemblySession(
     clearPick();
     // After free-look orbit, scrub plates only — never steal framing
     const preserveCamera = assembly.userOwnsCamera();
+    audioStop();
     assembly.seek(p, { preserveCamera });
+    audioPlayhead(p);
     syncDebugPauseLabel();
     if (p >= 0.999) {
       applyCompleteUi({ preserveCamera });
@@ -275,8 +354,23 @@ export function createAssemblySession(
   ui.onDirectorModeChange((enabled) => {
     if (!enabled) {
       clearPick();
+      audioStop();
+    } else {
+      syncAudioDuration();
+      audioPlayhead(assembly.getProgress());
     }
+    audioTimeline?.setVisible(enabled);
     refreshHintCopy();
+  });
+
+  // Initial visibility matches current director preference
+  audioTimeline?.setVisible(ui.isDirectorMode());
+  if (ui.isDirectorMode()) {
+    syncAudioDuration();
+  }
+
+  audioTimeline?.onSeek((p) => {
+    seek(p);
   });
 
   ui.onDebugSeek((p) => {
@@ -327,6 +421,7 @@ export function createAssemblySession(
     update,
     assembly,
     isComplete: () => assemblyComplete,
+    getHudElapsed,
     getClockStart: () => clockStart,
     setClockStart: (t: number) => {
       clockStart = t;

@@ -1,4 +1,5 @@
 import './soundboard.css';
+import { soundUrl } from '../audio/sounds';
 import { SOUNDS, type SequenceEvent, type SoundDef } from './sounds';
 
 const padsEl = document.getElementById('pads')!;
@@ -24,10 +25,6 @@ const events: SequenceEvent[] = [];
 /** Active HTMLAudioElements so we can stop/replay cleanly. */
 const active: HTMLAudioElement[] = [];
 let replayTimers: number[] = [];
-
-function soundUrl(file: string): string {
-  return `/sounds/${file}`;
-}
 
 function fmt(sec: number, digits = 3): string {
   return sec.toFixed(digits);

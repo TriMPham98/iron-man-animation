@@ -233,6 +233,67 @@
         <ol id="reclass-list" class="reclass-list" aria-live="polite"></ol>
         <p class="reclass-hint">A add · [ ] cycle wave · COPY → paste in chat</p>
       </aside>
+
+      <!-- Director audio timeline: drag SFX, crop, sync to assembly -->
+      <section
+        id="audio-timeline"
+        class="audio-timeline hidden"
+        aria-label="Audio timeline"
+        tabindex="-1"
+      >
+        <header class="atl-header">
+          <div class="atl-title-row">
+            <span class="atl-title">AUDIO</span>
+            <span id="atl-clip-count" class="atl-clip-count">0 clips</span>
+          </div>
+          <div class="atl-toolbar">
+            <button id="atl-zoom-out" type="button" class="atl-btn" title="Zoom out">−</button>
+            <button id="atl-zoom-in" type="button" class="atl-btn" title="Zoom in">+</button>
+            <button id="atl-mute" type="button" class="atl-btn" aria-pressed="false">MUTE</button>
+            <button id="atl-delete" type="button" class="atl-btn" disabled title="Delete selected">DEL</button>
+            <button id="atl-clear" type="button" class="atl-btn atl-btn-ghost">CLEAR</button>
+            <button id="atl-copy" type="button" class="atl-btn atl-btn-primary" title="Copy pasteable card">
+              COPY
+            </button>
+          </div>
+        </header>
+
+        <div class="atl-body">
+          <div class="atl-library-wrap">
+            <p class="atl-lib-heading">LIBRARY · drag onto track · click to audition</p>
+            <div id="atl-library" class="atl-library"></div>
+          </div>
+
+          <div class="atl-track-wrap">
+            <div id="atl-track-scroll" class="atl-track-scroll">
+              <div id="atl-track-inner" class="atl-track-inner">
+                <div id="atl-ruler" class="atl-ruler" aria-hidden="true"></div>
+                <div id="atl-lanes" class="atl-lanes"></div>
+                <div id="atl-playhead" class="atl-playhead" aria-hidden="true"></div>
+                <div id="atl-drop-hint" class="atl-drop-hint">Drop clip here</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="atl-meta" class="atl-meta empty">
+          <label class="atl-field">
+            <span>START</span>
+            <input id="atl-start" type="number" min="0" step="0.01" disabled />
+          </label>
+          <label class="atl-field">
+            <span>CROP IN</span>
+            <input id="atl-crop-in" type="number" min="0" step="0.01" disabled />
+          </label>
+          <label class="atl-field">
+            <span>CROP OUT</span>
+            <input id="atl-crop-out" type="number" min="0" step="0.01" disabled />
+          </label>
+          <p class="atl-meta-hint">
+            Scrub ruler / empty track / playhead · drag clips · edge handles crop · Del · drop .mp3
+          </p>
+        </div>
+      </section>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
