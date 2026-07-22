@@ -13,6 +13,8 @@ npm run dev
 
 Open the URL Vite prints (default `http://localhost:5173`).
 
+**Soundboard** (SFX authoring): `http://localhost:5173/soundboard.html` — play pads at slow speed, record a timed sequence, **COPY CARD** to paste into chat for animation timing.
+
 ```bash
 npm run build    # production bundle → dist/
 npm run preview  # serve dist locally
