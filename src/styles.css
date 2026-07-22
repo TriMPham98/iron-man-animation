@@ -29,6 +29,19 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/*
+  Buttons: no sticky focus ring after mouse/touch.
+  :focus-visible still styles true keyboard Tab focus.
+*/
+button:focus {
+  outline: none;
+}
+
+button:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
 /* display:none during load so canvas cannot composite a gray slab */
 #app {
   display: none;
@@ -234,9 +247,12 @@ body.scene-ready #app {
   background: rgba(126, 232, 255, 0.08);
 }
 
+/* Keyboard-only affordance (Tab). Cleared after pointer via blurButtons. */
 .director-btn:focus-visible,
 .replay-btn:focus-visible,
-.skip-btn:focus-visible {
+.skip-btn:focus-visible,
+.atl-btn:focus-visible,
+.reclass-btn:focus-visible {
   outline: 2px solid rgba(232, 197, 71, 0.65);
   outline-offset: 2px;
 }

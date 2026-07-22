@@ -16,6 +16,7 @@ import {
 import { createAssemblySession } from './session/assemblySession';
 import { Suit } from './suit/Suit';
 import { bindInput } from './ui/bindInput';
+import { installButtonFocusRelease } from './ui/blurButtons';
 import { createAudioTimelinePanel } from './ui/audioTimelinePanel';
 import { createOverlay } from './ui/overlay';
 import { createPickHighlight } from './ui/pickHighlight';
@@ -24,6 +25,9 @@ import { prefersReducedMotion } from './ui/viewerMode';
 async function boot(): Promise<void> {
   const canvas = document.getElementById('scene-canvas') as HTMLCanvasElement;
   if (!canvas) throw new Error('Canvas not found');
+
+  // Don't leave buttons focused after a tap (Space would re-trigger them).
+  installButtonFocusRelease();
 
   const quality = resolveQualityTier();
   console.log(`[quality] tier=${quality}`);
