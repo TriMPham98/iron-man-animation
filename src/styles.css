@@ -805,6 +805,17 @@ body.director-mode #hud-bottom {
   border-color: rgba(126, 232, 255, 0.45);
 }
 
+.atl-btn-loop {
+  min-width: 3.2rem;
+}
+
+.atl-btn-loop.is-active {
+  color: #7ee8ff;
+  border-color: rgba(126, 232, 255, 0.5);
+  background: rgba(126, 232, 255, 0.1);
+  box-shadow: 0 0 10px rgba(126, 232, 255, 0.15);
+}
+
 .atl-body {
   display: grid;
   grid-template-columns: minmax(7.5rem, 11rem) minmax(0, 1fr);

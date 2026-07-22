@@ -41,6 +41,12 @@ export type AudioTimelinePanel = {
   onTogglePause: (cb: () => void) => void;
   /** Reflect assembly pause state on the toolbar button. */
   setPaused: (paused: boolean) => void;
+  /**
+   * Fired when LOOP is toggled. When enabled, assembly should restart
+   * immediately at the end of the full sequence (no idle spin showcase).
+   */
+  onLoopChange: (cb: (enabled: boolean) => void) => void;
+  isLooping: () => boolean;
   /** True while the user is dragging the audio playhead. */
   isScrubbing: () => boolean;
   /** Preview single library pad (optional). */
@@ -76,6 +82,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const cropOutInput = el<HTMLInputElement>('atl-crop-out');
   const startInput = el<HTMLInputElement>('atl-start');
   const btnPause = el<HTMLButtonElement>('atl-pause');
+  const btnLoop = el<HTMLButtonElement>('atl-loop');
   const btnMute = el<HTMLButtonElement>('atl-mute');
   const btnClear = el<HTMLButtonElement>('atl-clear');
   const btnCopy = el<HTMLButtonElement>('atl-copy');
@@ -84,6 +91,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const btnZoomOut = el<HTMLButtonElement>('atl-zoom-out');
   const clipCountEl = el<HTMLSpanElement>('atl-clip-count');
 
+  const LOOP_STORAGE_KEY = 'mark-suit-audio-loop';
+
   const engine = createAudioEngine();
   let clips: TimelineClip[] = loadTimeline();
   let selectedId: string | null = null;
@@ -91,9 +100,25 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   let playheadSec = 0;
   let pxPerSec = PX_PER_SEC_DEFAULT;
   let muted = false;
+  let loopEnabled = false;
+  try {
+    loopEnabled = window.localStorage.getItem(LOOP_STORAGE_KEY) === '1';
+  } catch {
+    loopEnabled = false;
+  }
   let seekHandler: ((progress01: number) => void) | null = null;
   let togglePauseHandler: (() => void) | null = null;
+  let loopChangeHandler: ((enabled: boolean) => void) | null = null;
   let scrubbing = false;
+
+  const applyLoopVisual = () => {
+    btnLoop.classList.toggle('is-active', loopEnabled);
+    btnLoop.setAttribute('aria-pressed', loopEnabled ? 'true' : 'false');
+    btnLoop.title = loopEnabled
+      ? 'Loop on — full assembly restarts at end (click to disable)'
+      : 'Loop full assembly cycle (no idle spin)';
+  };
+  applyLoopVisual();
 
   /** Source durations cache (file → seconds). */
   const durationCache = new Map<string, number>();
@@ -542,6 +567,17 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     togglePauseHandler?.();
   });
 
+  btnLoop.addEventListener('click', () => {
+    loopEnabled = !loopEnabled;
+    try {
+      window.localStorage.setItem(LOOP_STORAGE_KEY, loopEnabled ? '1' : '0');
+    } catch {
+      /* private mode */
+    }
+    applyLoopVisual();
+    loopChangeHandler?.(loopEnabled);
+  });
+
   btnMute.addEventListener('click', () => {
     muted = !muted;
     engine.setMuted(muted);
@@ -660,6 +696,12 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       btnPause.textContent = paused ? 'PLAY' : 'PAUSE';
       btnPause.classList.toggle('is-paused', paused);
     },
+    onLoopChange: (cb) => {
+      loopChangeHandler = cb;
+      // Sync initial preference into session immediately
+      cb(loopEnabled);
+    },
+    isLooping: () => loopEnabled,
     isScrubbing: () => scrubbing,
     engine,
     destroy: () => {

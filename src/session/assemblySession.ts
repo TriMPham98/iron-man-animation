@@ -68,6 +68,11 @@ export function createAssemblySession(
   let assemblyComplete = false;
   let clockStart = 0;
   /**
+   * When true (AUDIO timeline LOOP), restart the full assembly as soon as
+   * the sequence ends — skip idle 360° showcase spin.
+   */
+  let loopFullCycle = false;
+  /**
    * Wall-clock time when we entered complete (progress ≥ 1).
    * HUD shows assemblyDuration + (now − completeAnchor) so the timer
    * keeps running through the finished-suit showcase.
@@ -250,8 +255,13 @@ export function createAssemblySession(
       ui.setDebugActivePieces(pieces);
     },
     onComplete: () => {
-      applyCompleteUi({ preserveCamera: assembly.userOwnsCamera() });
       ui.setDebugActivePieces([]);
+      if (loopFullCycle) {
+        // Full assembly cycle only — restart immediately, no idle spin.
+        startSequence();
+        return;
+      }
+      applyCompleteUi({ preserveCamera: assembly.userOwnsCamera() });
     },
   });
 
@@ -378,11 +388,22 @@ export function createAssemblySession(
     togglePause();
   });
 
+  audioTimeline?.onLoopChange((enabled) => {
+    loopFullCycle = enabled;
+    // If already sitting on the finished suit with loop just enabled, kick
+    // a fresh cycle so the director does not wait for a spin.
+    if (enabled && assemblyComplete) {
+      startSequence();
+    }
+  });
+
   /**
    * Call each frame after controls.update(). Accumulates yaw while the
    * finished suit auto-rotates; after a full turn, replays the assembly.
+   * (Disabled while AUDIO LOOP is on — that path restarts on onComplete.)
    */
   const update = () => {
+    if (loopFullCycle) return;
     if (!completeSpinActive || !assemblyComplete) return;
 
     // User drag (or anything else) kills idle spin — stay on finished suit.
