@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "choreVersion": 2,
+  "note": "Retimed after removing palm-ECU hold; thruster FX short; helmet chains off gauntlets.",
+  "clips": [
+    {
+      "id": "clip-mrvqoyen-2",
+      "soundId": "ratchet",
+      "label": "Ratchet",
+      "file": "ratchet.mp3",
+      "start": 0.991,
+      "cropIn": 0,
+      "cropOut": 2.14,
+      "sourceDuration": 2.14,
+      "lane": 0
+    },
+    {
+      "id": "clip-mrvqoyen-3",
+      "soundId": "electric-motor",
+      "label": "Electric Motor",
+      "file": "electric-motor.mp3",
+      "start": 2.37,
+      "cropIn": 0,
+      "cropOut": 3.2,
+      "sourceDuration": 6.17,
+      "lane": 0
+    },
+    {
+      "id": "clip-mrvqoyen-4",
+      "soundId": "metal-clang",
+      "label": "Metal Clang",
+      "file": "metal-clang.mp3",
+      "start": 4.359,
+      "cropIn": 0,
+      "cropOut": 1.1,
+      "sourceDuration": 2.5,
+      "lane": 0
+    },
+    {
+      "id": "clip-mrvqoyen-5",
+      "soundId": "medium-close",
+      "label": "Medium Close",
+      "file": "medium-close.mp3",
+      "start": 4.832,
+      "cropIn": 0,
+      "cropOut": 1.0,
+      "sourceDuration": 1.8,
+      "lane": 1
+    },
+    {
+      "id": "clip-mrvqoyen-6",
+      "soundId": "steam-hiss",
+      "label": "Steam Hiss",
+      "file": "steam-hiss.mp3",
+      "start": 5.1,
+      "cropIn": 0,
+      "cropOut": 1.1,
+      "sourceDuration": 1.1,
+      "lane": 0
+    },
+    {
+      "id": "clip-mrvqoyen-7",
+      "soundId": "robot-movement",
+      "label": "Robot Movement",
+      "file": "robot-movement.mp3",
+      "start": 5.15,
+      "cropIn": 0,
+      "cropOut": 2.4,
+      "sourceDuration": 3.34,
+      "lane": 1
+    },
+    {
+      "id": "clip-mrvqoyen-8",
+      "soundId": "drill-tighten",
+      "label": "Drill Tighten",
+      "file": "drill-tighten.mp3",
+      "start": 6.4,
+      "cropIn": 0,
+      "cropOut": 1.4,
+      "sourceDuration": 2.33,
+      "lane": 0
+    },
+    {
+      "id": "clip-mrvqoyen-9",
+      "soundId": "repulsor",
+      "label": "Repulsor",
+      "file": "repulsor.mp3",
+      "start": 6.52,
+      "cropIn": 0,
+      "cropOut": 0.95,
+      "sourceDuration": 1.44,
+      "lane": 1
+    },
+    {
+      "id": "clip-mrvqoyen-10",
+      "soundId": "steam-release",
+      "label": "Steam Release",
+      "file": "steam-release.mp3",
+      "start": 6.9,
+      "cropIn": 0,
+      "cropOut": 1.15,
+      "sourceDuration": 5.74,
+      "lane": 2
+    },
+    {
+      "id": "clip-mrvqoyen-11",
+      "soundId": "repulsor",
+      "label": "Repulsor",
+      "file": "repulsor.mp3",
+      "start": 6.95,
+      "cropIn": 0,
+      "cropOut": 0.85,
+      "sourceDuration": 1.44,
+      "lane": 0
+    },
+    {
+      "id": "clip-mrvqoyen-12",
+      "soundId": "metal-clang",
+      "label": "Metal Clang",
+      "file": "metal-clang.mp3",
+      "start": 9.34,
+      "cropIn": 0,
+      "cropOut": 1.05,
+      "sourceDuration": 2.5,
+      "lane": 0
+    },
+    {
+      "id": "clip-mrvqoyen-13",
+      "soundId": "medium-close",
+      "label": "Medium Close",
+      "file": "medium-close.mp3",
+      "start": 9.73,
+      "cropIn": 0,
+      "cropOut": 0.95,
+      "sourceDuration": 1.8,
+      "lane": 1
+    },
+    {
+      "id": "clip-mrvqoyen-14",
+      "soundId": "light-attach",
+      "label": "Light Attach",
+      "file": "light-attach.mp3",
+      "start": 12.14,
+      "cropIn": 0,
+      "cropOut": 1.5,
+      "sourceDuration": 1.82,
+      "lane": 0
+    }
+  ]
+}

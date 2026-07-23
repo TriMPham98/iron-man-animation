@@ -2,6 +2,7 @@ import {
   type AudioEngine,
   createAudioEngine,
 } from '../audio/engine';
+import choreSeed from '../audio/choreTimeline.seed.json';
 import {
   assignLanes,
   clipDuration,
@@ -9,6 +10,8 @@ import {
   createClipFromSound,
   formatExportCard,
   loadTimeline,
+  markChoreTimelineMigrated,
+  needsChoreTimelineMigration,
   newClipId,
   saveTimeline,
   type TimelineClip,
@@ -96,6 +99,19 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   const engine = createAudioEngine();
   let clips: TimelineClip[] = loadTimeline();
+
+  // One-shot: retimed/cropped SFX for assembly without palm-ECU hold
+  if (needsChoreTimelineMigration()) {
+    const seedClips = (choreSeed as { clips: TimelineClip[] }).clips;
+    if (Array.isArray(seedClips) && seedClips.length > 0) {
+      // Prefer seed when user already had a sequence (same authoring session)
+      // or empty timeline — always apply chore v2 crops/timing once.
+      clips = assignLanes(seedClips.map(clampCrop));
+      saveTimeline(clips);
+    }
+    markChoreTimelineMigrated();
+  }
+
   let selectedId: string | null = null;
   let assemblyDuration = 30;
   let playheadSec = 0;

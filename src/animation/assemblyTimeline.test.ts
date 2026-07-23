@@ -75,9 +75,9 @@ describe('groupHasFaceplate / orderHelmetLaunchGroups', () => {
 });
 
 describe('palmBeatEndFromHandsLock', () => {
-  it('places the palm beat fully after hands lock (pre + ramp + post)', () => {
-    // PALM_PRE_HOLD 0.7 + REPULSOR_RAMP 1.25 + PALM_POST_HOLD 0.4 = 2.35
-    expect(palmBeatEndFromHandsLock(10)).toBeCloseTo(12.35, 5);
-    expect(palmBeatEndFromHandsLock(10)).toBeGreaterThan(10 + 2);
+  it('places a short thruster ramp after hands lock (no helmet hold)', () => {
+    // PALM_PRE_HOLD 0.12 + REPULSOR_RAMP 0.9 + PALM_POST_HOLD 0 = 1.02
+    expect(palmBeatEndFromHandsLock(10)).toBeCloseTo(11.02, 5);
+    expect(palmBeatEndFromHandsLock(10)).toBeLessThan(10 + 1.5);
   });
 });

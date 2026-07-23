@@ -1,6 +1,9 @@
 import { findSound, SOUNDS } from './sounds';
 
 const STORAGE_KEY = 'mark-suit-audio-timeline-v1';
+/** Bump when assembly choreography retimes SFX (e.g. palm ECU removed). */
+export const CHORE_TIMELINE_VERSION = 2;
+const CHORE_FLAG_KEY = 'mark-suit-audio-chore-v';
 
 export type TimelineClip = {
   /** Unique instance id on the track. */
@@ -123,6 +126,29 @@ export function loadTimeline(): TimelineClip[] {
     return assignLanes(keep.map(clampCrop));
   } catch {
     return [];
+  }
+}
+
+/** True when local clips have not yet been migrated to the current chore cut. */
+export function needsChoreTimelineMigration(): boolean {
+  try {
+    return (
+      window.localStorage.getItem(CHORE_FLAG_KEY) !==
+      String(CHORE_TIMELINE_VERSION)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function markChoreTimelineMigrated(): void {
+  try {
+    window.localStorage.setItem(
+      CHORE_FLAG_KEY,
+      String(CHORE_TIMELINE_VERSION),
+    );
+  } catch {
+    /* ignore */
   }
 }
 
