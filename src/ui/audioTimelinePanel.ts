@@ -9,8 +9,7 @@ import {
   clampCrop,
   createClipFromSound,
   formatExportCard,
-  hasSavedTimeline,
-  loadTimeline,
+  initTimelineClips,
   newClipId,
   saveTimeline,
   type TimelineClip,
@@ -98,22 +97,14 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   const engine = createAudioEngine();
   /**
-   * Persistence: every edit (add / move / crop / delete / clear) writes the
-   * full clip list to localStorage. Reload loads that exact snapshot.
-   * Seed is only used on first visit when nothing has been saved yet —
-   * never overwrites user edits or an intentional empty timeline.
+   * Persistence (localStorage):
+   * - First visit: seed → write snapshot (including empty).
+   * - Every edit (add / move / crop / delete / clear): full list rewrite.
+   * - Refresh: load snapshot only — never re-seed over user deletes.
    */
-  let clips: TimelineClip[] = loadTimeline();
-  if (!hasSavedTimeline()) {
-    const seedClips = (choreSeed as { clips: TimelineClip[] }).clips;
-    if (Array.isArray(seedClips) && seedClips.length > 0) {
-      clips = assignLanes(seedClips.map(clampCrop));
-      saveTimeline(clips);
-    } else {
-      // Record empty so later reloads don't re-seed
-      saveTimeline([]);
-    }
-  }
+  let clips: TimelineClip[] = initTimelineClips(
+    (choreSeed as { clips?: unknown }).clips,
+  );
 
   let selectedId: string | null = null;
   let assemblyDuration = 30;
@@ -166,9 +157,15 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     void getDuration(s.file);
   }
 
-  const persist = () => {
+  const persist = (): boolean => {
     // Always write full list (including empty after delete/clear)
-    saveTimeline(clips);
+    const ok = saveTimeline(clips);
+    if (!ok) {
+      console.warn(
+        '[audio-timeline] could not persist clips — deletes may not survive refresh',
+      );
+    }
+    return ok;
   };
 
   // Flush on navigation / refresh so the last edit is never lost mid-frame
