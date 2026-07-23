@@ -20,6 +20,15 @@ export type TimelineClip = {
   sourceDuration: number;
   /** Lane index (0-based) for visual stacking. */
   lane: number;
+  /**
+   * Peak gain 0–1 (Logic-style clip volume). Default 1.
+   * Fades ramp to/from this level.
+   */
+  volume: number;
+  /** Fade-in length in seconds from clip start (0 = none). */
+  fadeIn: number;
+  /** Fade-out length in seconds ending at clip end (0 = none). */
+  fadeOut: number;
 };
 
 export type TimelineSnapshot = {
@@ -41,8 +50,68 @@ export function clampCrop(c: TimelineClip): TimelineClip {
   const src = Math.max(0.05, c.sourceDuration);
   let cropIn = Math.min(Math.max(0, c.cropIn), src - 0.05);
   let cropOut = Math.min(Math.max(cropIn + 0.05, c.cropOut), src);
-  return { ...c, cropIn, cropOut, sourceDuration: src, start: Math.max(0, c.start) };
+  return clampGain({
+    ...c,
+    cropIn,
+    cropOut,
+    sourceDuration: src,
+    start: Math.max(0, c.start),
+  });
 }
+
+/**
+ * Clamp volume 0–1 and fades so fadeIn + fadeOut never exceed clip length
+ * (same idea as Logic’s region fade handles).
+ */
+export function clampGain(c: TimelineClip): TimelineClip {
+  const dur = Math.max(0, c.cropOut - c.cropIn);
+  let volume =
+    typeof c.volume === 'number' && Number.isFinite(c.volume) ? c.volume : 1;
+  volume = Math.min(1, Math.max(0, volume));
+  let fadeIn =
+    typeof c.fadeIn === 'number' && Number.isFinite(c.fadeIn) ? c.fadeIn : 0;
+  let fadeOut =
+    typeof c.fadeOut === 'number' && Number.isFinite(c.fadeOut) ? c.fadeOut : 0;
+  fadeIn = Math.max(0, fadeIn);
+  fadeOut = Math.max(0, fadeOut);
+  if (dur > 0 && fadeIn + fadeOut > dur) {
+    const s = dur / (fadeIn + fadeOut);
+    fadeIn *= s;
+    fadeOut *= s;
+  }
+  return { ...c, volume, fadeIn, fadeOut };
+}
+
+/**
+ * Instantaneous gain at time `t` into the clip (0 = start), applying
+ * fade-in / sustain peak / fade-out. Used by the engine and envelope draw.
+ */
+export function gainAtTime(
+  t: number,
+  clipDur: number,
+  peak: number,
+  fadeIn: number,
+  fadeOut: number,
+): number {
+  if (clipDur <= 0 || peak <= 0) return 0;
+  const x = Math.max(0, Math.min(clipDur, t));
+  let g = peak;
+  if (fadeIn > 1e-6 && x < fadeIn) {
+    g = peak * (x / fadeIn);
+  }
+  if (fadeOut > 1e-6 && x > clipDur - fadeOut) {
+    const u = Math.max(0, (clipDur - x) / fadeOut);
+    g = Math.min(g, peak * u);
+  }
+  return Math.min(1, Math.max(0, g));
+}
+
+const defaultGain = () =>
+  ({
+    volume: 1,
+    fadeIn: 0,
+    fadeOut: 0,
+  }) as const;
 
 let idSeq = 0;
 export function newClipId(): string {
@@ -69,6 +138,7 @@ export function createClipFromSound(
     cropOut: src,
     sourceDuration: src,
     lane,
+    ...defaultGain(),
   });
 }
 
@@ -91,6 +161,7 @@ export function createClipFromFileMeta(meta: {
     cropOut: src,
     sourceDuration: src,
     lane: meta.lane ?? 0,
+    ...defaultGain(),
   });
 }
 
@@ -141,6 +212,7 @@ export function isPersistableClip(c: unknown): c is TimelineClip {
 export function normalizeClip(raw: unknown): TimelineClip | null {
   if (!isPersistableClip(raw)) return null;
   const def = findSound(raw.soundId);
+  const r = raw as Partial<TimelineClip>;
   const base: TimelineClip = {
     id: raw.id,
     soundId: raw.soundId,
@@ -155,6 +227,13 @@ export function normalizeClip(raw: unknown): TimelineClip | null {
     cropOut: raw.cropOut,
     sourceDuration: raw.sourceDuration,
     lane: typeof raw.lane === 'number' && Number.isFinite(raw.lane) ? raw.lane : 0,
+    // Older saves omit gain — default to full volume, no fades
+    volume:
+      typeof r.volume === 'number' && Number.isFinite(r.volume) ? r.volume : 1,
+    fadeIn:
+      typeof r.fadeIn === 'number' && Number.isFinite(r.fadeIn) ? r.fadeIn : 0,
+    fadeOut:
+      typeof r.fadeOut === 'number' && Number.isFinite(r.fadeOut) ? r.fadeOut : 0,
   };
   return clampCrop(base);
 }
@@ -275,11 +354,15 @@ export function formatExportCard(clips: TimelineClip[], assemblyDuration: number
     return lines.join('\n');
   }
 
-  lines.push('| # | start | end | id | cropIn | cropOut | label |');
-  lines.push('|--:|------:|----:|----|-------:|--------:|-------|');
+  lines.push(
+    '| # | start | end | id | cropIn | cropOut | vol | fadeIn | fadeOut | label |',
+  );
+  lines.push(
+    '|--:|------:|----:|----|-------:|--------:|----:|-------:|--------:|-------|',
+  );
   sorted.forEach((c, i) => {
     lines.push(
-      `| ${i + 1} | ${c.start.toFixed(3)} | ${clipEnd(c).toFixed(3)} | \`${c.soundId}\` | ${c.cropIn.toFixed(3)} | ${c.cropOut.toFixed(3)} | ${c.label} |`,
+      `| ${i + 1} | ${c.start.toFixed(3)} | ${clipEnd(c).toFixed(3)} | \`${c.soundId}\` | ${c.cropIn.toFixed(3)} | ${c.cropOut.toFixed(3)} | ${c.volume.toFixed(2)} | ${c.fadeIn.toFixed(3)} | ${c.fadeOut.toFixed(3)} | ${c.label} |`,
     );
   });
 
@@ -297,6 +380,9 @@ export function formatExportCard(clips: TimelineClip[], assemblyDuration: number
           file: c.file,
           cropIn: Number(c.cropIn.toFixed(3)),
           cropOut: Number(c.cropOut.toFixed(3)),
+          volume: Number(c.volume.toFixed(3)),
+          fadeIn: Number(c.fadeIn.toFixed(3)),
+          fadeOut: Number(c.fadeOut.toFixed(3)),
           label: c.label,
         })),
       },

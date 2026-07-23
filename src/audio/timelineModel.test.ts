@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  clampGain,
   createClipFromSound,
+  gainAtTime,
   hasSavedTimeline,
   initTimelineClips,
   loadTimeline,
+  normalizeClip,
   saveTimeline,
   TIMELINE_STORAGE_KEY,
   type TimelineClip,
@@ -112,5 +115,61 @@ describe('audio timeline persistence', () => {
     expect(parsed.version).toBe(1);
     expect(parsed.clips).toHaveLength(1);
     expect(parsed.clips[0]!.id).toBe('clip-x');
+  });
+
+  it('defaults volume/fades on legacy clips and persists gain', () => {
+    const legacy = {
+      id: 'clip-legacy',
+      soundId: 'ratchet',
+      label: 'Ratchet',
+      file: 'ratchet.mp3',
+      start: 0,
+      cropIn: 0,
+      cropOut: 2,
+      sourceDuration: 2,
+      lane: 0,
+    };
+    const n = normalizeClip(legacy);
+    expect(n?.volume).toBe(1);
+    expect(n?.fadeIn).toBe(0);
+    expect(n?.fadeOut).toBe(0);
+
+    const withGain = clampGain({
+      ...sampleClip('clip-g'),
+      volume: 0.5,
+      fadeIn: 0.2,
+      fadeOut: 0.2,
+    });
+    expect(saveTimeline([withGain])).toBe(true);
+    const loaded = loadTimeline();
+    expect(loaded[0]?.volume).toBeCloseTo(0.5, 5);
+    expect(loaded[0]?.fadeIn).toBeCloseTo(0.2, 5);
+    expect(loaded[0]?.fadeOut).toBeCloseTo(0.2, 5);
+  });
+
+  it('scales overlapping fades to fit clip length', () => {
+    const c = clampGain({
+      ...sampleClip('clip-long-fade'),
+      cropIn: 0,
+      cropOut: 1,
+      sourceDuration: 1,
+      fadeIn: 0.8,
+      fadeOut: 0.8,
+    });
+    expect(c.fadeIn + c.fadeOut).toBeCloseTo(1, 5);
+  });
+});
+
+describe('gainAtTime', () => {
+  it('ramps fade-in, holds peak, ramps fade-out', () => {
+    expect(gainAtTime(0, 1, 1, 0.25, 0.25)).toBeCloseTo(0, 5);
+    expect(gainAtTime(0.125, 1, 1, 0.25, 0.25)).toBeCloseTo(0.5, 5);
+    expect(gainAtTime(0.5, 1, 1, 0.25, 0.25)).toBeCloseTo(1, 5);
+    expect(gainAtTime(0.875, 1, 1, 0.25, 0.25)).toBeCloseTo(0.5, 5);
+    expect(gainAtTime(1, 1, 1, 0.25, 0.25)).toBeCloseTo(0, 5);
+  });
+
+  it('scales by peak volume', () => {
+    expect(gainAtTime(0.5, 1, 0.4, 0, 0)).toBeCloseTo(0.4, 5);
   });
 });

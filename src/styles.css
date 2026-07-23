@@ -1087,10 +1087,21 @@ body.director-mode #hud-bottom {
   opacity: 0.95;
 }
 
+/* Gain / fade envelope (Logic-style region line) */
+.atl-clip-gain {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  z-index: 1;
+}
+
 .atl-clip-label {
   position: relative;
   display: block;
-  z-index: 1;
+  z-index: 2;
   padding: 0.15rem 0.35rem;
   font-size: 0.48rem;
   letter-spacing: 0.03em;
@@ -1112,11 +1123,17 @@ body.director-mode #hud-bottom {
   );
 }
 
-.atl-clip-crop-tag {
+.atl-clip-crop-tag,
+.atl-clip-gain-tag {
   font-style: normal;
   opacity: 0.65;
   font-size: 0.45rem;
   letter-spacing: 0.02em;
+}
+
+.atl-clip-gain-tag {
+  color: #7ee8ff;
+  opacity: 0.85;
 }
 
 .atl-clip-handle {
@@ -1145,8 +1162,13 @@ body.director-mode #hud-bottom {
 
 .atl-meta {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 5.5rem)) minmax(0, 1fr);
-  gap: 0.25rem 0.45rem;
+  grid-template-columns:
+    repeat(3, minmax(0, 4.8rem))
+    minmax(5.5rem, 7.5rem)
+    repeat(2, minmax(0, 4.5rem))
+    auto
+    minmax(0, 1fr);
+  gap: 0.25rem 0.4rem;
   align-items: end;
   padding: 0.22rem 0.55rem 0.28rem;
   border-top: 1px solid rgba(201, 162, 39, 0.12);
@@ -1171,6 +1193,13 @@ body.director-mode #hud-bottom {
   color: rgba(232, 228, 217, 0.4);
 }
 
+.atl-field span em {
+  font-style: normal;
+  color: #7ee8ff;
+  margin-left: 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .atl-field input {
   width: 100%;
   height: 1.3rem;
@@ -1188,6 +1217,30 @@ body.director-mode #hud-bottom {
   border-color: #7ee8ff;
 }
 
+.atl-field-vol input[type='range'] {
+  padding: 0;
+  height: 1.3rem;
+  accent-color: #7ee8ff;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+}
+
+.atl-fade-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  align-items: center;
+  padding-bottom: 0.05rem;
+}
+
+.atl-fade-presets .atl-btn {
+  min-width: 0;
+  height: 1.25rem;
+  padding: 0 0.28rem;
+  font-size: 0.42rem;
+}
+
 .atl-meta-hint {
   margin: 0;
   font-size: 0.42rem;
@@ -1195,6 +1248,20 @@ body.director-mode #hud-bottom {
   line-height: 1.3;
   color: rgba(232, 228, 217, 0.38);
   align-self: center;
+}
+
+@media (max-width: 960px) {
+  .atl-meta {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.4fr);
+  }
+
+  .atl-meta-hint {
+    grid-column: 1 / -1;
+  }
+
+  .atl-fade-presets {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 720px) {

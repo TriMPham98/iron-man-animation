@@ -286,9 +286,44 @@
             <span>CROP OUT</span>
             <input id="atl-crop-out" type="number" min="0" step="0.01" disabled />
           </label>
+          <label class="atl-field atl-field-vol">
+            <span>VOL <em id="atl-vol-readout">100%</em></span>
+            <input
+              id="atl-vol"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value="100"
+              disabled
+              title="Clip volume"
+            />
+          </label>
+          <label class="atl-field">
+            <span>FADE IN</span>
+            <input id="atl-fade-in" type="number" min="0" step="0.01" disabled />
+          </label>
+          <label class="atl-field">
+            <span>FADE OUT</span>
+            <input id="atl-fade-out" type="number" min="0" step="0.01" disabled />
+          </label>
+          <div class="atl-fade-presets" role="group" aria-label="Fade presets">
+            <button type="button" class="atl-btn atl-btn-ghost atl-fade-preset" data-fade="0" disabled title="No fades">
+              0
+            </button>
+            <button type="button" class="atl-btn atl-btn-ghost atl-fade-preset" data-fade="0.05" disabled title="5 ms fades">
+              50ms
+            </button>
+            <button type="button" class="atl-btn atl-btn-ghost atl-fade-preset" data-fade="0.15" disabled title="150 ms fades">
+              150ms
+            </button>
+            <button type="button" class="atl-btn atl-btn-ghost atl-fade-preset" data-fade="0.4" disabled title="400 ms fades">
+              400ms
+            </button>
+          </div>
           <p class="atl-meta-hint">
-            Scrub ruler / empty track / playhead · drag clips · edge handles crop ·
-            Backspace/Del remove · drop .mp3 · edits auto-save (survive refresh)
+            Scrub · crop edges · VOL / FADE IN·OUT (Logic-style) · presets apply both fades ·
+            Backspace/Del · auto-save
           </p>
         </div>
       </section>

@@ -258,3 +258,87 @@ export async function paintClipWaveform(
     return false;
   }
 }
+
+export type GainEnvelope = {
+  volume: number;
+  fadeIn: number;
+  fadeOut: number;
+  /** Clip length in seconds (crop duration). */
+  duration: number;
+};
+
+/**
+ * Logic-style region gain line: fade-in ramp → sustain at volume → fade-out.
+ * Drawn on a dedicated overlay canvas above the waveform.
+ */
+export function drawGainEnvelope(
+  canvas: HTMLCanvasElement,
+  env: GainEnvelope,
+): void {
+  const cssW = canvas.clientWidth;
+  const cssH = canvas.clientHeight;
+  if (cssW < 2 || cssH < 2 || env.duration <= 0) return;
+
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const bw = Math.max(1, Math.floor(cssW * dpr));
+  const bh = Math.max(1, Math.floor(cssH * dpr));
+  if (canvas.width !== bw) canvas.width = bw;
+  if (canvas.height !== bh) canvas.height = bh;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const vol = Math.min(1, Math.max(0, env.volume));
+  let fadeIn = Math.max(0, env.fadeIn);
+  let fadeOut = Math.max(0, env.fadeOut);
+  if (fadeIn + fadeOut > env.duration) {
+    const s = env.duration / (fadeIn + fadeOut);
+    fadeIn *= s;
+    fadeOut *= s;
+  }
+
+  // y: 0 = top, bottom = silence. Peak sits near the top third of the clip.
+  const yAt = (g: number) => cssH * (1 - 0.12 - g * 0.72);
+  const xAt = (t: number) => (t / env.duration) * cssW;
+
+  const pts: Array<{ x: number; y: number }> = [];
+  pts.push({ x: 0, y: yAt(fadeIn > 1e-6 ? 0 : vol) });
+  if (fadeIn > 1e-6) {
+    pts.push({ x: xAt(fadeIn), y: yAt(vol) });
+  }
+  if (fadeOut > 1e-6) {
+    pts.push({ x: xAt(env.duration - fadeOut), y: yAt(vol) });
+    pts.push({ x: cssW, y: yAt(0) });
+  } else {
+    pts.push({ x: cssW, y: yAt(vol) });
+  }
+
+  // Soft fill under the envelope (reads as region gain in Logic)
+  ctx.beginPath();
+  ctx.moveTo(pts[0]!.x, cssH);
+  for (const p of pts) ctx.lineTo(p.x, p.y);
+  ctx.lineTo(cssW, cssH);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(126, 232, 255, 0.1)';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(pts[0]!.x, pts[0]!.y);
+  for (let i = 1; i < pts.length; i++) {
+    ctx.lineTo(pts[i]!.x, pts[i]!.y);
+  }
+  ctx.strokeStyle = 'rgba(126, 232, 255, 0.85)';
+  ctx.lineWidth = 1.25;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // Corner dots at fade knees (handles-ish affordance)
+  ctx.fillStyle = 'rgba(126, 232, 255, 0.95)';
+  for (const p of pts) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}

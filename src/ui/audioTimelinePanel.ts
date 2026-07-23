@@ -15,7 +15,11 @@ import {
   type TimelineClip,
 } from '../audio/timelineModel';
 import { colorForSoundId, SOUNDS } from '../audio/sounds';
-import { paintClipWaveform, prewarmWaveforms } from '../audio/waveform';
+import {
+  drawGainEnvelope,
+  paintClipWaveform,
+  prewarmWaveforms,
+} from '../audio/waveform';
 
 const LANE_H_MIN = 18;
 const LANE_GAP = 2;
@@ -84,6 +88,13 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const cropInInput = el<HTMLInputElement>('atl-crop-in');
   const cropOutInput = el<HTMLInputElement>('atl-crop-out');
   const startInput = el<HTMLInputElement>('atl-start');
+  const volInput = el<HTMLInputElement>('atl-vol');
+  const volReadout = el<HTMLElement>('atl-vol-readout');
+  const fadeInInput = el<HTMLInputElement>('atl-fade-in');
+  const fadeOutInput = el<HTMLInputElement>('atl-fade-out');
+  const fadePresetBtns = [
+    ...root.querySelectorAll<HTMLButtonElement>('.atl-fade-preset'),
+  ];
   const btnPause = el<HTMLButtonElement>('atl-pause');
   const btnLoop = el<HTMLButtonElement>('atl-loop');
   const btnMute = el<HTMLButtonElement>('atl-mute');
@@ -415,11 +426,24 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       wave.className = 'atl-clip-wave';
       wave.setAttribute('aria-hidden', 'true');
 
+      const gainEl = document.createElement('canvas');
+      gainEl.className = 'atl-clip-gain';
+      gainEl.setAttribute('aria-hidden', 'true');
+
       const label = document.createElement('span');
       label.className = 'atl-clip-label';
+      const volPct = Math.round(c.volume * 100);
+      const gainBits: string[] = [];
+      if (volPct !== 100) gainBits.push(`${volPct}%`);
+      if (c.fadeIn > 0.001) gainBits.push(`↑${fmt(c.fadeIn, 2)}`);
+      if (c.fadeOut > 0.001) gainBits.push(`↓${fmt(c.fadeOut, 2)}`);
       label.innerHTML = `${escapeHtml(c.label)}${
         trimmed
           ? ` <em class="atl-clip-crop-tag">${fmt(c.cropIn, 2)}–${fmt(c.cropOut, 2)}</em>`
+          : ''
+      }${
+        gainBits.length
+          ? ` <em class="atl-clip-gain-tag">${gainBits.join(' · ')}</em>`
           : ''
       }`;
 
@@ -433,7 +457,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       handleOut.dataset.handle = 'out';
       handleOut.title = 'Crop out';
 
-      node.append(wave, label, handleIn, handleOut);
+      node.append(wave, gainEl, label, handleIn, handleOut);
 
       node.addEventListener('pointerdown', (e) => {
         const t = e.target as HTMLElement;
@@ -461,6 +485,12 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
             fillColor: 'rgba(255, 255, 255, 0.14)',
           },
         );
+        drawGainEnvelope(gainEl, {
+          volume: c.volume,
+          fadeIn: c.fadeIn,
+          fadeOut: c.fadeOut,
+          duration: Math.max(1e-3, dur),
+        });
       });
     }
 
@@ -468,30 +498,47 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     updatePlayheadDom();
   };
 
+  const setMetaEnabled = (on: boolean) => {
+    cropInInput.disabled = !on;
+    cropOutInput.disabled = !on;
+    startInput.disabled = !on;
+    volInput.disabled = !on;
+    fadeInInput.disabled = !on;
+    fadeOutInput.disabled = !on;
+    btnDelete.disabled = !on;
+    for (const b of fadePresetBtns) b.disabled = !on;
+  };
+
   const renderMeta = () => {
     const c = selected();
     if (!c) {
       metaEl.classList.add('empty');
-      cropInInput.disabled = true;
-      cropOutInput.disabled = true;
-      startInput.disabled = true;
-      btnDelete.disabled = true;
+      setMetaEnabled(false);
       cropInInput.value = '';
       cropOutInput.value = '';
       startInput.value = '';
+      volInput.value = '100';
+      volReadout.textContent = '100%';
+      fadeInInput.value = '';
+      fadeOutInput.value = '';
       return;
     }
     metaEl.classList.remove('empty');
-    cropInInput.disabled = false;
-    cropOutInput.disabled = false;
-    startInput.disabled = false;
-    btnDelete.disabled = false;
+    setMetaEnabled(true);
     cropInInput.value = fmt(c.cropIn, 3);
     cropOutInput.value = fmt(c.cropOut, 3);
     startInput.value = fmt(c.start, 3);
+    const pct = Math.round(c.volume * 100);
+    volInput.value = String(pct);
+    volReadout.textContent = `${pct}%`;
+    fadeInInput.value = fmt(c.fadeIn, 3);
+    fadeOutInput.value = fmt(c.fadeOut, 3);
     cropInInput.max = String(Math.max(MIN_CROP, c.cropOut - MIN_CROP));
     cropOutInput.min = String(c.cropIn + MIN_CROP);
     cropOutInput.max = String(c.sourceDuration);
+    const maxFade = Math.max(0, clipDuration(c));
+    fadeInInput.max = String(maxFade);
+    fadeOutInput.max = String(maxFade);
   };
 
   const updatePlayheadDom = () => {
@@ -675,6 +722,9 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
         cropOut: srcDur,
         sourceDuration: srcDur,
         lane: 0,
+        volume: 1,
+        fadeIn: 0,
+        fadeOut: 0,
       });
       clips.push(clip);
       t += clipDuration(clip) + 0.05;
@@ -702,24 +752,81 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       a.src = url;
     });
 
-  // Meta inputs
+  // Meta inputs (timing + Logic-style gain)
   const applyMetaFromInputs = () => {
     const c = selected();
     if (!c) return;
     const start = Number(startInput.value);
     const cropIn = Number(cropInInput.value);
     const cropOut = Number(cropOutInput.value);
-    if ([start, cropIn, cropOut].some((n) => Number.isNaN(n))) return;
-    const next = clampCrop({ ...c, start, cropIn, cropOut });
+    const volume = Number(volInput.value) / 100;
+    const fadeIn = Number(fadeInInput.value);
+    const fadeOut = Number(fadeOutInput.value);
+    if (
+      [start, cropIn, cropOut, volume, fadeIn, fadeOut].some((n) =>
+        Number.isNaN(n),
+      )
+    ) {
+      return;
+    }
+    const next = clampCrop({
+      ...c,
+      start,
+      cropIn,
+      cropOut,
+      volume,
+      fadeIn,
+      fadeOut,
+    });
     clips = assignLanes(clips.map((x) => (x.id === c.id ? next : x)));
     persist();
     renderClips();
     renderMeta();
   };
 
+  const applyVolumeLive = () => {
+    const c = selected();
+    if (!c) return;
+    const volume = Number(volInput.value) / 100;
+    if (Number.isNaN(volume)) return;
+    volReadout.textContent = `${Math.round(volume * 100)}%`;
+    const next = clampCrop({ ...c, volume });
+    clips = clips.map((x) => (x.id === c.id ? next : x));
+    // Live envelope while dragging the fader; persist on change/pointerup
+    const node = lanesEl.querySelector(
+      `.atl-clip[data-id="${CSS.escape(c.id)}"] .atl-clip-gain`,
+    ) as HTMLCanvasElement | null;
+    if (node) {
+      drawGainEnvelope(node, {
+        volume: next.volume,
+        fadeIn: next.fadeIn,
+        fadeOut: next.fadeOut,
+        duration: Math.max(1e-3, clipDuration(next)),
+      });
+    }
+  };
+
   cropInInput.addEventListener('change', applyMetaFromInputs);
   cropOutInput.addEventListener('change', applyMetaFromInputs);
   startInput.addEventListener('change', applyMetaFromInputs);
+  fadeInInput.addEventListener('change', applyMetaFromInputs);
+  fadeOutInput.addEventListener('change', applyMetaFromInputs);
+  volInput.addEventListener('input', applyVolumeLive);
+  volInput.addEventListener('change', applyMetaFromInputs);
+
+  for (const btn of fadePresetBtns) {
+    btn.addEventListener('click', () => {
+      const c = selected();
+      if (!c) return;
+      const sec = Number(btn.dataset.fade);
+      if (Number.isNaN(sec)) return;
+      const next = clampCrop({ ...c, fadeIn: sec, fadeOut: sec });
+      clips = assignLanes(clips.map((x) => (x.id === c.id ? next : x)));
+      persist();
+      renderClips();
+      renderMeta();
+    });
+  }
 
   const deleteSelected = (): boolean => {
     if (!selectedId) return false;
@@ -857,6 +964,13 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       const end = c.start + dur;
       if (end <= sec + 1e-4) continue;
 
+      const gain = {
+        volume: c.volume,
+        fadeIn: c.fadeIn,
+        fadeOut: c.fadeOut,
+        clipDuration: dur,
+      };
+
       if (c.start >= sec - 1e-4) {
         const delay = (c.start - sec) * 1000;
         const tid = window.setTimeout(() => {
@@ -866,11 +980,13 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
             file: c.file,
             offset: c.cropIn,
             duration: dur,
+            clipOffset: 0,
+            ...gain,
           });
         }, Math.max(0, delay));
         scheduled.push(tid);
       } else {
-        // Mid-clip: start immediately at offset into crop
+        // Mid-clip: start immediately at offset into crop (continue fade ramp)
         const into = sec - c.start;
         const remain = dur - into;
         if (remain > 0.02) {
@@ -879,6 +995,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
             file: c.file,
             offset: c.cropIn + into,
             duration: remain,
+            clipOffset: into,
+            ...gain,
           });
         }
       }
