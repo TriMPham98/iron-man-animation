@@ -8,6 +8,9 @@ export type SoundDef = {
 
 /** Clips available in the timeline library. */
 export const SOUNDS: SoundDef[] = [
+  { id: 'clasp-long-conveyor', label: 'Clasp Long Conveyor', file: 'clasp-long-conveyor.mp3' },
+  { id: 'connect-hiss', label: 'Connect Hiss', file: 'connect-hiss.mp3' },
+  { id: 'conveyor-hiss', label: 'Conveyor Hiss', file: 'conveyor-hiss.mp3' },
   { id: 'drill-tighten', label: 'Drill Tighten', file: 'drill-tighten.mp3' },
   { id: 'electric-motor', label: 'Electric Motor', file: 'electric-motor.mp3' },
   { id: 'footstep', label: 'Footstep', file: 'footstep.mp3' },
@@ -15,9 +18,16 @@ export const SOUNDS: SoundDef[] = [
   { id: 'light-attach', label: 'Light Attach', file: 'light-attach.mp3' },
   { id: 'medium-close', label: 'Medium Close', file: 'medium-close.mp3' },
   { id: 'metal-clang', label: 'Metal Clang', file: 'metal-clang.mp3' },
-  { id: 'repulsor', label: 'Repulsor', file: 'repulsor.mp3' },
+  { id: 'metal-connect', label: 'Metal Connect', file: 'metal-connect.mp3' },
+  { id: 'metal-conveyor', label: 'Metal Conveyor', file: 'metal-conveyor.mp3' },
+  { id: 'metal-resonate', label: 'Metal Resonate', file: 'metal-resonate.mp3' },
+  { id: 'metal-ring-connect', label: 'Metal Ring Connect', file: 'metal-ring-connect.mp3' },
   { id: 'metal-sliding', label: 'Metal Sliding', file: 'metal-sliding.mp3' },
+  { id: 'metal-tighten', label: 'Metal Tighten', file: 'metal-tighten.mp3' },
+  { id: 'metal-treadmill', label: 'Metal Treadmill', file: 'metal-treadmill.mp3' },
+  { id: 'metal-two-hits', label: 'Metal Two Hits', file: 'metal-two-hits.mp3' },
   { id: 'ratchet', label: 'Ratchet', file: 'ratchet.mp3' },
+  { id: 'repulsor', label: 'Repulsor', file: 'repulsor.mp3' },
   { id: 'robot-movement', label: 'Robot Movement', file: 'robot-movement.mp3' },
   { id: 'steam-hiss', label: 'Steam Hiss', file: 'steam-hiss.mp3' },
   { id: 'steam-release', label: 'Steam Release', file: 'steam-release.mp3' },
