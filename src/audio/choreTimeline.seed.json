@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "choreVersion": 2,
-  "note": "Retimed after removing palm-ECU hold; thruster FX short; helmet chains off gauntlets.",
+  "choreVersion": 3,
+  "note": "Full-length clips (no crop); retimed after palm-ECU removal.",
   "clips": [
     {
       "id": "clip-mrvqoyen-2",
@@ -10,8 +10,8 @@
       "file": "ratchet.mp3",
       "start": 0.991,
       "cropIn": 0,
-      "cropOut": 2.14,
-      "sourceDuration": 2.14,
+      "cropOut": 2.136,
+      "sourceDuration": 2.136,
       "lane": 0
     },
     {
@@ -21,8 +21,8 @@
       "file": "electric-motor.mp3",
       "start": 2.37,
       "cropIn": 0,
-      "cropOut": 3.2,
-      "sourceDuration": 6.17,
+      "cropOut": 6.168,
+      "sourceDuration": 6.168,
       "lane": 0
     },
     {
@@ -32,8 +32,8 @@
       "file": "metal-clang.mp3",
       "start": 4.359,
       "cropIn": 0,
-      "cropOut": 1.1,
-      "sourceDuration": 2.5,
+      "cropOut": 2.496,
+      "sourceDuration": 2.496,
       "lane": 0
     },
     {
@@ -43,7 +43,7 @@
       "file": "medium-close.mp3",
       "start": 4.832,
       "cropIn": 0,
-      "cropOut": 1.0,
+      "cropOut": 1.8,
       "sourceDuration": 1.8,
       "lane": 1
     },
@@ -54,8 +54,8 @@
       "file": "steam-hiss.mp3",
       "start": 5.1,
       "cropIn": 0,
-      "cropOut": 1.1,
-      "sourceDuration": 1.1,
+      "cropOut": 1.097,
+      "sourceDuration": 1.097,
       "lane": 0
     },
     {
@@ -65,8 +65,8 @@
       "file": "robot-movement.mp3",
       "start": 5.15,
       "cropIn": 0,
-      "cropOut": 2.4,
-      "sourceDuration": 3.34,
+      "cropOut": 3.336,
+      "sourceDuration": 3.336,
       "lane": 1
     },
     {
@@ -76,8 +76,8 @@
       "file": "drill-tighten.mp3",
       "start": 6.4,
       "cropIn": 0,
-      "cropOut": 1.4,
-      "sourceDuration": 2.33,
+      "cropOut": 2.328,
+      "sourceDuration": 2.328,
       "lane": 0
     },
     {
@@ -87,8 +87,8 @@
       "file": "repulsor.mp3",
       "start": 6.52,
       "cropIn": 0,
-      "cropOut": 0.95,
-      "sourceDuration": 1.44,
+      "cropOut": 1.437,
+      "sourceDuration": 1.437,
       "lane": 1
     },
     {
@@ -98,8 +98,8 @@
       "file": "steam-release.mp3",
       "start": 6.9,
       "cropIn": 0,
-      "cropOut": 1.15,
-      "sourceDuration": 5.74,
+      "cropOut": 5.736,
+      "sourceDuration": 5.736,
       "lane": 2
     },
     {
@@ -109,8 +109,8 @@
       "file": "repulsor.mp3",
       "start": 6.95,
       "cropIn": 0,
-      "cropOut": 0.85,
-      "sourceDuration": 1.44,
+      "cropOut": 1.437,
+      "sourceDuration": 1.437,
       "lane": 0
     },
     {
@@ -120,8 +120,8 @@
       "file": "metal-clang.mp3",
       "start": 9.34,
       "cropIn": 0,
-      "cropOut": 1.05,
-      "sourceDuration": 2.5,
+      "cropOut": 2.496,
+      "sourceDuration": 2.496,
       "lane": 0
     },
     {
@@ -131,7 +131,7 @@
       "file": "medium-close.mp3",
       "start": 9.73,
       "cropIn": 0,
-      "cropOut": 0.95,
+      "cropOut": 1.8,
       "sourceDuration": 1.8,
       "lane": 1
     },
@@ -142,8 +142,8 @@
       "file": "light-attach.mp3",
       "start": 12.14,
       "cropIn": 0,
-      "cropOut": 1.5,
-      "sourceDuration": 1.82,
+      "cropOut": 1.824,
+      "sourceDuration": 1.824,
       "lane": 0
     }
   ]

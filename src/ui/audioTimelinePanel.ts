@@ -241,7 +241,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
           id: 'audition',
           file: def.file,
           offset: 0,
-          duration: Math.min(srcDur, 2.5),
+          duration: Math.max(0.05, srcDur),
         });
       });
       libraryEl.appendChild(chip);

@@ -2,7 +2,7 @@ import { findSound, SOUNDS } from './sounds';
 
 const STORAGE_KEY = 'mark-suit-audio-timeline-v1';
 /** Bump when assembly choreography retimes SFX (e.g. palm ECU removed). */
-export const CHORE_TIMELINE_VERSION = 2;
+export const CHORE_TIMELINE_VERSION = 3;
 const CHORE_FLAG_KEY = 'mark-suit-audio-chore-v';
 
 export type TimelineClip = {
