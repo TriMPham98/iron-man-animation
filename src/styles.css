@@ -901,6 +901,9 @@ body.director-mode #hud-bottom {
 .atl-track-scroll {
   position: relative;
   overflow: auto;
+  /* Reserve gutter so H/V scrollbars appearing doesn't resize the
+     viewport and re-enter a ResizeObserver layout thrash loop. */
+  scrollbar-gutter: stable;
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
@@ -911,10 +914,18 @@ body.director-mode #hud-bottom {
   position: relative;
   display: flex;
   flex-direction: column;
-  /* Fill the scroll viewport so lanes stretch into remaining space */
+  /* At least fill the scrollport; JS may set a taller px height when
+     many lanes need vertical scroll room. */
   min-height: 100%;
   height: 100%;
   box-sizing: border-box;
+  /*
+    Clip the playhead hit target / end ticks so they never inflate
+    scrollWidth/scrollHeight past the intentional content size.
+    Without this, the playhead at t=end sticks ~5px past the right edge
+    and scrollbars thrash via ResizeObserver ↔ layout feedback.
+  */
+  overflow: hidden;
 }
 
 .atl-ruler {
@@ -925,6 +936,8 @@ body.director-mode #hud-bottom {
   cursor: ew-resize;
   touch-action: none;
   flex-shrink: 0;
+  /* Tick labels near t=end must not expand horizontal overflow */
+  overflow: hidden;
 }
 
 .atl-tick {
@@ -964,6 +977,8 @@ body.director-mode #hud-bottom {
 .atl-playhead {
   position: absolute;
   top: 0;
+  /* 100% of track-inner — stays inside the clipped box (no V-overflow). */
+  height: 100%;
   width: 10px;
   margin-left: -5px;
   background: transparent;

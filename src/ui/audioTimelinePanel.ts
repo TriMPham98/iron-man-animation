@@ -191,24 +191,34 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   const trackViewportH = () => Math.max(trackScroll.clientHeight || 0, 48);
 
+  /** Last layout sizes — skip no-op ResizeObserver re-renders that thrash scrollbars. */
+  let lastLayoutKey = '';
+
   /** px/sec so full assembly spans the track (or wider when zoomed in). */
   const syncScale = () => {
     const vw = trackViewportW();
     const fit = assemblyDuration > 0 ? vw / assemblyDuration : 48;
-    pxPerSec = Math.max(8, fit * zoomMul);
+    // Floor so fit-to-width never exceeds the viewport by a subpixel
+    // (subpixel oversize is enough to toggle H-scroll → layout loop).
+    pxPerSec = Math.max(8, Math.floor(fit * zoomMul * 1000) / 1000);
   };
 
   const contentWidth = () => {
     syncScale();
-    // Always at least full viewport so the track never ends short of the edge
-    return Math.max(trackViewportW(), assemblyDuration * pxPerSec);
+    const vw = trackViewportW();
+    // Always at least full viewport so the track never ends short of the edge.
+    // Floor the timed width so we never request 1px past the scrollport.
+    return Math.max(vw, Math.floor(assemblyDuration * pxPerSec));
   };
 
   const renderRuler = () => {
     const w = contentWidth();
-    trackInner.style.width = `${w}px`;
-    rulerEl.style.width = `${w}px`;
-    lanesEl.style.width = `${w}px`;
+    // Fit zoom: width 100% tracks the scrollport exactly (no px rounding fight).
+    // Zoomed in: explicit px width so the track can scroll horizontally.
+    const widthCss = zoomMul <= 1 + 1e-6 ? '100%' : `${w}px`;
+    trackInner.style.width = widthCss;
+    rulerEl.style.width = widthCss;
+    lanesEl.style.width = widthCss;
 
     rulerEl.replaceChildren();
     const step = pxPerSec >= 64 ? 0.5 : pxPerSec >= 36 ? 1 : 2;
@@ -315,15 +325,27 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const layoutLanes = () => {
     clips = packIntoLanes(clips, MAX_LANES);
     const n = visibleLaneCount();
-    const avail = Math.max(
-      trackViewportH() - RULER_H,
-      n * LANE_H_MIN + LANE_GAP * (n + 1),
-    );
+    // Use clientHeight (scrollbar-gutter stable) so lane fill matches the
+    // scrollport without oscillating when overflow toggles.
+    const viewportLanes = Math.max(0, trackViewportH() - RULER_H);
+    const minContent = n * LANE_H_MIN + LANE_GAP * (n + 1);
+    const avail = Math.max(viewportLanes, minContent);
     const gaps = LANE_GAP * (n + 1);
     // Flex row height across however many tracks are showing
     laneH = Math.max(LANE_H_MIN, Math.floor((avail - gaps) / n));
     const contentH = n * (laneH + LANE_GAP) + LANE_GAP;
-    lanesEl.style.minHeight = `${Math.max(contentH, avail)}px`;
+    // Only force a min-height when clips need more room than the viewport.
+    // Filling with height:100% alone avoids minHeight === clientHeight edge
+    // cases that can flip the vertical scrollbar on subpixel layouts.
+    if (contentH > viewportLanes) {
+      lanesEl.style.minHeight = `${contentH}px`;
+      // Grow track-inner so overflow:hidden still allows vertical scroll
+      // (height:100% alone would clip extra lanes inside the scrollport).
+      trackInner.style.height = `${RULER_H + contentH}px`;
+    } else {
+      lanesEl.style.minHeight = '';
+      trackInner.style.height = '100%';
+    }
     lanesEl.style.height = '100%';
 
     const band = laneH + LANE_GAP;
@@ -432,8 +454,13 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   };
 
   const updatePlayheadDom = () => {
-    playheadEl.style.left = `${playheadSec * pxPerSec}px`;
-    playheadEl.style.height = `${RULER_H + (lanesEl.offsetHeight || 64)}px`;
+    // Keep the playhead center within [0, assembly end]. The 10px hit target
+    // (margin-left -5) is clipped by track-inner so t=end never inflates
+    // scrollWidth. Height is CSS top/bottom:0 — never set a px height that
+    // can exceed the track and thrash the vertical scrollbar every frame.
+    const t = Math.max(0, Math.min(playheadSec, assemblyDuration));
+    playheadEl.style.left = `${t * pxPerSec}px`;
+    playheadEl.style.height = '';
   };
 
   const clientXToTime = (clientX: number): number => {
@@ -729,11 +756,23 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     renderClips();
   });
 
+  const relayoutFromSize = () => {
+    // Debounce identity: same viewport + duration + zoom ⇒ skip full rebuild.
+    // Without this, scrollbar show/hide can re-fire RO forever at t=end.
+    const key = `${trackScroll.clientWidth}x${trackScroll.clientHeight}:${assemblyDuration}:${zoomMul}:${visibleLaneCount()}`;
+    if (key === lastLayoutKey) {
+      updatePlayheadDom();
+      return;
+    }
+    lastLayoutKey = key;
+    renderRuler();
+    renderClips();
+  };
+
   const ro =
     typeof ResizeObserver !== 'undefined'
       ? new ResizeObserver(() => {
-          renderRuler();
-          renderClips();
+          relayoutFromSize();
         })
       : null;
   ro?.observe(trackScroll);
