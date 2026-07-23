@@ -232,17 +232,29 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     }
   };
 
-  const renderLibrary = () => {
+  /** Library chips sorted shortest → longest (stable by label). */
+  const renderLibrary = async () => {
+    const ranked = await Promise.all(
+      SOUNDS.map(async (def) => ({
+        def,
+        dur: await getDuration(def.file),
+      })),
+    );
+    ranked.sort(
+      (a, b) => a.dur - b.dur || a.def.label.localeCompare(b.def.label),
+    );
+
     libraryEl.replaceChildren();
-    for (const def of SOUNDS) {
+    for (const { def, dur } of ranked) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'atl-lib-chip';
       chip.draggable = true;
       chip.dataset.soundId = def.id;
       chip.style.setProperty('--chip', colorForSoundId(def.id));
-      chip.innerHTML = `<span class="atl-lib-label">${escapeHtml(def.label)}</span>`;
-      chip.title = `${def.label} — drag onto timeline (or click to audition)`;
+      const durLabel = fmt(dur, dur >= 10 ? 1 : 2);
+      chip.innerHTML = `<span class="atl-lib-label">${escapeHtml(def.label)}</span><span class="atl-lib-dur">${durLabel}s</span>`;
+      chip.title = `${def.label} · ${durLabel}s — drag onto timeline (or click to audition)`;
 
       chip.addEventListener('dragstart', (e) => {
         e.dataTransfer?.setData('application/x-suit-sound', def.id);
@@ -873,7 +885,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     }
   };
 
-  renderLibrary();
+  void renderLibrary();
   renderRuler();
   renderClips();
   renderMeta();

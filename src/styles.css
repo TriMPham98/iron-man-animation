@@ -856,7 +856,10 @@ body.director-mode #hud-bottom {
 }
 
 .atl-lib-chip {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem;
   width: 100%;
   text-align: left;
   padding: 0.2rem 0.3rem;
@@ -884,10 +887,18 @@ body.director-mode #hud-bottom {
 }
 
 .atl-lib-label {
-  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.atl-lib-dur {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: rgba(232, 228, 217, 0.4);
 }
 
 .atl-track-wrap {
