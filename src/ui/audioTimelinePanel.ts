@@ -15,6 +15,7 @@ import {
   type TimelineClip,
 } from '../audio/timelineModel';
 import { colorForSoundId, SOUNDS } from '../audio/sounds';
+import { paintClipWaveform, prewarmWaveforms } from '../audio/waveform';
 
 const LANE_H_MIN = 18;
 const LANE_GAP = 2;
@@ -152,10 +153,11 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     return d;
   };
 
-  // Pre-warm catalog durations
+  // Pre-warm catalog durations + waveform peaks (shared decode cache)
   for (const s of SOUNDS) {
     void getDuration(s.file);
   }
+  prewarmWaveforms(SOUNDS.map((s) => s.file));
 
   const persist = (): boolean => {
     // Always write full list (including empty after delete/clear)
@@ -396,15 +398,30 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
       const trimmed =
         c.cropIn > 0.001 || c.cropOut < c.sourceDuration - 0.001;
-      node.innerHTML = `
-        <span class="atl-clip-label">${escapeHtml(c.label)}${
-          trimmed
-            ? ` <em class="atl-clip-crop-tag">${fmt(c.cropIn, 2)}–${fmt(c.cropOut, 2)}</em>`
-            : ''
-        }</span>
-        <span class="atl-clip-handle left" data-handle="in" title="Crop in"></span>
-        <span class="atl-clip-handle right" data-handle="out" title="Crop out"></span>
-      `;
+
+      const wave = document.createElement('canvas');
+      wave.className = 'atl-clip-wave';
+      wave.setAttribute('aria-hidden', 'true');
+
+      const label = document.createElement('span');
+      label.className = 'atl-clip-label';
+      label.innerHTML = `${escapeHtml(c.label)}${
+        trimmed
+          ? ` <em class="atl-clip-crop-tag">${fmt(c.cropIn, 2)}–${fmt(c.cropOut, 2)}</em>`
+          : ''
+      }`;
+
+      const handleIn = document.createElement('span');
+      handleIn.className = 'atl-clip-handle left';
+      handleIn.dataset.handle = 'in';
+      handleIn.title = 'Crop in';
+
+      const handleOut = document.createElement('span');
+      handleOut.className = 'atl-clip-handle right';
+      handleOut.dataset.handle = 'out';
+      handleOut.title = 'Crop out';
+
+      node.append(wave, label, handleIn, handleOut);
 
       node.addEventListener('pointerdown', (e) => {
         const t = e.target as HTMLElement;
@@ -418,6 +435,21 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       });
 
       lanesEl.appendChild(node);
+
+      // Paint after layout so canvas has a real CSS size
+      requestAnimationFrame(() => {
+        void paintClipWaveform(
+          wave,
+          c.file,
+          c.cropIn,
+          c.cropOut,
+          c.sourceDuration,
+          {
+            color: 'rgba(255, 255, 255, 0.5)',
+            fillColor: 'rgba(255, 255, 255, 0.14)',
+          },
+        );
+      });
     }
 
     clipCountEl.textContent = `${clips.length} clip${clips.length === 1 ? '' : 's'}`;
