@@ -325,10 +325,8 @@ export function createAssemblySession(
       startSequence();
       return;
     } else {
-      // Free-look / director: keep framing while assembly continues.
-      // No prior orbit: resume snaps back onto the cinematic path.
-      const preserveCamera =
-        ui.isDirectorMode() || assembly.userOwnsCamera();
+      // Free-look only if the user claimed orbit; otherwise resume on path.
+      const preserveCamera = assembly.userOwnsCamera();
       applyAssemblyUi({ preserveTarget: preserveCamera });
       assembly.resume({ preserveCamera });
       audioPlayFromProgress(assembly.getProgress());
@@ -339,17 +337,18 @@ export function createAssemblySession(
   const seek = (p: number) => {
     // Scrub invalidates overlay parents / visibility — drop selection
     clearPick();
-    // After free-look orbit, scrub plates only — never steal framing
-    const preserveCamera = assembly.userOwnsCamera();
+    // Timeline scrub always re-attaches to the cinematic camera. Orbiting
+    // the viewport (bindInput controls 'start') is what detaches free-look.
     audioStop();
-    assembly.seek(p, { preserveCamera });
+    assembly.seek(p, { preserveCamera: false });
     audioPlayhead(p);
     syncDebugPauseLabel();
     if (p >= 0.999) {
-      applyCompleteUi({ preserveCamera });
+      applyCompleteUi({ preserveCamera: false });
     } else {
-      // Scrub pauses the timeline — allow look-around at that frame
-      applyAssemblyUi({ preserveTarget: preserveCamera });
+      // Reseed orbit pivot from cinematic lookTarget so the next drag
+      // starts from this frame’s path pose (not a stale free-look target).
+      applyAssemblyUi({ preserveTarget: false });
       const pct = Math.round(p * 100);
       ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
       ui.setStatus('DEBUG SCRUB', false);

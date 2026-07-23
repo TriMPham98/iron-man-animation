@@ -104,7 +104,8 @@ export function bindInput(options: BindInputOptions): void {
   controls.addEventListener('start', () => {
     // User take-over stops idle spin (complete mode); free-look while paused has no spin
     if (controls.autoRotate) controls.autoRotate = false;
-    // Orbit claims the camera — mid-play path, scrub, and resume all yield to free-look
+    // Orbit detaches from the cinematic path. Scrubbing the audio timeline
+    // (or ←/→) re-attaches via session.seek → preserveCamera: false.
     session.assembly?.setUserOwnsCamera(true);
   });
 

@@ -141,16 +141,21 @@ async function boot(): Promise<void> {
 
     const delta = clock.getDelta();
 
-    // Orbit is live mid-assembly; cinematic path yields once the user claims free-look.
+    // Camera ownership (scrub ↔ orbit):
+    // - Path mode (!userOwnsCamera): cinematic lookTarget + FOV from the
+    //   timeline; OrbitControls still runs so distance/angles keep the
+    //   established composition (skipping update() made pure GSAP poses
+    //   and changed framing).
+    // - Free-look (userOwnsCamera): orbit owns target + position.
+    // Scrub re-attaches to path; viewport drag detaches (bindInput).
     if (controls.enabled) {
       const ownsCamera = session.assembly.userOwnsCamera();
-      const playing = session.assembly.isPlaying();
-      if (playing && !ownsCamera) {
-        // Keep orbit pivot in sync so the first drag does not jump
+      if (!ownsCamera) {
+        // Pivot follows the path so composition tracks cinematic look-ats
         controls.target.copy(lookTarget);
       }
       controls.update();
-      if (ownsCamera || !playing) {
+      if (ownsCamera) {
         lookTarget.copy(controls.target);
       }
     }

@@ -48,8 +48,8 @@ interface PieceMotionSpan {
 export interface CameraControlOptions {
   /**
    * Keep the live camera/orbit framing instead of snapping back onto the
-   * cinematic path. Used after the user has free-looked (orbit), including
-   * mid-play takeovers of the progress-driven camera.
+   * cinematic path. Used while free-look is active (viewport orbit).
+   * Timeline scrub always passes false so the path re-attaches.
    */
   preserveCamera?: boolean;
 }
@@ -60,7 +60,7 @@ export interface AssemblyController {
   resume: (opts?: CameraControlOptions) => void;
   /**
    * Seek to normalized progress 0–1 (pauses). Scrubs plate/systems state.
-   * Camera path is re-applied unless the user owns free-look framing.
+   * Re-applies the cinematic camera unless `preserveCamera` is set.
    */
   seek: (progress01: number, opts?: CameraControlOptions) => void;
   getProgress: () => number;
@@ -1044,8 +1044,9 @@ export function createAssemblyTimeline(
       const timeline = ensureTl();
       if (opts?.preserveCamera) {
         userOwnsCamera = true;
-      } else if (!userOwnsCamera) {
+      } else {
         // Snap back onto the path immediately (drops free-look offset)
+        userOwnsCamera = false;
         applyCamera();
       }
       if (timeline.progress() >= 1) {
@@ -1063,10 +1064,9 @@ export function createAssemblyTimeline(
       const timeline = ensureTl();
       timeline.pause();
       playing = false;
-      if (opts?.preserveCamera) {
-        userOwnsCamera = true;
-      }
-      // applyCamera is a no-op while userOwnsCamera (director free-look)
+      // Scrub re-attaches to the cinematic path unless explicitly preserving
+      // free-look. Orbit (bindInput) is what claims ownership again.
+      userOwnsCamera = !!opts?.preserveCamera;
       syncAfterSeek(progress01);
     },
     getProgress: () => {
@@ -1094,6 +1094,8 @@ export function createAssemblyTimeline(
     userOwnsCamera: () => userOwnsCamera,
     setUserOwnsCamera: (owns: boolean) => {
       userOwnsCamera = owns;
+      // Releasing free-look does not by itself move the camera — callers that
+      // want the path (seek / play / resume) apply framing explicitly.
     },
   };
 }
