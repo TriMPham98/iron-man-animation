@@ -1,9 +1,6 @@
 import { findSound, SOUNDS } from './sounds';
 
 const STORAGE_KEY = 'mark-suit-audio-timeline-v1';
-/** Bump when assembly choreography retimes SFX (e.g. palm ECU removed). */
-export const CHORE_TIMELINE_VERSION = 3;
-const CHORE_FLAG_KEY = 'mark-suit-audio-chore-v';
 
 export type TimelineClip = {
   /** Unique instance id on the track. */
@@ -113,6 +110,15 @@ export function assignLanes(clips: TimelineClip[]): TimelineClip[] {
   return out;
 }
 
+/** Whether any timeline snapshot is already stored (including an empty list). */
+export function hasSavedTimeline(): boolean {
+  try {
+    return window.localStorage.getItem(STORAGE_KEY) != null;
+  } catch {
+    return false;
+  }
+}
+
 export function loadTimeline(): TimelineClip[] {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -129,37 +135,21 @@ export function loadTimeline(): TimelineClip[] {
   }
 }
 
-/** True when local clips have not yet been migrated to the current chore cut. */
-export function needsChoreTimelineMigration(): boolean {
-  try {
-    return (
-      window.localStorage.getItem(CHORE_FLAG_KEY) !==
-      String(CHORE_TIMELINE_VERSION)
-    );
-  } catch {
-    return false;
-  }
-}
-
-export function markChoreTimelineMigrated(): void {
-  try {
-    window.localStorage.setItem(
-      CHORE_FLAG_KEY,
-      String(CHORE_TIMELINE_VERSION),
-    );
-  } catch {
-    /* ignore */
-  }
-}
-
-export function saveTimeline(clips: TimelineClip[]): void {
+/**
+ * Persist the full clip list (adds, moves, crops, deletes, clear).
+ * Empty arrays are saved intentionally so deletes survive reload.
+ * Returns false if storage is unavailable (private mode / quota).
+ */
+export function saveTimeline(clips: TimelineClip[]): boolean {
   try {
     // Persist catalog clips only (blob URLs are session-local)
     const persistable = clips.filter((c) => !c.file.startsWith('blob:'));
     const snap: TimelineSnapshot = { version: 1, clips: persistable };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snap));
-  } catch {
-    /* private mode */
+    return true;
+  } catch (err) {
+    console.warn('[audio-timeline] failed to save clips', err);
+    return false;
   }
 }
 

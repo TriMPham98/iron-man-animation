@@ -9,9 +9,8 @@ import {
   clampCrop,
   createClipFromSound,
   formatExportCard,
+  hasSavedTimeline,
   loadTimeline,
-  markChoreTimelineMigrated,
-  needsChoreTimelineMigration,
   newClipId,
   saveTimeline,
   type TimelineClip,
@@ -98,18 +97,22 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const LOOP_STORAGE_KEY = 'mark-suit-audio-loop';
 
   const engine = createAudioEngine();
+  /**
+   * Persistence: every edit (add / move / crop / delete / clear) writes the
+   * full clip list to localStorage. Reload loads that exact snapshot.
+   * Seed is only used on first visit when nothing has been saved yet —
+   * never overwrites user edits or an intentional empty timeline.
+   */
   let clips: TimelineClip[] = loadTimeline();
-
-  // One-shot: retimed/cropped SFX for assembly without palm-ECU hold
-  if (needsChoreTimelineMigration()) {
+  if (!hasSavedTimeline()) {
     const seedClips = (choreSeed as { clips: TimelineClip[] }).clips;
     if (Array.isArray(seedClips) && seedClips.length > 0) {
-      // Prefer seed when user already had a sequence (same authoring session)
-      // or empty timeline — always apply chore v2 crops/timing once.
       clips = assignLanes(seedClips.map(clampCrop));
       saveTimeline(clips);
+    } else {
+      // Record empty so later reloads don't re-seed
+      saveTimeline([]);
     }
-    markChoreTimelineMigrated();
   }
 
   let selectedId: string | null = null;
@@ -164,8 +167,16 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   }
 
   const persist = () => {
+    // Always write full list (including empty after delete/clear)
     saveTimeline(clips);
   };
+
+  // Flush on navigation / refresh so the last edit is never lost mid-frame
+  const flushPersist = () => {
+    saveTimeline(clips);
+  };
+  window.addEventListener('pagehide', flushPersist);
+  window.addEventListener('beforeunload', flushPersist);
 
   const select = (id: string | null) => {
     selectedId = id;
@@ -642,13 +653,20 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   cropOutInput.addEventListener('change', applyMetaFromInputs);
   startInput.addEventListener('change', applyMetaFromInputs);
 
-  btnDelete.addEventListener('click', () => {
-    if (!selectedId) return;
+  const deleteSelected = (): boolean => {
+    if (!selectedId) return false;
+    // Stop playback if this instance was sounding
+    engine.stop(selectedId);
     clips = clips.filter((c) => c.id !== selectedId);
     selectedId = null;
     persist();
     renderClips();
     renderMeta();
+    return true;
+  };
+
+  btnDelete.addEventListener('click', () => {
+    deleteSelected();
   });
 
   btnClear.addEventListener('click', () => {
@@ -720,17 +738,18 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       : null;
   ro?.observe(trackScroll);
 
-  // Keyboard: Delete / Backspace removes selected when panel focused
-  root.addEventListener('keydown', (e) => {
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (selectedId) {
-        e.preventDefault();
-        btnDelete.click();
-      }
-    }
-  });
+  // Delete / Backspace removes the highlighted clip (global while panel open)
+  const onWindowKeydown = (e: KeyboardEvent) => {
+    if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+    if (root.classList.contains('hidden')) return;
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (!selectedId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    deleteSelected();
+  };
+  window.addEventListener('keydown', onWindowKeydown, true);
 
   // ── Transport sync ──────────────────────────────────────────────
   let scheduled: number[] = [];
@@ -836,8 +855,12 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     isScrubbing: () => scrubbing,
     engine,
     destroy: () => {
+      flushPersist();
       onTransportStop();
       ro?.disconnect();
+      window.removeEventListener('pagehide', flushPersist);
+      window.removeEventListener('beforeunload', flushPersist);
+      window.removeEventListener('keydown', onWindowKeydown, true);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
