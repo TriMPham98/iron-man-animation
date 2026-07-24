@@ -467,7 +467,7 @@ body.viewer-mode .hud-bottom-meta {
   bottom: auto;
   z-index: 50;
   width: min(17.5rem, calc(100vw - 2rem));
-  max-height: min(50vh, calc(100vh - min(40vh, 20rem) - 6.5rem));
+  max-height: min(50vh, calc(100vh - min(32vh, 16rem) - 6.5rem));
   overflow: auto;
   padding: 0.7rem 0.75rem 0.65rem;
   pointer-events: auto;
@@ -729,7 +729,7 @@ body.viewer-mode .reclass-panel {
     right: 0.5rem;
     left: auto;
     width: min(17.5rem, calc(100vw - 1rem));
-    max-height: min(40vh, calc(100vh - min(42vh, 18rem) - 6rem));
+    max-height: min(40vh, calc(100vh - min(34vh, 15rem) - 6rem));
   }
 }
 
@@ -750,9 +750,9 @@ body.viewer-mode .reclass-panel {
   right: 0;
   bottom: 0;
   z-index: 45;
-  /* Taller so more per-sample tracks are visible before scrolling */
-  height: min(40vh, 20rem);
-  max-height: min(40vh, 20rem);
+  /* Compact DAW: ~5 sample tracks fill the body; scroll for the rest */
+  height: min(32vh, 16rem);
+  max-height: min(32vh, 16rem);
   display: flex;
   flex-direction: column;
   pointer-events: auto;
@@ -774,7 +774,7 @@ body.viewer-mode .reclass-panel {
 
 /* Lift bottom HUD when audio timeline is open (director) */
 body.director-mode #hud-bottom {
-  bottom: min(40vh, 20rem);
+  bottom: min(32vh, 16rem);
 }
 
 /* Reclass stays top-right; do not pin above the audio timeline. */
@@ -963,9 +963,9 @@ body.director-mode #hud-bottom {
   gap: 0.3rem;
   width: 100%;
   margin: 0;
-  padding: 0 0.3rem 0 0.35rem;
+  padding: 0 0.35rem 0 0.4rem;
   font: inherit;
-  font-size: 0.42rem;
+  font-size: 0.5rem;
   letter-spacing: 0.04em;
   color: rgba(232, 228, 217, 0.78);
   text-align: left;
@@ -1019,7 +1019,7 @@ body.director-mode #hud-bottom {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
-  font-size: 0.38rem;
+  font-size: 0.42rem;
   color: rgba(232, 228, 217, 0.4);
 }
 
@@ -1196,10 +1196,10 @@ body.director-mode #hud-bottom {
   position: relative;
   display: block;
   z-index: 2;
-  padding: 0.08rem 0.3rem;
-  font-size: 0.44rem;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.52rem;
   letter-spacing: 0.03em;
-  line-height: 1.15;
+  line-height: 1.2;
   color: #f0ebe0;
   white-space: nowrap;
   overflow: hidden;
@@ -1368,12 +1368,12 @@ body.director-mode #hud-bottom {
   }
 
   body.director-mode #hud-bottom {
-    bottom: min(42vh, 18rem);
+    bottom: min(34vh, 15rem);
   }
 
   .audio-timeline {
-    height: min(42vh, 18rem);
-    max-height: min(42vh, 18rem);
+    height: min(34vh, 15rem);
+    max-height: min(34vh, 15rem);
   }
 
   .atl-labels-col {

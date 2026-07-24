@@ -23,9 +23,13 @@ import {
   prewarmWaveforms,
 } from '../audio/waveform';
 
-/** Fixed row height per sample track (scroll when many). */
-const LANE_H = 22;
-const LANE_GAP = 1;
+/**
+ * How many sample tracks fit in the viewport before scrolling.
+ * Row height flexes so these rows fill the track pane.
+ */
+const VISIBLE_LANES = 5;
+const LANE_H_MIN = 26;
+const LANE_GAP = 2;
 const RULER_H = 16;
 const MIN_CROP = 0.05;
 
@@ -131,6 +135,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   /** Zoom multiplier on fit-to-width scale (1 = timeline spans full track). */
   let zoomMul = 1;
   let pxPerSec = 48;
+  /** Dynamic row height — sized so ~VISIBLE_LANES fill the track pane. */
+  let laneH = LANE_H_MIN;
   let muted = false;
   let loopEnabled = false;
   try {
@@ -292,23 +298,33 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   const trackCount = () => trackRows().length;
 
-  const bandH = () => LANE_H + LANE_GAP;
+  const bandH = () => laneH + LANE_GAP;
 
   const layoutLanes = () => {
     clips = assignLanes(clips, catalogOrder);
     const n = trackCount();
+    // Size each row so VISIBLE_LANES fill the track scrollport (taller rows).
+    const viewportLanes = Math.max(
+      0,
+      (trackScroll.clientHeight || 0) - RULER_H,
+    );
+    const gaps = LANE_GAP * (VISIBLE_LANES + 1);
+    laneH = Math.max(
+      LANE_H_MIN,
+      Math.floor((viewportLanes - gaps) / VISIBLE_LANES),
+    );
     const contentH = LANE_GAP + n * bandH();
     lanesEl.style.height = `${contentH}px`;
     lanesEl.style.minHeight = `${contentH}px`;
     headersEl.style.height = `${contentH}px`;
-    // Content taller than viewport → vertical scroll inside track-scroll
+    // Content taller than viewport → vertical scroll for remaining samples
     trackInner.style.minHeight = '100%';
     trackInner.style.height = `${RULER_H + contentH}px`;
 
     const stops: string[] = [];
     for (let i = 0; i < n; i++) {
       const y0 = LANE_GAP + i * bandH();
-      const y1 = y0 + LANE_H;
+      const y1 = y0 + laneH;
       const fill =
         i % 2 === 0 ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.028)';
       stops.push(
@@ -329,7 +345,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const renderTrackHeaders = () => {
     const rows = trackRows();
     headersEl.replaceChildren();
-    // Padding + gap mirror lane band geometry (LANE_GAP + n * (LANE_H + LANE_GAP))
+    // Padding + gap mirror lane band geometry (LANE_GAP + n * (laneH + LANE_GAP))
     headersEl.style.gap = `${LANE_GAP}px`;
     headersEl.style.paddingTop = `${LANE_GAP}px`;
     headersEl.style.paddingBottom = '0';
@@ -342,8 +358,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       btn.dataset.soundId = row.soundId;
       btn.dataset.lane = String(row.lane);
       btn.style.setProperty('--chip', colorForSoundId(row.soundId));
-      btn.style.height = `${LANE_H}px`;
-      btn.style.flex = `0 0 ${LANE_H}px`;
+      btn.style.height = `${laneH}px`;
+      btn.style.flex = `0 0 ${laneH}px`;
 
       const def =
         row.kind === 'catalog'
@@ -413,7 +429,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       node.style.left = `${left}px`;
       node.style.width = `${width}px`;
       node.style.top = `${top}px`;
-      node.style.height = `${LANE_H}px`;
+      node.style.height = `${laneH}px`;
       node.style.setProperty('--clip', colorForSoundId(c.soundId));
 
       const trimmed =
@@ -911,7 +927,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const relayoutFromSize = () => {
     // Debounce identity: same viewport + duration + zoom ⇒ skip full rebuild.
     // Without this, scrollbar show/hide can re-fire RO forever at t=end.
-    const key = `${trackScroll.clientWidth}x${trackScroll.clientHeight}:${assemblyDuration}:${zoomMul}:${trackCount()}`;
+    const key = `${trackScroll.clientWidth}x${trackScroll.clientHeight}:${assemblyDuration}:${zoomMul}:${trackCount()}:${laneH}`;
     if (key === lastLayoutKey) {
       updatePlayheadDom();
       return;
