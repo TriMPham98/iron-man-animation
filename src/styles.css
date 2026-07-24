@@ -249,115 +249,11 @@ body.scene-ready #app {
 
 /* Keyboard-only affordance (Tab). Cleared after pointer via blurButtons. */
 .director-btn:focus-visible,
-.replay-btn:focus-visible,
-.skip-btn:focus-visible,
 .atl-btn:focus-visible,
 .reclass-btn:focus-visible,
 .reclass-toggle:focus-visible {
   outline: 2px solid rgba(232, 197, 71, 0.65);
   outline-offset: 2px;
-}
-
-.hud-bottom {
-  /* Compact bar — progress scrub lives on the audio timeline */
-  --hud-bottom-cols: minmax(0, 1fr) auto;
-  --hud-bottom-gap: 0.85rem 1.1rem;
-  bottom: 0;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.35rem;
-  padding-top: 0.65rem;
-  padding-bottom: 0.65rem;
-  border-top: 1px solid rgba(201, 162, 39, 0.18);
-  background: linear-gradient(to top, rgba(5, 5, 8, 0.88) 55%, transparent);
-  pointer-events: none;
-}
-
-.hud-bottom-row {
-  display: grid;
-  grid-template-columns: var(--hud-bottom-cols);
-  align-items: center;
-  gap: var(--hud-bottom-gap);
-  width: 100%;
-}
-
-.hud-left {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  min-width: 0;
-  justify-self: stretch;
-  justify-content: center;
-}
-
-.hud-left #integrity {
-  line-height: 1.25;
-  letter-spacing: 0.16em;
-}
-
-.hud-actions {
-  justify-self: end;
-  align-self: center;
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  pointer-events: auto;
-}
-
-.skip-btn {
-  pointer-events: auto;
-  font-family: var(--mono);
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  padding: 0.7rem 1.1rem;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid rgba(232, 228, 217, 0.28);
-  cursor: pointer;
-  transition:
-    background 0.2s ease,
-    color 0.2s ease,
-    border-color 0.2s ease,
-    opacity 0.3s ease;
-}
-
-.skip-btn:not(:disabled):hover {
-  color: var(--text);
-  border-color: rgba(232, 228, 217, 0.55);
-  background: rgba(232, 228, 217, 0.06);
-}
-
-.skip-btn:disabled,
-.skip-btn.hidden {
-  opacity: 0;
-  pointer-events: none;
-  visibility: hidden;
-}
-
-body.viewer-mode .hud-bottom-meta {
-  display: none;
-}
-
-/* MOVING / PICK under integrity · actions */
-.hud-bottom-meta {
-  display: grid;
-  grid-template-columns: var(--hud-bottom-cols);
-  align-items: start;
-  gap: var(--hud-bottom-gap);
-  width: 100%;
-  min-height: 1.15em;
-}
-
-.hint {
-  font-size: 0.58rem;
-  letter-spacing: 0.12em;
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-
-.hint.visible {
-  opacity: 0.7;
 }
 
 /* Center column of top bar — always above the viewport figure */
@@ -396,67 +292,6 @@ body.viewer-mode .hud-bottom-meta {
 .status.online {
   color: #7ee8ff;
   text-shadow: 0 0 16px rgba(126, 232, 255, 0.45);
-}
-
-.replay-btn {
-  pointer-events: auto;
-  font-family: var(--mono);
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  padding: 0.7rem 1.4rem;
-  color: var(--gold);
-  background: transparent;
-  border: 1px solid rgba(201, 162, 39, 0.45);
-  cursor: pointer;
-  transition:
-    background 0.2s ease,
-    color 0.2s ease,
-    border-color 0.2s ease,
-    opacity 0.3s ease;
-  opacity: 0.35;
-}
-
-.replay-btn:not(:disabled) {
-  opacity: 1;
-}
-
-.replay-btn:not(:disabled):hover {
-  background: rgba(201, 162, 39, 0.12);
-  border-color: var(--gold-bright);
-  color: var(--gold-bright);
-}
-
-.replay-btn:not(:disabled):active {
-  background: rgba(201, 162, 39, 0.22);
-}
-
-.replay-btn:disabled {
-  cursor: default;
-}
-
-.debug-active-piece,
-.debug-picked-piece {
-  font-size: 0.55rem;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-height: 1.15em;
-  line-height: 1.25;
-  font-variant-numeric: tabular-nums;
-  min-width: 0;
-}
-
-.debug-active-piece {
-  justify-self: stretch;
-  text-align: left;
-}
-
-.debug-picked-piece {
-  justify-self: end;
-  text-align: right;
 }
 
 /* —— director reclassifier card (top-right, clear of audio timeline) —— */
@@ -733,16 +568,6 @@ body.viewer-mode .reclass-panel {
   }
 }
 
-.debug-active-piece.has-active {
-  color: #7ee8ff;
-  text-shadow: 0 0 10px rgba(126, 232, 255, 0.25);
-}
-
-.debug-picked-piece.has-pick {
-  color: var(--gold-bright);
-  text-shadow: 0 0 10px rgba(232, 197, 71, 0.28);
-}
-
 /* —— director audio timeline (compact — leave room for the suit) —— */
 .audio-timeline {
   position: fixed;
@@ -770,11 +595,6 @@ body.viewer-mode .reclass-panel {
 
 .audio-timeline.hidden {
   display: none;
-}
-
-/* Lift bottom HUD when audio timeline is open (director) */
-body.director-mode #hud-bottom {
-  bottom: min(32vh, 16rem);
 }
 
 /* Reclass stays top-right; do not pin above the audio timeline. */
@@ -1367,10 +1187,6 @@ body.director-mode #hud-bottom {
     grid-column: 1 / -1;
   }
 
-  body.director-mode #hud-bottom {
-    bottom: min(34vh, 15rem);
-  }
-
   .audio-timeline {
     height: min(34vh, 15rem);
     max-height: min(34vh, 15rem);
@@ -1388,45 +1204,10 @@ body.director-mode #hud-bottom {
     font-size: 0.55rem;
   }
 
-  .hint {
-    display: none;
-  }
-
   .hud-top {
     grid-template-columns: 1fr;
     justify-items: center;
     gap: 0.35rem;
-  }
-
-  .hud-bottom {
-    --hud-bottom-cols: 1fr;
-    --hud-bottom-gap: 0.45rem;
-  }
-
-  .hud-bottom-row {
-    justify-items: stretch;
-  }
-
-  .hud-left {
-    text-align: center;
-    align-items: center;
-  }
-
-  .hud-actions {
-    justify-self: center;
-  }
-
-  .hud-bottom-meta {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    gap: 0.2rem;
-    text-align: center;
-  }
-
-  .debug-active-piece,
-  .debug-picked-piece {
-    text-align: center;
-    width: 100%;
   }
 
   .hud-brand,
@@ -1443,12 +1224,6 @@ body.director-mode #hud-bottom {
     font-size: 0.52rem;
     letter-spacing: 0.1em;
   }
-
-  .skip-btn,
-  .replay-btn {
-    padding: 0.55rem 0.9rem;
-    font-size: 0.55rem;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1462,7 +1237,6 @@ body.director-mode #hud-bottom {
 
   .title,
   .status,
-  .hint,
   #loading {
     transition: none !important;
   }

@@ -3,7 +3,7 @@ import {
   entryFromPiece,
   formatReclassCard,
   isPieceWave,
-  shortPieceId as formatShortId,
+  shortPieceId,
   WAVE_ORDER,
   type ReclassEntry,
 } from './reclassCard';
@@ -23,33 +23,26 @@ export interface OverlayHandles {
   hideLoading: () => void;
   showHud: () => void;
   setStatus: (text: string, online?: boolean) => void;
+  /** Legacy no-op — bottom HUD bar removed. */
   setIntegrity: (text: string) => void;
   setHintVisible: (v: boolean) => void;
+  /** Legacy no-op — R / S keys still work via bindInput. */
   setReplayEnabled: (v: boolean) => void;
   setSkipEnabled: (v: boolean) => void;
   onReplay: (cb: () => void) => void;
   onSkip: (cb: () => void) => void;
   updateClock: (elapsedSec: number) => void;
   fadeTitle: (hide: boolean) => void;
-  /** Whether director tools (audio timeline, reclass, pick meta) are visible. */
+  /** Whether director tools (audio timeline, reclass) are visible. */
   isDirectorMode: () => boolean;
   setDirectorMode: (enabled: boolean) => void;
   onDirectorModeChange: (cb: (enabled: boolean) => void) => void;
   /** Show/hide director chrome based on current mode. */
   syncDirectorChrome: () => void;
-  /**
-   * Legacy no-op — assembly progress is scrubbed on the audio timeline.
-   * Kept so session code can call without branching.
-   */
+  /** Legacy no-ops — bottom bar / scrubber chrome removed or lives on the DAW. */
   setDebugProgress: (p: number) => void;
-  /**
-   * Legacy no-op — pause label lives on the audio timeline toolbar.
-   * Session should also call audioTimeline.setPaused when present.
-   */
   setDebugPaused: (paused: boolean) => void;
-  /** Labels for plates currently mid-flight (director only). */
   setDebugActivePieces: (pieces: DebugActivePiece[]) => void;
-  /** Raycast pick readout (null clears to idle hint). */
   setDebugPickedPiece: (info: DebugPickedPiece | null) => void;
   /**
    * Full armor piece for reclass card (geometry measure). Pass null to clear.
@@ -89,26 +82,14 @@ export function createOverlay(): OverlayHandles {
   const loading = el<HTMLDivElement>('loading');
   const loadingFill = el<HTMLDivElement>('loading-fill');
   const hudTop = el<HTMLElement>('hud-top');
-  const hudBottom = el<HTMLElement>('hud-bottom');
   const hudCenter = el<HTMLDivElement>('hud-center');
   const status = el<HTMLParagraphElement>('status');
-  const integrity = el<HTMLSpanElement>('integrity');
-  const hint = el<HTMLSpanElement>('hint');
-  const replayBtn = el<HTMLButtonElement>('replay-btn');
-  const skipBtn = el<HTMLButtonElement>('skip-btn');
   const directorBtn = el<HTMLButtonElement>('director-btn');
   const clock = el<HTMLSpanElement>('hud-clock');
   const title = el<HTMLHeadingElement>('title');
-  const debugActive = el<HTMLDivElement>('debug-active-piece');
-  const debugPicked = el<HTMLDivElement>('debug-picked-piece');
-  const hudBottomMeta = el<HTMLDivElement>('hud-bottom-meta');
 
-  let replayHandler: (() => void) | null = null;
-  let skipHandler: (() => void) | null = null;
   let directorModeHandler: ((enabled: boolean) => void) | null = null;
   let directorMode = readDirectorPreference();
-
-  const shortPieceId = formatShortId;
 
   // ── Reclass panel state ────────────────────────────────────────
   const RECLASS_COLLAPSE_KEY = 'mark-suit-reclass-collapsed';
@@ -285,21 +266,11 @@ export function createOverlay(): OverlayHandles {
       : 'Director mode — audio timeline & plate pick';
 
     if (directorMode) {
-      hudBottomMeta.classList.remove('hidden');
       reclassPanel.classList.remove('hidden');
     } else {
-      hudBottomMeta.classList.add('hidden');
       reclassPanel.classList.add('hidden');
     }
   };
-
-  replayBtn.addEventListener('click', () => {
-    replayHandler?.();
-  });
-
-  skipBtn.addEventListener('click', () => {
-    skipHandler?.();
-  });
 
   directorBtn.addEventListener('click', () => {
     directorMode = !directorMode;
@@ -319,7 +290,6 @@ export function createOverlay(): OverlayHandles {
     },
     showHud: () => {
       hudTop.classList.remove('hidden');
-      hudBottom.classList.remove('hidden');
       hudCenter.classList.remove('hidden');
       applyDirectorChrome();
     },
@@ -327,24 +297,23 @@ export function createOverlay(): OverlayHandles {
       status.textContent = text;
       status.classList.toggle('online', online);
     },
-    setIntegrity: (text: string) => {
-      integrity.textContent = text;
+    setIntegrity: (_text: string) => {
+      /* bottom HUD removed */
     },
-    setHintVisible: (v: boolean) => {
-      hint.classList.toggle('visible', v);
+    setHintVisible: (_v: boolean) => {
+      /* bottom HUD removed — R / S / Space still work */
     },
-    setReplayEnabled: (v: boolean) => {
-      replayBtn.disabled = !v;
+    setReplayEnabled: (_v: boolean) => {
+      /* use R */
     },
-    setSkipEnabled: (v: boolean) => {
-      skipBtn.disabled = !v;
-      skipBtn.classList.toggle('hidden', !v);
+    setSkipEnabled: (_v: boolean) => {
+      /* use S */
     },
-    onReplay: (cb: () => void) => {
-      replayHandler = cb;
+    onReplay: (_cb: () => void) => {
+      /* session wires R via bindInput */
     },
-    onSkip: (cb: () => void) => {
-      skipHandler = cb;
+    onSkip: (_cb: () => void) => {
+      /* session wires S via bindInput */
     },
     updateClock: (elapsedSec: number) => {
       const m = Math.floor(elapsedSec / 60);
@@ -381,75 +350,11 @@ export function createOverlay(): OverlayHandles {
     setDebugPaused: (_paused: boolean) => {
       /* pause control lives on the audio timeline toolbar */
     },
-    setDebugActivePieces: (pieces: DebugActivePiece[]) => {
-      if (!directorMode) return;
-
-      if (pieces.length === 0) {
-        debugActive.textContent = 'MOVING — —';
-        debugActive.classList.remove('has-active');
-        debugActive.title = '';
-        return;
-      }
-
-      const maxShow = 4;
-      const labels = pieces.map((p) => {
-        const pct = Math.round(p.localProgress * 100);
-        return `${shortPieceId(p.id, p.wave)} ${pct}%`;
-      });
-      const shown = labels.slice(0, maxShow);
-      const extra = pieces.length - shown.length;
-      const text =
-        extra > 0
-          ? `MOVING ${pieces.length} · ${shown.join(' · ')} +${extra}`
-          : pieces.length === 1
-            ? `MOVING · ${shown[0]}`
-            : `MOVING ${pieces.length} · ${shown.join(' · ')}`;
-
-      debugActive.textContent = text;
-      debugActive.classList.add('has-active');
-      debugActive.title = pieces
-        .map(
-          (p) =>
-            `${p.id} (${p.wave}) ${Math.round(p.localProgress * 100)}%`,
-        )
-        .join('\n');
+    setDebugActivePieces: (_pieces: DebugActivePiece[]) => {
+      /* bottom MOVING readout removed */
     },
-    setDebugPickedPiece: (info: DebugPickedPiece | null) => {
-      if (!directorMode) {
-        debugPicked.textContent = 'PICK · click a plate';
-        debugPicked.classList.remove('has-pick');
-        debugPicked.title = '';
-        return;
-      }
-
-      if (!info) {
-        debugPicked.textContent = 'PICK · click a plate';
-        debugPicked.classList.remove('has-pick');
-        debugPicked.title = '';
-        return;
-      }
-
-      const short = shortPieceId(info.id, info.wave);
-      const rest =
-        info.rest != null
-          ? ` · rest(${info.rest.x.toFixed(2)}, ${info.rest.y.toFixed(2)}, ${info.rest.z.toFixed(2)})`
-          : '';
-      const vis = info.visible ? 'on' : 'off';
-      const note = info.note ? ` · ${info.note}` : '';
-      debugPicked.textContent = `PICK · ${short} · ${info.wave} · vis ${vis}${rest}${note}`;
-      debugPicked.classList.add('has-pick');
-      debugPicked.title = [
-        `id: ${info.id}`,
-        `wave: ${info.wave}`,
-        info.meshName ? `mesh: ${info.meshName}` : null,
-        `visible: ${info.visible}`,
-        info.rest
-          ? `rest: ${info.rest.x.toFixed(3)}, ${info.rest.y.toFixed(3)}, ${info.rest.z.toFixed(3)}`
-          : null,
-        info.note ?? null,
-      ]
-        .filter(Boolean)
-        .join('\n');
+    setDebugPickedPiece: (_info: DebugPickedPiece | null) => {
+      /* bottom PICK readout removed — reclass panel still shows the target */
     },
     setReclassPick: (piece: ArmorPiece | null) => {
       reclassPick = piece;
