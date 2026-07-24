@@ -165,53 +165,65 @@
       <!-- Director reclassifier: queue mis-tagged plates → pasteable card -->
       <aside
         id="reclass-panel"
-        class="reclass-panel hidden"
+        class="reclass-panel hidden is-collapsed"
         aria-label="Plate reclassifier"
       >
         <div class="reclass-header">
-          <span class="reclass-title">RECLASS</span>
-          <span id="reclass-count" class="reclass-count">0</span>
-        </div>
-        <p id="reclass-picked" class="reclass-picked">Click a plate to target it</p>
-        <div class="reclass-row">
-          <label class="reclass-label" for="reclass-wave">TO</label>
-          <select id="reclass-wave" class="reclass-wave" aria-label="Target wave">
-            <option value="boots">boots</option>
-            <option value="calves">calves</option>
-            <option value="thighs">thighs</option>
-            <option value="hips">hips</option>
-            <option value="torso">torso</option>
-            <option value="shoulders">shoulders</option>
-            <option value="arms">arms</option>
-            <option value="gauntlets">gauntlets</option>
-            <option value="helmet">helmet</option>
-            <option value="power">power</option>
-          </select>
-        </div>
-        <input
-          id="reclass-note"
-          class="reclass-note"
-          type="text"
-          maxlength="80"
-          placeholder="optional note (e.g. left pauldron top)"
-          aria-label="Reclass note"
-        />
-        <div class="reclass-actions">
-          <button id="reclass-add" type="button" class="reclass-btn" title="Add current pick (A)">
-            ADD
-          </button>
-          <button id="reclass-undo" type="button" class="reclass-btn reclass-btn-ghost" title="Remove last entry">
-            UNDO
-          </button>
-          <button id="reclass-copy" type="button" class="reclass-btn reclass-btn-primary" title="Copy pasteable card">
-            COPY
-          </button>
-          <button id="reclass-clear" type="button" class="reclass-btn reclass-btn-ghost" title="Clear queue">
-            CLR
+          <button
+            id="reclass-toggle"
+            type="button"
+            class="reclass-toggle"
+            aria-expanded="false"
+            aria-controls="reclass-body"
+            title="Expand reclass panel (M)"
+          >
+            <span class="reclass-title">RECLASS</span>
+            <span id="reclass-count" class="reclass-count">0</span>
+            <span class="reclass-chevron" aria-hidden="true">▾</span>
           </button>
         </div>
-        <ol id="reclass-list" class="reclass-list" aria-live="polite"></ol>
-        <p class="reclass-hint">A add · [ ] cycle wave · COPY → paste in chat</p>
+        <div id="reclass-body" class="reclass-body">
+          <p id="reclass-picked" class="reclass-picked">Click a plate to target it</p>
+          <div class="reclass-row">
+            <label class="reclass-label" for="reclass-wave">TO</label>
+            <select id="reclass-wave" class="reclass-wave" aria-label="Target wave">
+              <option value="boots">boots</option>
+              <option value="calves">calves</option>
+              <option value="thighs">thighs</option>
+              <option value="hips">hips</option>
+              <option value="torso">torso</option>
+              <option value="shoulders">shoulders</option>
+              <option value="arms">arms</option>
+              <option value="gauntlets">gauntlets</option>
+              <option value="helmet">helmet</option>
+              <option value="power">power</option>
+            </select>
+          </div>
+          <input
+            id="reclass-note"
+            class="reclass-note"
+            type="text"
+            maxlength="80"
+            placeholder="optional note (e.g. left pauldron top)"
+            aria-label="Reclass note"
+          />
+          <div class="reclass-actions">
+            <button id="reclass-add" type="button" class="reclass-btn" title="Add current pick (A)">
+              ADD
+            </button>
+            <button id="reclass-undo" type="button" class="reclass-btn reclass-btn-ghost" title="Remove last entry">
+              UNDO
+            </button>
+            <button id="reclass-copy" type="button" class="reclass-btn reclass-btn-primary" title="Copy pasteable card">
+              COPY
+            </button>
+            <button id="reclass-clear" type="button" class="reclass-btn reclass-btn-ghost" title="Clear queue">
+              CLR
+            </button>
+          </div>
+          <ol id="reclass-list" class="reclass-list" aria-live="polite"></ol>
+          <p class="reclass-hint">A add · M toggle · [ ] wave · COPY → chat</p>
+        </div>
       </aside>
 
       <!-- Director audio timeline: drag SFX, crop, sync to assembly -->

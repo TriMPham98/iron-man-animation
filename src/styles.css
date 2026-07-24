@@ -252,7 +252,8 @@ body.scene-ready #app {
 .replay-btn:focus-visible,
 .skip-btn:focus-visible,
 .atl-btn:focus-visible,
-.reclass-btn:focus-visible {
+.reclass-btn:focus-visible,
+.reclass-toggle:focus-visible {
   outline: 2px solid rgba(232, 197, 71, 0.65);
   outline-offset: 2px;
 }
@@ -476,17 +477,57 @@ body.viewer-mode .hud-bottom-meta {
   border: 1px solid rgba(201, 162, 39, 0.28);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(8px);
+  transition:
+    width 0.15s ease,
+    max-height 0.15s ease,
+    padding 0.15s ease;
 }
 
 .reclass-panel.hidden {
   display: none;
 }
 
+/* Collapsed chip: title + queue count only — frees the 3D view */
+.reclass-panel.is-collapsed {
+  width: auto;
+  max-width: min(17.5rem, calc(100vw - 2rem));
+  max-height: none;
+  overflow: visible;
+  padding: 0.35rem 0.45rem;
+}
+
+.reclass-panel.is-collapsed .reclass-body {
+  display: none;
+}
+
+.reclass-panel.is-collapsed .reclass-header {
+  margin-bottom: 0;
+}
+
 .reclass-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   margin-bottom: 0.4rem;
+}
+
+.reclass-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.1rem 0.05rem;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.reclass-toggle:hover .reclass-title {
+  color: #f0d878;
 }
 
 .reclass-title {
@@ -501,6 +542,22 @@ body.viewer-mode .hud-bottom-meta {
   letter-spacing: 0.12em;
   color: #7ee8ff;
   font-variant-numeric: tabular-nums;
+}
+
+.reclass-chevron {
+  margin-left: auto;
+  font-size: 0.55rem;
+  line-height: 1;
+  color: rgba(160, 170, 190, 0.75);
+  transition: transform 0.15s ease;
+}
+
+.reclass-panel.is-collapsed .reclass-chevron {
+  transform: rotate(-90deg);
+}
+
+.reclass-body {
+  min-width: 0;
 }
 
 .reclass-picked {

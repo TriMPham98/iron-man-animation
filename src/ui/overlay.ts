@@ -62,6 +62,10 @@ export interface OverlayHandles {
   cycleReclassTargetWave: (delta: number) => void;
   /** Queue current pick → target wave. Returns false if nothing to add. */
   addReclassEntry: () => boolean;
+  /** Expand/collapse the reclass card (chip when collapsed). */
+  setReclassCollapsed: (collapsed: boolean) => void;
+  toggleReclassCollapsed: () => void;
+  isReclassCollapsed: () => boolean;
 }
 
 export interface DebugPickedPiece {
@@ -107,7 +111,9 @@ export function createOverlay(): OverlayHandles {
   const shortPieceId = formatShortId;
 
   // ── Reclass panel state ────────────────────────────────────────
+  const RECLASS_COLLAPSE_KEY = 'mark-suit-reclass-collapsed';
   const reclassPanel = el<HTMLElement>('reclass-panel');
+  const reclassToggle = el<HTMLButtonElement>('reclass-toggle');
   const reclassCount = el<HTMLSpanElement>('reclass-count');
   const reclassPicked = el<HTMLParagraphElement>('reclass-picked');
   const reclassWave = el<HTMLSelectElement>('reclass-wave');
@@ -120,6 +126,47 @@ export function createOverlay(): OverlayHandles {
 
   let reclassPick: ArmorPiece | null = null;
   const reclassQueue: ReclassEntry[] = [];
+
+  const readReclassCollapsed = (): boolean => {
+    try {
+      const v = window.localStorage.getItem(RECLASS_COLLAPSE_KEY);
+      // Default collapsed so the 3D view stays clear until needed
+      if (v === null) return true;
+      return v === '1';
+    } catch {
+      return true;
+    }
+  };
+
+  const writeReclassCollapsed = (collapsed: boolean) => {
+    try {
+      window.localStorage.setItem(RECLASS_COLLAPSE_KEY, collapsed ? '1' : '0');
+    } catch {
+      // private mode / blocked storage — ignore
+    }
+  };
+
+  let reclassCollapsed = readReclassCollapsed();
+
+  const applyReclassCollapsed = () => {
+    reclassPanel.classList.toggle('is-collapsed', reclassCollapsed);
+    reclassToggle.setAttribute('aria-expanded', reclassCollapsed ? 'false' : 'true');
+    reclassToggle.title = reclassCollapsed
+      ? 'Expand reclass panel (M)'
+      : 'Minimize reclass panel (M)';
+  };
+
+  const setReclassCollapsed = (collapsed: boolean) => {
+    reclassCollapsed = collapsed;
+    writeReclassCollapsed(collapsed);
+    applyReclassCollapsed();
+  };
+
+  const toggleReclassCollapsed = () => {
+    setReclassCollapsed(!reclassCollapsed);
+  };
+
+  applyReclassCollapsed();
 
   const getTargetWave = (): PieceWave => {
     const v = reclassWave.value;
@@ -197,6 +244,9 @@ export function createOverlay(): OverlayHandles {
     setTargetWave(next);
   };
 
+  reclassToggle.addEventListener('click', () => {
+    toggleReclassCollapsed();
+  });
   reclassAdd.addEventListener('click', () => {
     addReclassEntry();
   });
@@ -404,11 +454,16 @@ export function createOverlay(): OverlayHandles {
     setReclassPick: (piece: ArmorPiece | null) => {
       reclassPick = piece;
       renderReclassPick();
+      // Expand so TO/ADD are visible when the director targets a plate
+      if (piece && reclassCollapsed) setReclassCollapsed(false);
     },
     getReclassTargetWave: () => getTargetWave(),
     cycleReclassTargetWave: (delta: number) => {
       cycleTargetWave(delta);
     },
     addReclassEntry: () => addReclassEntry(),
+    setReclassCollapsed,
+    toggleReclassCollapsed,
+    isReclassCollapsed: () => reclassCollapsed,
   };
 }

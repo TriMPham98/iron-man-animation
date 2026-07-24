@@ -87,12 +87,17 @@ export function bindInput(options: BindInputOptions): void {
       return;
     }
 
-    // Director reclass: A add · [ ] cycle target wave
+    // Director reclass: A add · M minimize · [ ] cycle target wave
     if (!ui.isDirectorMode()) return;
     if (isTypingTarget(e.target)) return;
     if (e.key === 'a' || e.key === 'A') {
       e.preventDefault();
       ui.addReclassEntry();
+      return;
+    }
+    if (e.key === 'm' || e.key === 'M') {
+      e.preventDefault();
+      ui.toggleReclassCollapsed();
       return;
     }
     if (e.key === ']' || e.key === '[') {
