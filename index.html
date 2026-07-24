@@ -292,6 +292,19 @@
               title="Clip volume"
             />
           </label>
+          <label class="atl-field atl-field-pitch">
+            <span>PITCH <em id="atl-pitch-readout">1.00×</em></span>
+            <input
+              id="atl-pitch"
+              type="range"
+              min="50"
+              max="200"
+              step="1"
+              value="100"
+              disabled
+              title="Clip pitch (playback rate 0.5×–2×)"
+            />
+          </label>
           <label class="atl-field">
             <span>FADE IN</span>
             <input id="atl-fade-in" type="number" min="0" step="0.01" disabled />
@@ -315,7 +328,7 @@
             </button>
           </div>
           <p class="atl-meta-hint">
-            Drag track label → time · click label to audition · scrub · crop · VOL/FADE ·
+            Drag track label → time · click clip for VOL/PITCH/FADE · scrub · crop ·
             Backspace/Del · auto-save
           </p>
         </div>

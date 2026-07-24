@@ -20,6 +20,11 @@ export type PlayRequest = {
   /** Fade-out seconds ending at the full clip end. */
   fadeOut?: number;
   /**
+   * Playback rate / pitch (1 = original). Affects pitch and how fast
+   * media time advances; wall-clock length is duration / pitch.
+   */
+  pitch?: number;
+  /**
    * Full region duration (crop length) used for the fade envelope.
    * Defaults to `duration` when starting at the clip head.
    */
@@ -96,8 +101,9 @@ export function createAudioEngine() {
 
   const play = (req: PlayRequest): void => {
     if (muted) return;
-    const dur = Math.max(0, req.duration);
-    if (dur < 0.01) return;
+    // `duration` is media/source seconds to consume from offset
+    const mediaDur = Math.max(0, req.duration);
+    if (mediaDur < 0.01) return;
 
     // Re-trigger same clip id: restart
     stop(req.id);
@@ -105,11 +111,28 @@ export function createAudioEngine() {
     const peak = Math.min(1, Math.max(0, req.volume ?? 1));
     const fadeIn = Math.max(0, req.fadeIn ?? 0);
     const fadeOut = Math.max(0, req.fadeOut ?? 0);
-    const clipDur = Math.max(dur, req.clipDuration ?? dur);
+    const pitch = Math.min(4, Math.max(0.25, req.pitch ?? 1));
+    const clipDur = Math.max(mediaDur, req.clipDuration ?? mediaDur);
     const clipOffset = Math.max(0, Math.min(clipDur, req.clipOffset ?? 0));
+    // Wall-clock length of this voice (pitch speeds up / slows media time)
+    const wallDur = mediaDur / pitch;
 
     const audio = new Audio(resolveSrc(req.file));
     audio.preload = 'auto';
+    audio.playbackRate = pitch;
+    // Keep pitch shift when browser would otherwise preserve pitch on rate change
+    try {
+      (audio as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch =
+        false;
+      (
+        audio as HTMLMediaElement & { mozPreservesPitch?: boolean }
+      ).mozPreservesPitch = false;
+      (
+        audio as HTMLMediaElement & { webkitPreservesPitch?: boolean }
+      ).webkitPreservesPitch = false;
+    } catch {
+      /* ignore */
+    }
 
     const startedAt = performance.now();
     const initialGain = gainAtTime(
@@ -133,11 +156,12 @@ export function createAudioEngine() {
     const tickFade = () => {
       const v = active.get(req.id);
       if (!v) return;
-      const elapsed = (performance.now() - startedAt) / 1000;
-      const t = clipOffset + elapsed;
+      const wallElapsed = (performance.now() - startedAt) / 1000;
+      // Fade envelope is authored in media/source seconds
+      const t = clipOffset + wallElapsed * pitch;
       v.envelopeGain = gainAtTime(t, clipDur, peak, fadeIn, fadeOut);
       applyVoiceVolume(v);
-      if (elapsed < dur + 0.05) {
+      if (wallElapsed < wallDur + 0.05) {
         v.fadeRaf = requestAnimationFrame(tickFade);
       }
     };
@@ -151,6 +175,7 @@ export function createAudioEngine() {
 
     const begin = () => {
       try {
+        audio.playbackRate = pitch;
         if (Number.isFinite(startAt) && startAt > 0) {
           audio.currentTime = startAt;
         }
@@ -169,6 +194,7 @@ export function createAudioEngine() {
 
     const onMeta = () => {
       try {
+        audio.playbackRate = pitch;
         if (startAt > 0 && startAt < (audio.duration || Infinity)) {
           audio.currentTime = startAt;
         }
@@ -190,7 +216,7 @@ export function createAudioEngine() {
     voice.stopTimer = window.setTimeout(() => {
       const v = active.get(req.id);
       if (v) stopVoice(v);
-    }, dur * 1000 + 30);
+    }, wallDur * 1000 + 30);
 
     active.set(req.id, voice);
     begin();

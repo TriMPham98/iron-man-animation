@@ -29,7 +29,16 @@ export type TimelineClip = {
   fadeIn: number;
   /** Fade-out length in seconds ending at clip end (0 = none). */
   fadeOut: number;
+  /**
+   * Playback rate / pitch multiplier (1 = original).
+   * Timeline region length stays in source seconds; audio runs at this rate.
+   */
+  pitch: number;
 };
+
+/** Allowed pitch range (HTMLAudioElement playbackRate sweet spot). */
+export const PITCH_MIN = 0.5;
+export const PITCH_MAX = 2;
 
 export type TimelineSnapshot = {
   version: 1;
@@ -59,9 +68,16 @@ export function clampCrop(c: TimelineClip): TimelineClip {
   });
 }
 
+/** Clamp pitch to a safe playback-rate range; default 1. */
+export function clampPitchValue(pitch: unknown): number {
+  const p =
+    typeof pitch === 'number' && Number.isFinite(pitch) ? pitch : 1;
+  return Math.min(PITCH_MAX, Math.max(PITCH_MIN, p));
+}
+
 /**
- * Clamp volume 0–1 and fades so fadeIn + fadeOut never exceed clip length
- * (same idea as Logic’s region fade handles).
+ * Clamp volume 0–1, pitch, and fades so fadeIn + fadeOut never exceed clip
+ * length (same idea as Logic’s region fade handles).
  */
 export function clampGain(c: TimelineClip): TimelineClip {
   const dur = Math.max(0, c.cropOut - c.cropIn);
@@ -79,7 +95,8 @@ export function clampGain(c: TimelineClip): TimelineClip {
     fadeIn *= s;
     fadeOut *= s;
   }
-  return { ...c, volume, fadeIn, fadeOut };
+  const pitch = clampPitchValue(c.pitch);
+  return { ...c, volume, fadeIn, fadeOut, pitch };
 }
 
 /**
@@ -111,6 +128,7 @@ const defaultGain = () =>
     volume: 1,
     fadeIn: 0,
     fadeOut: 0,
+    pitch: 1,
   }) as const;
 
 let idSeq = 0;
@@ -330,13 +348,15 @@ export function normalizeClip(raw: unknown): TimelineClip | null {
     cropOut: raw.cropOut,
     sourceDuration: raw.sourceDuration,
     lane: typeof raw.lane === 'number' && Number.isFinite(raw.lane) ? raw.lane : 0,
-    // Older saves omit gain — default to full volume, no fades
+    // Older saves omit gain/pitch — default to full volume, unity pitch, no fades
     volume:
       typeof r.volume === 'number' && Number.isFinite(r.volume) ? r.volume : 1,
     fadeIn:
       typeof r.fadeIn === 'number' && Number.isFinite(r.fadeIn) ? r.fadeIn : 0,
     fadeOut:
       typeof r.fadeOut === 'number' && Number.isFinite(r.fadeOut) ? r.fadeOut : 0,
+    pitch:
+      typeof r.pitch === 'number' && Number.isFinite(r.pitch) ? r.pitch : 1,
   };
   return clampCrop(base);
 }
@@ -458,14 +478,14 @@ export function formatExportCard(clips: TimelineClip[], assemblyDuration: number
   }
 
   lines.push(
-    '| # | start | end | id | cropIn | cropOut | vol | fadeIn | fadeOut | label |',
+    '| # | start | end | id | cropIn | cropOut | vol | pitch | fadeIn | fadeOut | label |',
   );
   lines.push(
-    '|--:|------:|----:|----|-------:|--------:|----:|-------:|--------:|-------|',
+    '|--:|------:|----:|----|-------:|--------:|----:|------:|-------:|--------:|-------|',
   );
   sorted.forEach((c, i) => {
     lines.push(
-      `| ${i + 1} | ${c.start.toFixed(3)} | ${clipEnd(c).toFixed(3)} | \`${c.soundId}\` | ${c.cropIn.toFixed(3)} | ${c.cropOut.toFixed(3)} | ${c.volume.toFixed(2)} | ${c.fadeIn.toFixed(3)} | ${c.fadeOut.toFixed(3)} | ${c.label} |`,
+      `| ${i + 1} | ${c.start.toFixed(3)} | ${clipEnd(c).toFixed(3)} | \`${c.soundId}\` | ${c.cropIn.toFixed(3)} | ${c.cropOut.toFixed(3)} | ${c.volume.toFixed(2)} | ${c.pitch.toFixed(2)} | ${c.fadeIn.toFixed(3)} | ${c.fadeOut.toFixed(3)} | ${c.label} |`,
     );
   });
 
@@ -484,6 +504,7 @@ export function formatExportCard(clips: TimelineClip[], assemblyDuration: number
           cropIn: Number(c.cropIn.toFixed(3)),
           cropOut: Number(c.cropOut.toFixed(3)),
           volume: Number(c.volume.toFixed(3)),
+          pitch: Number(c.pitch.toFixed(3)),
           fadeIn: Number(c.fadeIn.toFixed(3)),
           fadeOut: Number(c.fadeOut.toFixed(3)),
           label: c.label,

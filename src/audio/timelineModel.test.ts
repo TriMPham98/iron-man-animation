@@ -121,7 +121,7 @@ describe('audio timeline persistence', () => {
     expect(parsed.clips[0]!.id).toBe('clip-x');
   });
 
-  it('defaults volume/fades on legacy clips and persists gain', () => {
+  it('defaults volume/fades/pitch on legacy clips and persists gain', () => {
     const legacy = {
       id: 'clip-legacy',
       soundId: 'ratchet',
@@ -137,18 +137,27 @@ describe('audio timeline persistence', () => {
     expect(n?.volume).toBe(1);
     expect(n?.fadeIn).toBe(0);
     expect(n?.fadeOut).toBe(0);
+    expect(n?.pitch).toBe(1);
 
     const withGain = clampGain({
       ...sampleClip('clip-g'),
       volume: 0.5,
       fadeIn: 0.2,
       fadeOut: 0.2,
+      pitch: 1.25,
     });
     expect(saveTimeline([withGain])).toBe(true);
     const loaded = loadTimeline();
     expect(loaded[0]?.volume).toBeCloseTo(0.5, 5);
     expect(loaded[0]?.fadeIn).toBeCloseTo(0.2, 5);
     expect(loaded[0]?.fadeOut).toBeCloseTo(0.2, 5);
+    expect(loaded[0]?.pitch).toBeCloseTo(1.25, 5);
+  });
+
+  it('clamps pitch to a safe playback-rate range', () => {
+    expect(clampGain({ ...sampleClip('hi'), pitch: 4 }).pitch).toBe(2);
+    expect(clampGain({ ...sampleClip('lo'), pitch: 0.1 }).pitch).toBe(0.5);
+    expect(clampGain({ ...sampleClip('ok'), pitch: 1 }).pitch).toBe(1);
   });
 
   it('scales overlapping fades to fit clip length', () => {

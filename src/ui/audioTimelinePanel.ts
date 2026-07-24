@@ -7,11 +7,14 @@ import {
   assignLanes,
   clipDuration,
   clampCrop,
+  clampPitchValue,
   createClipFromSound,
   formatExportCard,
   initTimelineClips,
   listTrackRows,
   newClipId,
+  PITCH_MAX,
+  PITCH_MIN,
   saveTimeline,
   type TimelineClip,
   type TrackRow,
@@ -110,6 +113,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const startInput = el<HTMLInputElement>('atl-start');
   const volInput = el<HTMLInputElement>('atl-vol');
   const volReadout = el<HTMLElement>('atl-vol-readout');
+  const pitchInput = el<HTMLInputElement>('atl-pitch');
+  const pitchReadout = el<HTMLElement>('atl-pitch-readout');
   const fadeInInput = el<HTMLInputElement>('atl-fade-in');
   const fadeOutInput = el<HTMLInputElement>('atl-fade-out');
   const fadePresetBtns = [
@@ -468,8 +473,10 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       const label = document.createElement('span');
       label.className = 'atl-clip-label';
       const volPct = Math.round(c.volume * 100);
+      const pitch = clampPitchValue(c.pitch);
       const gainBits: string[] = [];
       if (volPct !== 100) gainBits.push(`${volPct}%`);
+      if (Math.abs(pitch - 1) > 0.005) gainBits.push(`${pitch.toFixed(2)}×`);
       if (c.fadeIn > 0.001) gainBits.push(`↑${fmt(c.fadeIn, 2)}`);
       if (c.fadeOut > 0.001) gainBits.push(`↓${fmt(c.fadeOut, 2)}`);
       label.innerHTML = `${escapeHtml(c.label)}${
@@ -538,11 +545,21 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     cropOutInput.disabled = !on;
     startInput.disabled = !on;
     volInput.disabled = !on;
+    pitchInput.disabled = !on;
     fadeInInput.disabled = !on;
     fadeOutInput.disabled = !on;
     btnDelete.disabled = !on;
     for (const b of fadePresetBtns) b.disabled = !on;
   };
+
+  const pitchToSlider = (pitch: number) =>
+    String(Math.round(clampPitchValue(pitch) * 100));
+
+  const sliderToPitch = (raw: string) =>
+    clampPitchValue(Number(raw) / 100);
+
+  const formatPitchReadout = (pitch: number) =>
+    `${clampPitchValue(pitch).toFixed(2)}×`;
 
   const renderMeta = () => {
     const c = selected();
@@ -554,6 +571,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       startInput.value = '';
       volInput.value = '100';
       volReadout.textContent = '100%';
+      pitchInput.value = '100';
+      pitchReadout.textContent = '1.00×';
       fadeInInput.value = '';
       fadeOutInput.value = '';
       return;
@@ -566,6 +585,11 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     const pct = Math.round(c.volume * 100);
     volInput.value = String(pct);
     volReadout.textContent = `${pct}%`;
+    const pitch = clampPitchValue(c.pitch);
+    pitchInput.value = pitchToSlider(pitch);
+    pitchInput.min = String(Math.round(PITCH_MIN * 100));
+    pitchInput.max = String(Math.round(PITCH_MAX * 100));
+    pitchReadout.textContent = formatPitchReadout(pitch);
     fadeInInput.value = fmt(c.fadeIn, 3);
     fadeOutInput.value = fmt(c.fadeOut, 3);
     cropInInput.max = String(Math.max(MIN_CROP, c.cropOut - MIN_CROP));
@@ -759,6 +783,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
         volume: 1,
         fadeIn: 0,
         fadeOut: 0,
+        pitch: 1,
       });
       clips.push(clip);
       t += clipDuration(clip) + 0.05;
@@ -786,7 +811,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       a.src = url;
     });
 
-  // Meta inputs (timing + Logic-style gain)
+  // Meta inputs (timing + Logic-style gain + pitch)
   const applyMetaFromInputs = () => {
     const c = selected();
     if (!c) return;
@@ -794,10 +819,11 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     const cropIn = Number(cropInInput.value);
     const cropOut = Number(cropOutInput.value);
     const volume = Number(volInput.value) / 100;
+    const pitch = sliderToPitch(pitchInput.value);
     const fadeIn = Number(fadeInInput.value);
     const fadeOut = Number(fadeOutInput.value);
     if (
-      [start, cropIn, cropOut, volume, fadeIn, fadeOut].some((n) =>
+      [start, cropIn, cropOut, volume, pitch, fadeIn, fadeOut].some((n) =>
         Number.isNaN(n),
       )
     ) {
@@ -809,6 +835,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       cropIn,
       cropOut,
       volume,
+      pitch,
       fadeIn,
       fadeOut,
     });
@@ -843,6 +870,39 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     }
   };
 
+  const applyPitchLive = () => {
+    const c = selected();
+    if (!c) return;
+    const pitch = sliderToPitch(pitchInput.value);
+    if (Number.isNaN(pitch)) return;
+    pitchReadout.textContent = formatPitchReadout(pitch);
+    const next = clampCrop({ ...c, pitch });
+    clips = clips.map((x) => (x.id === c.id ? next : x));
+    // Refresh label pitch tag while dragging
+    const label = lanesEl.querySelector(
+      `.atl-clip[data-id="${CSS.escape(c.id)}"] .atl-clip-label`,
+    );
+    if (label) {
+      const volPct = Math.round(next.volume * 100);
+      const gainBits: string[] = [];
+      if (volPct !== 100) gainBits.push(`${volPct}%`);
+      if (Math.abs(pitch - 1) > 0.005) gainBits.push(`${pitch.toFixed(2)}×`);
+      if (next.fadeIn > 0.001) gainBits.push(`↑${fmt(next.fadeIn, 2)}`);
+      if (next.fadeOut > 0.001) gainBits.push(`↓${fmt(next.fadeOut, 2)}`);
+      const trimmed =
+        next.cropIn > 0.001 || next.cropOut < next.sourceDuration - 0.001;
+      label.innerHTML = `${escapeHtml(next.label)}${
+        trimmed
+          ? ` <em class="atl-clip-crop-tag">${fmt(next.cropIn, 2)}–${fmt(next.cropOut, 2)}</em>`
+          : ''
+      }${
+        gainBits.length
+          ? ` <em class="atl-clip-gain-tag">${gainBits.join(' · ')}</em>`
+          : ''
+      }`;
+    }
+  };
+
   cropInInput.addEventListener('change', applyMetaFromInputs);
   cropOutInput.addEventListener('change', applyMetaFromInputs);
   startInput.addEventListener('change', applyMetaFromInputs);
@@ -850,6 +910,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   fadeOutInput.addEventListener('change', applyMetaFromInputs);
   volInput.addEventListener('input', applyVolumeLive);
   volInput.addEventListener('change', applyMetaFromInputs);
+  pitchInput.addEventListener('input', applyPitchLive);
+  pitchInput.addEventListener('change', applyMetaFromInputs);
 
   for (const btn of fadePresetBtns) {
     btn.addEventListener('click', () => {
@@ -1004,10 +1066,12 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       const end = c.start + dur;
       if (end <= sec + 1e-4) continue;
 
+      const pitch = clampPitchValue(c.pitch);
       const gain = {
         volume: c.volume,
         fadeIn: c.fadeIn,
         fadeOut: c.fadeOut,
+        pitch,
         clipDuration: dur,
       };
 
