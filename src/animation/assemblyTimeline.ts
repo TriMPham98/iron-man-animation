@@ -848,44 +848,113 @@ export function createAssemblyTimeline(
     );
 
     // ── Camera path ────────────────────────────────────────────────
-    // Boots cascade — keep full-suit look target; always set lx/lz/fov.
+    // Always set lx/lz/fov on every keyframe so scrub reverse can’t leave
+    // faceplate FOV residue on the proxy.
+    //
+    // Lower body → chest crane: slight zoom without changing plate timings
+    // or total assembly duration.
+    // Boots → thighs → arc reactor (same language, rising look target).
+    const LOWER_FOV = BASE_FOV - 1.5; // mild optical zoom (~32.5°)
+    const CHEST_FOV = BASE_FOV - 2.5; // tighter on the core (~31.5°)
+
+    // Boots cascade — drop look target toward the feet, ease in a step.
     timeline.to(
       cameraProxy,
       {
-        x: 0.9,
-        y: 0.95,
-        z: 3.15,
+        x: 0.78,
+        y: 0.78,
+        z: 2.85,
         lx: 0,
-        ly: 0.75,
+        ly: 0.52,
         lz: 0,
-        fov: BASE_FOV,
-        duration: 4.2,
+        fov: LOWER_FOV,
+        duration: 2.35,
         ease: 'power2.inOut',
         onUpdate: applyCamera,
       },
       0.3,
     );
 
-    // Favor chest as the reactor ignites (torso just locked)
+    // Thighs — lift framing to mid-leg. Keep this beat short so it hands off
+    // cleanly to the torso/reactor crane (no overlapping cameraProxy tweens).
+    const thighsCamStart = Math.max(
+      (waveStartAt.thighs ?? waveStartAt.calves ?? 2.6) - 0.2,
+      2.0,
+    );
+    const THIGHS_CAM_DUR = 1.85;
     timeline.to(
       cameraProxy,
       {
-        x: 0.45,
-        y: 1.25,
-        z: 2.55,
+        x: 0.72,
+        y: 0.98,
+        z: 2.72,
         lx: 0,
-        ly: 1.22,
+        ly: 0.88,
         lz: 0,
-        fov: BASE_FOV,
-        duration: 2.2,
+        fov: LOWER_FOV,
+        duration: THIGHS_CAM_DUR,
         ease: 'power2.inOut',
         onUpdate: applyCamera,
       },
-      reactorT - 0.55,
+      thighsCamStart,
     );
 
-    // Helmet cranial shells — camera tracks the head cascade (no palm ECU)
+    // Helmet cranial shells — scheduled after hands; used as a hard ceiling
+    // so the chest ECU cannot bleed into the head cascade.
     const helmetCamStart = (waveStartAt.helmet ?? handsLock) - 0.15;
+
+    // Chest / arc reactor — start with the *torso wave*, not after it.
+    // Old timing (reactorT − 0.55, 2.2s + push) landed late and overlapped
+    // itself / the next shot. One continuous crane lands on the core as
+    // ignition begins, then a short push that ends before the helmet cam.
+    const chestCamStart = Math.max(
+      (waveStartAt.torso ?? torsoDone - 1.4) - 0.1,
+      thighsCamStart + THIGHS_CAM_DUR - 0.15, // slight crossfade, not a fight
+    );
+    // Arrive on the reactor just as status fires (small lead-in, not lag).
+    const chestArriveAt = reactorT + 0.05;
+    const chestCraneDur = Math.max(1.35, chestArriveAt - chestCamStart);
+    timeline.to(
+      cameraProxy,
+      {
+        x: 0.1,
+        y: 1.2,
+        z: 2.18,
+        lx: 0,
+        ly: 1.18,
+        lz: 0.05,
+        fov: CHEST_FOV,
+        duration: chestCraneDur,
+        ease: 'power2.inOut',
+        onUpdate: applyCamera,
+      },
+      chestCamStart,
+    );
+    // Soft push while the core ramps — hard-stop before helmet cam steals focus.
+    const chestPushStart = chestCamStart + chestCraneDur - 0.05;
+    const chestPushEndCap = Math.min(
+      reactorT + 1.2,
+      helmetCamStart - 0.4,
+    );
+    const chestPushDur = chestPushEndCap - chestPushStart;
+    if (chestPushDur >= 0.5) {
+      timeline.to(
+        cameraProxy,
+        {
+          x: 0.06,
+          y: 1.18,
+          z: 2.02,
+          lx: 0,
+          ly: 1.18,
+          lz: 0.06,
+          fov: CHEST_FOV - 1,
+          duration: chestPushDur,
+          ease: 'power1.inOut',
+          onUpdate: applyCamera,
+        },
+        chestPushStart,
+      );
+    }
     timeline.to(
       cameraProxy,
       {
