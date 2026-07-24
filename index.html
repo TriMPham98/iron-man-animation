@@ -244,18 +244,23 @@
           <div class="atl-track-wrap">
             <div id="atl-track-scroll" class="atl-track-scroll">
               <div id="atl-track-inner" class="atl-track-inner">
-                <div class="atl-labels-col" aria-hidden="false">
+                <!-- Sticky time ruler: stays visible while track list scrolls -->
+                <div class="atl-track-top">
                   <div class="atl-label-corner" title="Tracks · shortest → longest">
                     <span class="atl-label-corner-text">TRACKS</span>
                   </div>
-                  <div id="atl-headers" class="atl-headers"></div>
-                </div>
-                <div class="atl-timeline-col">
                   <div id="atl-ruler" class="atl-ruler" aria-hidden="true"></div>
-                  <div id="atl-lanes" class="atl-lanes"></div>
-                  <div id="atl-playhead" class="atl-playhead" aria-hidden="true"></div>
-                  <div id="atl-drop-hint" class="atl-drop-hint">Drop sample here</div>
                 </div>
+                <div class="atl-track-body">
+                  <div class="atl-labels-col" aria-hidden="false">
+                    <div id="atl-headers" class="atl-headers"></div>
+                  </div>
+                  <div class="atl-timeline-col">
+                    <div id="atl-lanes" class="atl-lanes"></div>
+                    <div id="atl-drop-hint" class="atl-drop-hint">Drop sample here</div>
+                  </div>
+                </div>
+                <div id="atl-playhead" class="atl-playhead" aria-hidden="true"></div>
               </div>
             </div>
           </div>

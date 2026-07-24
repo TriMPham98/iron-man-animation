@@ -89,11 +89,20 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const lanesEl = el<HTMLDivElement>('atl-lanes');
   const playheadEl = el<HTMLDivElement>('atl-playhead');
   const dropHint = el<HTMLDivElement>('atl-drop-hint');
+  const trackTop = trackInner.querySelector(
+    '.atl-track-top',
+  ) as HTMLElement | null;
+  const trackBody = trackInner.querySelector(
+    '.atl-track-body',
+  ) as HTMLElement | null;
   const timelineCol = trackInner.querySelector(
     '.atl-timeline-col',
   ) as HTMLElement | null;
   const labelsCol = trackInner.querySelector(
     '.atl-labels-col',
+  ) as HTMLElement | null;
+  const labelCorner = trackInner.querySelector(
+    '.atl-label-corner',
   ) as HTMLElement | null;
   const metaEl = el<HTMLDivElement>('atl-meta');
   const cropInInput = el<HTMLInputElement>('atl-crop-in');
@@ -235,10 +244,12 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const selected = (): TimelineClip | null =>
     clips.find((c) => c.id === selectedId) ?? null;
 
+  const labelRailW = () =>
+    labelsCol?.offsetWidth || labelCorner?.offsetWidth || 116;
+
   /** Timeline column width (excludes sticky track labels). */
   const timelineViewportW = () => {
-    const labelW = labelsCol?.offsetWidth ?? 88;
-    return Math.max((trackScroll.clientWidth || 0) - labelW, 160);
+    return Math.max((trackScroll.clientWidth || 0) - labelRailW(), 160);
   };
 
   /** Last layout sizes — skip no-op ResizeObserver re-renders that thrash scrollbars. */
@@ -263,32 +274,43 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   const renderRuler = () => {
     const w = contentWidth();
-    const labelW = labelsCol?.offsetWidth ?? 100;
+    const labelW = labelRailW();
     // Fit zoom: fill the scrollport. Zoomed in: grow past it for H-scroll.
     if (zoomMul <= 1 + 1e-6) {
       trackInner.style.width = '100%';
+      if (trackTop) trackTop.style.width = '100%';
+      if (trackBody) trackBody.style.width = '100%';
       if (timelineCol) {
         timelineCol.style.width = 'auto';
         timelineCol.style.flex = '1 1 auto';
       }
+      rulerEl.style.width = 'auto';
+      rulerEl.style.flex = '1 1 auto';
     } else {
       trackInner.style.width = `${labelW + w}px`;
+      if (trackTop) trackTop.style.width = `${labelW + w}px`;
+      if (trackBody) trackBody.style.width = `${labelW + w}px`;
       if (timelineCol) {
         timelineCol.style.width = `${w}px`;
         timelineCol.style.flex = `0 0 ${w}px`;
       }
+      rulerEl.style.width = `${w}px`;
+      rulerEl.style.flex = `0 0 ${w}px`;
     }
-    rulerEl.style.width = '100%';
     lanesEl.style.width = '100%';
 
     rulerEl.replaceChildren();
-    const step = pxPerSec >= 64 ? 0.5 : pxPerSec >= 36 ? 1 : 2;
-    for (let t = 0; t <= assemblyDuration + 1e-6; t += step) {
+    // Always keep 1s major ticks; add 0.5s minor when zoomed enough.
+    // Never drop to 2s-only — second marks stay readable while scrubbing.
+    const minorStep = pxPerSec >= 48 ? 0.5 : pxPerSec >= 22 ? 1 : 2;
+    const majorEvery = minorStep <= 1 ? 1 : 2;
+    for (let t = 0; t <= assemblyDuration + 1e-6; t += minorStep) {
       const mark = document.createElement('div');
-      mark.className = 'atl-tick' + (Math.abs(t % 1) < 1e-6 ? ' major' : '');
+      const isMajor = Math.abs(t % majorEvery) < 1e-6;
+      mark.className = 'atl-tick' + (isMajor ? ' major' : ' minor');
       mark.style.left = `${t * pxPerSec}px`;
-      if (Math.abs(t % 1) < 1e-6 || step >= 1) {
-        mark.innerHTML = `<span>${fmt(t, step < 1 ? 1 : 0)}</span>`;
+      if (isMajor) {
+        mark.innerHTML = `<span>${fmt(t, minorStep < 1 ? 1 : 0)}</span>`;
       }
       rulerEl.appendChild(mark);
     }
@@ -326,7 +348,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       const y0 = LANE_GAP + i * bandH();
       const y1 = y0 + laneH;
       const fill =
-        i % 2 === 0 ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.028)';
+        i % 2 === 0 ? 'rgba(255,255,255,0.028)' : 'rgba(255,255,255,0.014)';
       stops.push(
         `transparent ${y0}px`,
         `${fill} ${y0}px`,
@@ -555,12 +577,10 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   };
 
   const updatePlayheadDom = () => {
-    // Keep the playhead center within [0, assembly end]. The 10px hit target
-    // (margin-left -5) is clipped by track-inner so t=end never inflates
-    // scrollWidth. Height is CSS top/bottom:0 — never set a px height that
-    // can exceed the track and thrash the vertical scrollbar every frame.
+    // Playhead lives on track-inner (ruler + lanes). Offset past the label rail.
+    // Hit target is 10px wide (margin-left -5); keep center in [0, assembly end].
     const t = Math.max(0, Math.min(playheadSec, assemblyDuration));
-    playheadEl.style.left = `${t * pxPerSec}px`;
+    playheadEl.style.left = `${labelRailW() + t * pxPerSec}px`;
     playheadEl.style.height = '';
   };
 
