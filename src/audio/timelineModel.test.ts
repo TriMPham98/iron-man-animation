@@ -1,16 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  assignLanes,
   clampGain,
   createClipFromSound,
   gainAtTime,
   hasSavedTimeline,
   initTimelineClips,
+  laneForSoundId,
+  listTrackRows,
   loadTimeline,
   normalizeClip,
   saveTimeline,
   TIMELINE_STORAGE_KEY,
   type TimelineClip,
 } from './timelineModel';
+import { SOUNDS } from './sounds';
 
 /** In-memory localStorage for node vitest. */
 function installMemoryStorage() {
@@ -157,6 +161,78 @@ describe('audio timeline persistence', () => {
       fadeOut: 0.8,
     });
     expect(c.fadeIn + c.fadeOut).toBeCloseTo(1, 5);
+  });
+});
+
+describe('per-sample track lanes', () => {
+  it('maps each catalog sound to a fixed lane index', () => {
+    const impact = SOUNDS.findIndex((s) => s.id === 'impact');
+    const ratchet = SOUNDS.findIndex((s) => s.id === 'ratchet');
+    expect(impact).toBeGreaterThanOrEqual(0);
+    expect(ratchet).toBeGreaterThanOrEqual(0);
+    expect(laneForSoundId('impact')).toBe(impact);
+    expect(laneForSoundId('ratchet')).toBe(ratchet);
+  });
+
+  it('keeps same-sound clips on one track and splits different samples', () => {
+    const a = sampleClip('a', 'impact');
+    const b = sampleClip('b', 'impact');
+    const c = sampleClip('c', 'ratchet');
+    // Force wrong lanes first — assignLanes must correct them
+    const packed = assignLanes([
+      { ...a, start: 0, lane: 9 },
+      { ...b, start: 0.1, lane: 9 },
+      { ...c, start: 0, lane: 0 },
+    ]);
+    const impactLane = laneForSoundId('impact');
+    const ratchetLane = laneForSoundId('ratchet');
+    expect(packed.find((x) => x.id === 'a')?.lane).toBe(impactLane);
+    expect(packed.find((x) => x.id === 'b')?.lane).toBe(impactLane);
+    expect(packed.find((x) => x.id === 'c')?.lane).toBe(ratchetLane);
+    expect(impactLane).not.toBe(ratchetLane);
+  });
+
+  it('lists one track row per catalog sample plus customs', () => {
+    const custom: TimelineClip = {
+      ...sampleClip('x', 'impact'),
+      id: 'custom-1',
+      soundId: 'custom-boom.wav',
+      label: 'boom',
+      file: 'custom-boom.wav',
+    };
+    const rows = listTrackRows([custom]);
+    expect(rows).toHaveLength(SOUNDS.length + 1);
+    expect(rows.slice(0, SOUNDS.length).every((r) => r.kind === 'catalog')).toBe(
+      true,
+    );
+    expect(rows[rows.length - 1]).toMatchObject({
+      kind: 'custom',
+      soundId: 'custom-boom.wav',
+      label: 'boom',
+      lane: SOUNDS.length,
+    });
+  });
+
+  it('respects a custom catalog order (e.g. shortest → longest)', () => {
+    // Put ratchet first, impact second regardless of SOUNDS array order
+    const customOrder = [
+      'ratchet',
+      'impact',
+      ...SOUNDS.map((s) => s.id).filter(
+        (id) => id !== 'ratchet' && id !== 'impact',
+      ),
+    ];
+    expect(laneForSoundId('ratchet', [], customOrder)).toBe(0);
+    expect(laneForSoundId('impact', [], customOrder)).toBe(1);
+    const rows = listTrackRows([], customOrder);
+    expect(rows[0]?.soundId).toBe('ratchet');
+    expect(rows[1]?.soundId).toBe('impact');
+    const packed = assignLanes(
+      [sampleClip('a', 'impact'), sampleClip('b', 'ratchet')],
+      customOrder,
+    );
+    expect(packed.find((c) => c.soundId === 'ratchet')?.lane).toBe(0);
+    expect(packed.find((c) => c.soundId === 'impact')?.lane).toBe(1);
   });
 });
 

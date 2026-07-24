@@ -10,9 +10,11 @@ import {
   createClipFromSound,
   formatExportCard,
   initTimelineClips,
+  listTrackRows,
   newClipId,
   saveTimeline,
   type TimelineClip,
+  type TrackRow,
 } from '../audio/timelineModel';
 import { colorForSoundId, SOUNDS } from '../audio/sounds';
 import {
@@ -21,12 +23,11 @@ import {
   prewarmWaveforms,
 } from '../audio/waveform';
 
-const LANE_H_MIN = 18;
-const LANE_GAP = 2;
+/** Fixed row height per sample track (scroll when many). */
+const LANE_H = 22;
+const LANE_GAP = 1;
 const RULER_H = 16;
 const MIN_CROP = 0.05;
-/** Max simultaneous clip layers (includes room for a 4th layer). */
-const MAX_LANES = 4;
 
 export type AudioTimelinePanel = {
   /** Show/hide with director mode. */
@@ -72,18 +73,24 @@ function fmt(sec: number, digits = 2): string {
 }
 
 /**
- * Director-mode audio timeline: drag library SFX onto a multi-lane track,
+ * Director-mode audio timeline: one track line per sample (shortest → longest),
  * move clips, crop with edge handles, sync playhead to assembly transport.
  */
 export function createAudioTimelinePanel(): AudioTimelinePanel {
   const root = el<HTMLElement>('audio-timeline');
-  const libraryEl = el<HTMLDivElement>('atl-library');
   const trackScroll = el<HTMLDivElement>('atl-track-scroll');
   const trackInner = el<HTMLDivElement>('atl-track-inner');
+  const headersEl = el<HTMLDivElement>('atl-headers');
   const rulerEl = el<HTMLDivElement>('atl-ruler');
   const lanesEl = el<HTMLDivElement>('atl-lanes');
   const playheadEl = el<HTMLDivElement>('atl-playhead');
   const dropHint = el<HTMLDivElement>('atl-drop-hint');
+  const timelineCol = trackInner.querySelector(
+    '.atl-timeline-col',
+  ) as HTMLElement | null;
+  const labelsCol = trackInner.querySelector(
+    '.atl-labels-col',
+  ) as HTMLElement | null;
   const metaEl = el<HTMLDivElement>('atl-meta');
   const cropInInput = el<HTMLInputElement>('atl-crop-in');
   const cropOutInput = el<HTMLInputElement>('atl-crop-out');
@@ -124,8 +131,6 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   /** Zoom multiplier on fit-to-width scale (1 = timeline spans full track). */
   let zoomMul = 1;
   let pxPerSec = 48;
-  /** Dynamic lane height (grows so few tracks fill the track pane). */
-  let laneH = LANE_H_MIN;
   let muted = false;
   let loopEnabled = false;
   try {
@@ -149,6 +154,11 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   /** Source durations cache (file → seconds). */
   const durationCache = new Map<string, number>();
+  /**
+   * Catalog track order: shortest sample first (stable by label).
+   * Rebuilt when durations finish probing.
+   */
+  let catalogOrder: string[] = SOUNDS.map((s) => s.id);
 
   type DragMode = 'move' | 'crop-in' | 'crop-out' | null;
   let dragMode: DragMode = null;
@@ -164,11 +174,33 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     return d;
   };
 
+  const refreshCatalogOrder = async (): Promise<void> => {
+    const ranked = await Promise.all(
+      SOUNDS.map(async (def) => ({
+        id: def.id,
+        label: def.label,
+        dur: await getDuration(def.file),
+      })),
+    );
+    ranked.sort(
+      (a, b) => a.dur - b.dur || a.label.localeCompare(b.label),
+    );
+    const next = ranked.map((r) => r.id);
+    const same =
+      next.length === catalogOrder.length &&
+      next.every((id, i) => id === catalogOrder[i]);
+    if (same) return;
+    catalogOrder = next;
+    clips = assignLanes(clips, catalogOrder);
+    renderClips();
+  };
+
   // Pre-warm catalog durations + waveform peaks (shared decode cache)
   for (const s of SOUNDS) {
     void getDuration(s.file);
   }
   prewarmWaveforms(SOUNDS.map((s) => s.file));
+  void refreshCatalogOrder();
 
   const persist = (): boolean => {
     // Always write full list (including empty after delete/clear)
@@ -197,16 +229,18 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const selected = (): TimelineClip | null =>
     clips.find((c) => c.id === selectedId) ?? null;
 
-  const trackViewportW = () => Math.max(trackScroll.clientWidth || 0, 200);
-
-  const trackViewportH = () => Math.max(trackScroll.clientHeight || 0, 48);
+  /** Timeline column width (excludes sticky track labels). */
+  const timelineViewportW = () => {
+    const labelW = labelsCol?.offsetWidth ?? 88;
+    return Math.max((trackScroll.clientWidth || 0) - labelW, 160);
+  };
 
   /** Last layout sizes — skip no-op ResizeObserver re-renders that thrash scrollbars. */
   let lastLayoutKey = '';
 
   /** px/sec so full assembly spans the track (or wider when zoomed in). */
   const syncScale = () => {
-    const vw = trackViewportW();
+    const vw = timelineViewportW();
     const fit = assemblyDuration > 0 ? vw / assemblyDuration : 48;
     // Floor so fit-to-width never exceeds the viewport by a subpixel
     // (subpixel oversize is enough to toggle H-scroll → layout loop).
@@ -215,7 +249,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   const contentWidth = () => {
     syncScale();
-    const vw = trackViewportW();
+    const vw = timelineViewportW();
     // Always at least full viewport so the track never ends short of the edge.
     // Floor the timed width so we never request 1px past the scrollport.
     return Math.max(vw, Math.floor(assemblyDuration * pxPerSec));
@@ -223,12 +257,23 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   const renderRuler = () => {
     const w = contentWidth();
-    // Fit zoom: width 100% tracks the scrollport exactly (no px rounding fight).
-    // Zoomed in: explicit px width so the track can scroll horizontally.
-    const widthCss = zoomMul <= 1 + 1e-6 ? '100%' : `${w}px`;
-    trackInner.style.width = widthCss;
-    rulerEl.style.width = widthCss;
-    lanesEl.style.width = widthCss;
+    const labelW = labelsCol?.offsetWidth ?? 100;
+    // Fit zoom: fill the scrollport. Zoomed in: grow past it for H-scroll.
+    if (zoomMul <= 1 + 1e-6) {
+      trackInner.style.width = '100%';
+      if (timelineCol) {
+        timelineCol.style.width = 'auto';
+        timelineCol.style.flex = '1 1 auto';
+      }
+    } else {
+      trackInner.style.width = `${labelW + w}px`;
+      if (timelineCol) {
+        timelineCol.style.width = `${w}px`;
+        timelineCol.style.flex = `0 0 ${w}px`;
+      }
+    }
+    rulerEl.style.width = '100%';
+    lanesEl.style.width = '100%';
 
     rulerEl.replaceChildren();
     const step = pxPerSec >= 64 ? 0.5 : pxPerSec >= 36 ? 1 : 2;
@@ -243,144 +288,29 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     }
   };
 
-  /** Library chips sorted shortest → longest (stable by label). */
-  const renderLibrary = async () => {
-    const ranked = await Promise.all(
-      SOUNDS.map(async (def) => ({
-        def,
-        dur: await getDuration(def.file),
-      })),
-    );
-    ranked.sort(
-      (a, b) => a.dur - b.dur || a.def.label.localeCompare(b.def.label),
-    );
+  const trackRows = (): TrackRow[] => listTrackRows(clips, catalogOrder);
 
-    libraryEl.replaceChildren();
-    for (const { def, dur } of ranked) {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'atl-lib-chip';
-      chip.draggable = true;
-      chip.dataset.soundId = def.id;
-      chip.style.setProperty('--chip', colorForSoundId(def.id));
-      const durLabel = fmt(dur, dur >= 10 ? 1 : 2);
-      chip.innerHTML = `<span class="atl-lib-label">${escapeHtml(def.label)}</span><span class="atl-lib-dur">${durLabel}s</span>`;
-      chip.title = `${def.label} · ${durLabel}s — drag onto timeline (or click to audition)`;
+  const trackCount = () => trackRows().length;
 
-      chip.addEventListener('dragstart', (e) => {
-        e.dataTransfer?.setData('application/x-suit-sound', def.id);
-        e.dataTransfer?.setData('text/plain', def.id);
-        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy';
-        chip.classList.add('dragging');
-      });
-      chip.addEventListener('dragend', () => {
-        chip.classList.remove('dragging');
-        dropHint.classList.remove('active');
-      });
-      chip.addEventListener('click', async () => {
-        const srcDur = await getDuration(def.file);
-        engine.stop('audition');
-        engine.play({
-          id: 'audition',
-          file: def.file,
-          offset: 0,
-          duration: Math.max(0.05, srcDur),
-        });
-      });
-      libraryEl.appendChild(chip);
-    }
-  };
-
-  /** Greedy pack into ≤ maxLanes rows (may overlap if more simultaneous than max). */
-  const packIntoLanes = (list: TimelineClip[], maxLanes: number): TimelineClip[] => {
-    const sorted = [...list].sort(
-      (a, b) => a.start - b.start || a.id.localeCompare(b.id),
-    );
-    const laneEnds = Array.from({ length: maxLanes }, () => 0);
-    const out: TimelineClip[] = [];
-    for (const c of sorted) {
-      const end = c.start + Math.max(0, c.cropOut - c.cropIn);
-      let free = -1;
-      for (let i = 0; i < maxLanes; i++) {
-        if (laneEnds[i]! <= c.start + 1e-4) {
-          free = i;
-          break;
-        }
-      }
-      let lane: number;
-      if (free >= 0) {
-        lane = free;
-      } else {
-        // All busy — stack on the lane that frees first
-        let best = 0;
-        for (let i = 1; i < maxLanes; i++) {
-          if (laneEnds[i]! < laneEnds[best]!) best = i;
-        }
-        lane = best;
-      }
-      laneEnds[lane] = Math.max(laneEnds[lane]!, end);
-      out.push({ ...c, lane });
-    }
-    return out;
-  };
-
-  /** Occupied clip rows (0…MAX_LANES). */
-  const occupiedLaneCount = () => {
-    if (clips.length === 0) return 0;
-    return Math.min(
-      MAX_LANES,
-      clips.reduce((m, c) => Math.max(m, c.lane), 0) + 1,
-    );
-  };
-
-  /**
-   * Visible rows = occupied + one spare drop lane (until all 4 layers used).
-   * Lane height flexes: fewer rows → taller bars; more rows → shorter bars.
-   */
-  const visibleLaneCount = () => {
-    const used = occupiedLaneCount();
-    if (used === 0) return 1; // single empty drop row
-    if (used >= MAX_LANES) return MAX_LANES;
-    return used + 1; // spare track for the next layer
-  };
+  const bandH = () => LANE_H + LANE_GAP;
 
   const layoutLanes = () => {
-    clips = packIntoLanes(clips, MAX_LANES);
-    const n = visibleLaneCount();
-    // Use clientHeight (scrollbar-gutter stable) so lane fill matches the
-    // scrollport without oscillating when overflow toggles.
-    const viewportLanes = Math.max(0, trackViewportH() - RULER_H);
-    const minContent = n * LANE_H_MIN + LANE_GAP * (n + 1);
-    const avail = Math.max(viewportLanes, minContent);
-    const gaps = LANE_GAP * (n + 1);
-    // Flex row height across however many tracks are showing
-    laneH = Math.max(LANE_H_MIN, Math.floor((avail - gaps) / n));
-    const contentH = n * (laneH + LANE_GAP) + LANE_GAP;
-    // Only force a min-height when clips need more room than the viewport.
-    // Filling with height:100% alone avoids minHeight === clientHeight edge
-    // cases that can flip the vertical scrollbar on subpixel layouts.
-    if (contentH > viewportLanes) {
-      lanesEl.style.minHeight = `${contentH}px`;
-      // Grow track-inner so overflow:hidden still allows vertical scroll
-      // (height:100% alone would clip extra lanes inside the scrollport).
-      trackInner.style.height = `${RULER_H + contentH}px`;
-    } else {
-      lanesEl.style.minHeight = '';
-      trackInner.style.height = '100%';
-    }
-    lanesEl.style.height = '100%';
+    clips = assignLanes(clips, catalogOrder);
+    const n = trackCount();
+    const contentH = LANE_GAP + n * bandH();
+    lanesEl.style.height = `${contentH}px`;
+    lanesEl.style.minHeight = `${contentH}px`;
+    headersEl.style.height = `${contentH}px`;
+    // Content taller than viewport → vertical scroll inside track-scroll
+    trackInner.style.minHeight = '100%';
+    trackInner.style.height = `${RULER_H + contentH}px`;
 
-    const band = laneH + LANE_GAP;
-    const used = occupiedLaneCount();
     const stops: string[] = [];
     for (let i = 0; i < n; i++) {
-      const y0 = LANE_GAP + i * band;
-      const y1 = y0 + laneH;
-      // Spare (empty) row slightly quieter so it reads as a drop target
+      const y0 = LANE_GAP + i * bandH();
+      const y1 = y0 + LANE_H;
       const fill =
-        i < used || used === 0
-          ? 'rgba(255,255,255,0.05)'
-          : 'rgba(255,255,255,0.028)';
+        i % 2 === 0 ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.028)';
       stops.push(
         `transparent ${y0}px`,
         `${fill} ${y0}px`,
@@ -396,8 +326,75 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     lanesEl.style.backgroundRepeat = 'no-repeat';
   };
 
+  const renderTrackHeaders = () => {
+    const rows = trackRows();
+    headersEl.replaceChildren();
+    // Padding + gap mirror lane band geometry (LANE_GAP + n * (LANE_H + LANE_GAP))
+    headersEl.style.gap = `${LANE_GAP}px`;
+    headersEl.style.paddingTop = `${LANE_GAP}px`;
+    headersEl.style.paddingBottom = '0';
+    headersEl.style.boxSizing = 'border-box';
+    for (const row of rows) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className =
+        'atl-track-header' + (row.kind === 'custom' ? ' is-custom' : '');
+      btn.dataset.soundId = row.soundId;
+      btn.dataset.lane = String(row.lane);
+      btn.style.setProperty('--chip', colorForSoundId(row.soundId));
+      btn.style.height = `${LANE_H}px`;
+      btn.style.flex = `0 0 ${LANE_H}px`;
+
+      const def =
+        row.kind === 'catalog'
+          ? SOUNDS.find((s) => s.id === row.soundId)
+          : undefined;
+      const fileDur = def
+        ? durationCache.get(def.file)
+        : undefined;
+      const durLabel =
+        fileDur != null ? fmt(fileDur, fileDur >= 10 ? 1 : 2) : null;
+
+      btn.title =
+        row.kind === 'catalog'
+          ? `${row.label}${durLabel ? ` · ${durLabel}s` : ''} — drag onto timeline · click to audition`
+          : `${row.label} (imported)`;
+      btn.innerHTML = `<span class="atl-track-name">${escapeHtml(row.label)}</span>${
+        durLabel
+          ? `<span class="atl-track-dur">${durLabel}s</span>`
+          : ''
+      }`;
+
+      if (def) {
+        btn.draggable = true;
+        btn.addEventListener('dragstart', (e) => {
+          e.dataTransfer?.setData('application/x-suit-sound', def.id);
+          e.dataTransfer?.setData('text/plain', def.id);
+          if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy';
+          btn.classList.add('dragging');
+        });
+        btn.addEventListener('dragend', () => {
+          btn.classList.remove('dragging');
+          dropHint.classList.remove('active');
+        });
+        btn.addEventListener('click', async () => {
+          const srcDur = await getDuration(def.file);
+          engine.stop('audition');
+          engine.play({
+            id: 'audition',
+            file: def.file,
+            offset: 0,
+            duration: Math.max(0.05, srcDur),
+          });
+        });
+      }
+      headersEl.appendChild(btn);
+    }
+  };
+
   const renderClips = () => {
     layoutLanes();
+    renderTrackHeaders();
     syncScale();
 
     // Remove old clip nodes (keep playhead)
@@ -412,11 +409,11 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       const dur = clipDuration(c);
       const left = c.start * pxPerSec;
       const width = Math.max(8, dur * pxPerSec);
-      const top = LANE_GAP + c.lane * (laneH + LANE_GAP);
+      const top = LANE_GAP + c.lane * bandH();
       node.style.left = `${left}px`;
       node.style.width = `${width}px`;
       node.style.top = `${top}px`;
-      node.style.height = `${laneH}px`;
+      node.style.height = `${LANE_H}px`;
       node.style.setProperty('--clip', colorForSoundId(c.soundId));
 
       const trimmed =
@@ -552,8 +549,9 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   };
 
   const clientXToTime = (clientX: number): number => {
-    const rect = trackScroll.getBoundingClientRect();
-    const x = clientX - rect.left + trackScroll.scrollLeft;
+    // Measure against the lanes column (labels are sticky and excluded).
+    const rect = lanesEl.getBoundingClientRect();
+    const x = clientX - rect.left;
     return Math.max(0, Math.min(assemblyDuration, x / pxPerSec));
   };
 
@@ -639,7 +637,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       dragMode = null;
       dragClipId = null;
       dragStartSnapshot = null;
-      clips = assignLanes(clips);
+      clips = assignLanes(clips, catalogOrder);
       persist();
       renderClips();
       renderMeta();
@@ -668,7 +666,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     const srcDur = await getDuration(def.file);
     const clip = createClipFromSound(soundId, startSec, srcDur);
     if (!clip) return;
-    clips = assignLanes([...clips, clip]);
+    clips = assignLanes([...clips, clip], catalogOrder);
     persist();
     select(clip.id);
     renderClips();
@@ -730,7 +728,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       t += clipDuration(clip) + 0.05;
       select(clip.id);
     }
-    clips = assignLanes(clips);
+    clips = assignLanes(clips, catalogOrder);
     persist();
     renderClips();
     renderMeta();
@@ -778,7 +776,10 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       fadeIn,
       fadeOut,
     });
-    clips = assignLanes(clips.map((x) => (x.id === c.id ? next : x)));
+    clips = assignLanes(
+      clips.map((x) => (x.id === c.id ? next : x)),
+      catalogOrder,
+    );
     persist();
     renderClips();
     renderMeta();
@@ -821,7 +822,10 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       const sec = Number(btn.dataset.fade);
       if (Number.isNaN(sec)) return;
       const next = clampCrop({ ...c, fadeIn: sec, fadeOut: sec });
-      clips = assignLanes(clips.map((x) => (x.id === c.id ? next : x)));
+      clips = assignLanes(
+        clips.map((x) => (x.id === c.id ? next : x)),
+        catalogOrder,
+      );
       persist();
       renderClips();
       renderMeta();
@@ -907,7 +911,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const relayoutFromSize = () => {
     // Debounce identity: same viewport + duration + zoom ⇒ skip full rebuild.
     // Without this, scrollbar show/hide can re-fire RO forever at t=end.
-    const key = `${trackScroll.clientWidth}x${trackScroll.clientHeight}:${assemblyDuration}:${zoomMul}:${visibleLaneCount()}`;
+    const key = `${trackScroll.clientWidth}x${trackScroll.clientHeight}:${assemblyDuration}:${zoomMul}:${trackCount()}`;
     if (key === lastLayoutKey) {
       updatePlayheadDom();
       return;
@@ -1003,7 +1007,6 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     }
   };
 
-  void renderLibrary();
   renderRuler();
   renderClips();
   renderMeta();

@@ -467,7 +467,7 @@ body.viewer-mode .hud-bottom-meta {
   bottom: auto;
   z-index: 50;
   width: min(17.5rem, calc(100vw - 2rem));
-  max-height: min(50vh, calc(100vh - min(28vh, 13.5rem) - 6.5rem));
+  max-height: min(50vh, calc(100vh - min(40vh, 20rem) - 6.5rem));
   overflow: auto;
   padding: 0.7rem 0.75rem 0.65rem;
   pointer-events: auto;
@@ -729,7 +729,7 @@ body.viewer-mode .reclass-panel {
     right: 0.5rem;
     left: auto;
     width: min(17.5rem, calc(100vw - 1rem));
-    max-height: min(40vh, calc(100vh - min(32vh, 14rem) - 6rem));
+    max-height: min(40vh, calc(100vh - min(42vh, 18rem) - 6rem));
   }
 }
 
@@ -750,9 +750,9 @@ body.viewer-mode .reclass-panel {
   right: 0;
   bottom: 0;
   z-index: 45;
-  /* Fixed compact height so the track can fill leftover space inside */
-  height: min(28vh, 13.5rem);
-  max-height: min(28vh, 13.5rem);
+  /* Taller so more per-sample tracks are visible before scrolling */
+  height: min(40vh, 20rem);
+  max-height: min(40vh, 20rem);
   display: flex;
   flex-direction: column;
   pointer-events: auto;
@@ -774,7 +774,7 @@ body.viewer-mode .reclass-panel {
 
 /* Lift bottom HUD when audio timeline is open (director) */
 body.director-mode #hud-bottom {
-  bottom: min(28vh, 13.5rem);
+  bottom: min(40vh, 20rem);
 }
 
 /* Reclass stays top-right; do not pin above the audio timeline. */
@@ -877,85 +877,11 @@ body.director-mode #hud-bottom {
 }
 
 .atl-body {
-  display: grid;
-  grid-template-columns: minmax(6.5rem, 9rem) minmax(0, 1fr);
-  gap: 0;
-  min-height: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  align-items: stretch;
-}
-
-.atl-library-wrap {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid rgba(201, 162, 39, 0.12);
-  padding: 0.25rem 0.3rem 0.3rem;
-}
-
-.atl-lib-heading {
-  margin: 0 0 0.2rem;
-  font-size: 0.42rem;
-  letter-spacing: 0.06em;
-  color: rgba(232, 228, 217, 0.4);
-  line-height: 1.25;
-}
-
-.atl-library {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  overflow: auto;
-  min-height: 0;
-  flex: 1;
-  padding-right: 0.1rem;
-}
-
-.atl-lib-chip {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.35rem;
-  width: 100%;
-  text-align: left;
-  padding: 0.2rem 0.3rem;
-  font-family: inherit;
-  font-size: 0.48rem;
-  letter-spacing: 0.03em;
-  color: var(--text);
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--chip, #b01020) 35%, transparent),
-    rgba(12, 16, 28, 0.85)
-  );
-  border: 1px solid color-mix(in srgb, var(--chip, #b01020) 45%, transparent);
-  border-left-width: 2px;
-  cursor: grab;
-  user-select: none;
-}
-
-.atl-lib-chip:hover {
-  border-color: var(--gold);
-}
-
-.atl-lib-chip.dragging {
-  opacity: 0.55;
-}
-
-.atl-lib-label {
-  min-width: 0;
   flex: 1 1 auto;
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.atl-lib-dur {
-  flex: 0 0 auto;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-  color: rgba(232, 228, 217, 0.4);
 }
 
 .atl-track-wrap {
@@ -981,18 +907,129 @@ body.director-mode #hud-bottom {
 .atl-track-inner {
   position: relative;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: stretch;
   /* At least fill the scrollport; JS may set a taller px height when
-     many lanes need vertical scroll room. */
+     many sample tracks need vertical scroll room. */
   min-height: 100%;
   height: 100%;
   box-sizing: border-box;
-  /*
-    Clip the playhead hit target / end ticks so they never inflate
-    scrollWidth/scrollHeight past the intentional content size.
-    Without this, the playhead at t=end sticks ~5px past the right edge
-    and scrollbars thrash via ResizeObserver ↔ layout feedback.
-  */
+  /* Do not clip here — overflow:hidden would break sticky track labels
+     against .atl-track-scroll. Playhead/ticks clip on .atl-timeline-col. */
+  overflow: visible;
+}
+
+/* Sticky left rail: one header per catalog sample (+ customs) */
+.atl-labels-col {
+  position: sticky;
+  left: 0;
+  z-index: 6;
+  flex: 0 0 7.25rem;
+  width: 7.25rem;
+  display: flex;
+  flex-direction: column;
+  background: rgba(6, 8, 14, 0.96);
+  border-right: 1px solid rgba(201, 162, 39, 0.18);
+  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.25);
+}
+
+.atl-label-corner {
+  display: flex;
+  align-items: center;
+  flex: 0 0 16px;
+  height: 16px;
+  padding: 0 0.35rem;
+  border-bottom: 1px solid rgba(201, 162, 39, 0.15);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.atl-label-corner-text {
+  font-size: 0.38rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: rgba(201, 162, 39, 0.65);
+}
+
+.atl-headers {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.atl-track-header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
+  margin: 0;
+  padding: 0 0.3rem 0 0.35rem;
+  font: inherit;
+  font-size: 0.42rem;
+  letter-spacing: 0.04em;
+  color: rgba(232, 228, 217, 0.78);
+  text-align: left;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--chip, #b01020) 42%, transparent),
+    rgba(10, 12, 20, 0.55)
+  );
+  border: none;
+  border-left: 2px solid var(--chip, #b01020);
+  cursor: grab;
+  overflow: hidden;
+  user-select: none;
+}
+
+.atl-track-header:hover {
+  color: var(--gold-bright);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--chip, #b01020) 55%, transparent),
+    rgba(16, 20, 32, 0.7)
+  );
+}
+
+.atl-track-header:focus-visible {
+  outline: 1px solid rgba(126, 232, 255, 0.55);
+  outline-offset: -1px;
+  z-index: 1;
+}
+
+.atl-track-header.dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+
+.atl-track-header.is-custom {
+  font-style: italic;
+  opacity: 0.9;
+  cursor: default;
+}
+
+.atl-track-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.atl-track-dur {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  font-size: 0.38rem;
+  color: rgba(232, 228, 217, 0.4);
+}
+
+.atl-timeline-col {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* Clip playhead at column edges */
   overflow: hidden;
 }
 
@@ -1033,9 +1070,9 @@ body.director-mode #hud-bottom {
 
 .atl-lanes {
   position: relative;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 26px;
-  /* Grow into leftover panel height; clips stay top-aligned in lanes */
+  /* Explicit height set in JS (one row per sample) */
   height: auto;
   background: rgba(0, 0, 0, 0.2);
   cursor: ew-resize;
@@ -1045,7 +1082,7 @@ body.director-mode #hud-bottom {
 .atl-playhead {
   position: absolute;
   top: 0;
-  /* 100% of track-inner — stays inside the clipped box (no V-overflow). */
+  /* Full timeline column (ruler + sample tracks) */
   height: 100%;
   width: 10px;
   margin-left: -5px;
@@ -1097,7 +1134,7 @@ body.director-mode #hud-bottom {
 .atl-drop-hint {
   display: none;
   position: absolute;
-  inset: 22px 0 0;
+  inset: 16px 0 0;
   align-items: center;
   justify-content: center;
   font-size: 0.65rem;
@@ -1159,10 +1196,10 @@ body.director-mode #hud-bottom {
   position: relative;
   display: block;
   z-index: 2;
-  padding: 0.15rem 0.35rem;
-  font-size: 0.48rem;
+  padding: 0.08rem 0.3rem;
+  font-size: 0.44rem;
   letter-spacing: 0.03em;
-  line-height: 1.2;
+  line-height: 1.15;
   color: #f0ebe0;
   white-space: nowrap;
   overflow: hidden;
@@ -1322,26 +1359,6 @@ body.director-mode #hud-bottom {
 }
 
 @media (max-width: 720px) {
-  .atl-body {
-    grid-template-columns: 1fr;
-  }
-
-  .atl-library-wrap {
-    border-right: none;
-    border-bottom: 1px solid rgba(201, 162, 39, 0.12);
-    max-height: 5.5rem;
-  }
-
-  .atl-library {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-
-  .atl-lib-chip {
-    width: auto;
-    max-width: 7rem;
-  }
-
   .atl-meta {
     grid-template-columns: 1fr 1fr 1fr;
   }
@@ -1351,12 +1368,17 @@ body.director-mode #hud-bottom {
   }
 
   body.director-mode #hud-bottom {
-    bottom: min(32vh, 14rem);
+    bottom: min(42vh, 18rem);
   }
 
   .audio-timeline {
-    height: min(32vh, 14rem);
-    max-height: min(32vh, 14rem);
+    height: min(42vh, 18rem);
+    max-height: min(42vh, 18rem);
+  }
+
+  .atl-labels-col {
+    flex-basis: 5.5rem;
+    width: 5.5rem;
   }
 }
 

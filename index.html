@@ -268,18 +268,21 @@
         </header>
 
         <div class="atl-body">
-          <div class="atl-library-wrap">
-            <p class="atl-lib-heading">LIBRARY · drag onto track · click to audition</p>
-            <div id="atl-library" class="atl-library"></div>
-          </div>
-
           <div class="atl-track-wrap">
             <div id="atl-track-scroll" class="atl-track-scroll">
               <div id="atl-track-inner" class="atl-track-inner">
-                <div id="atl-ruler" class="atl-ruler" aria-hidden="true"></div>
-                <div id="atl-lanes" class="atl-lanes"></div>
-                <div id="atl-playhead" class="atl-playhead" aria-hidden="true"></div>
-                <div id="atl-drop-hint" class="atl-drop-hint">Drop clip here</div>
+                <div class="atl-labels-col" aria-hidden="false">
+                  <div class="atl-label-corner" title="Tracks · shortest → longest">
+                    <span class="atl-label-corner-text">TRACKS</span>
+                  </div>
+                  <div id="atl-headers" class="atl-headers"></div>
+                </div>
+                <div class="atl-timeline-col">
+                  <div id="atl-ruler" class="atl-ruler" aria-hidden="true"></div>
+                  <div id="atl-lanes" class="atl-lanes"></div>
+                  <div id="atl-playhead" class="atl-playhead" aria-hidden="true"></div>
+                  <div id="atl-drop-hint" class="atl-drop-hint">Drop sample here</div>
+                </div>
               </div>
             </div>
           </div>
@@ -334,7 +337,7 @@
             </button>
           </div>
           <p class="atl-meta-hint">
-            Scrub · crop edges · VOL / FADE IN·OUT (Logic-style) · presets apply both fades ·
+            Drag track label → time · click label to audition · scrub · crop · VOL/FADE ·
             Backspace/Del · auto-save
           </p>
         </div>

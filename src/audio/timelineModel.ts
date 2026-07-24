@@ -165,23 +165,126 @@ export function createClipFromFileMeta(meta: {
   });
 }
 
-/** Pack clips into non-overlapping lanes (greedy by start time). */
-export function assignLanes(clips: TimelineClip[]): TimelineClip[] {
-  const sorted = [...clips].sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
-  const laneEnds: number[] = [];
-  const out: TimelineClip[] = [];
-  for (const c of sorted) {
-    const end = clipEnd(c);
-    let lane = laneEnds.findIndex((le) => le <= c.start + 1e-4);
-    if (lane < 0) {
-      lane = laneEnds.length;
-      laneEnds.push(end);
-    } else {
-      laneEnds[lane] = end;
-    }
-    out.push({ ...c, lane });
+/**
+ * Stable list of non-catalog sound ids present in clips (sorted).
+ * Each gets a track after the catalog rows.
+ */
+export function customSoundIds(clips: TimelineClip[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const c of clips) {
+    if (findSound(c.soundId)) continue;
+    if (seen.has(c.soundId)) continue;
+    seen.add(c.soundId);
+    out.push(c.soundId);
+  }
+  out.sort((a, b) => a.localeCompare(b));
+  return out;
+}
+
+/** Default catalog track order (array index order in SOUNDS). */
+export function defaultCatalogOrder(): string[] {
+  return SOUNDS.map((s) => s.id);
+}
+
+/** Fixed catalog track count (one row per library sample). */
+export function catalogTrackCount(): number {
+  return SOUNDS.length;
+}
+
+/**
+ * Resolve catalog sound ids in the given order (unknown ids skipped;
+ * missing catalog ids appended in SOUNDS order).
+ */
+export function normalizeCatalogOrder(
+  order: readonly string[] | null | undefined,
+): string[] {
+  if (!order || order.length === 0) return defaultCatalogOrder();
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of order) {
+    if (!findSound(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  for (const s of SOUNDS) {
+    if (seen.has(s.id)) continue;
+    out.push(s.id);
   }
   return out;
+}
+
+/**
+ * Lane index for a sound id: catalog order, then sorted custom tracks.
+ */
+export function laneForSoundId(
+  soundId: string,
+  customs: readonly string[] = [],
+  catalogOrder: readonly string[] = defaultCatalogOrder(),
+): number {
+  const order = normalizeCatalogOrder(catalogOrder);
+  const cat = order.indexOf(soundId);
+  if (cat >= 0) return cat;
+  const cIdx = customs.indexOf(soundId);
+  if (cIdx >= 0) return order.length + cIdx;
+  // Unknown custom — append after known customs
+  return order.length + customs.length;
+}
+
+export type TrackRow = {
+  lane: number;
+  soundId: string;
+  label: string;
+  /** Catalog sample vs user-imported / orphan. */
+  kind: 'catalog' | 'custom';
+};
+
+/**
+ * One track row per catalog sound (in `catalogOrder`), then customs.
+ * Pass a duration-sorted order from the panel for shortest → longest.
+ */
+export function listTrackRows(
+  clips: TimelineClip[],
+  catalogOrder: readonly string[] = defaultCatalogOrder(),
+): TrackRow[] {
+  const order = normalizeCatalogOrder(catalogOrder);
+  const customs = customSoundIds(clips);
+  const rows: TrackRow[] = order.map((id, i) => {
+    const def = findSound(id)!;
+    return {
+      lane: i,
+      soundId: def.id,
+      label: def.label,
+      kind: 'catalog' as const,
+    };
+  });
+  for (let i = 0; i < customs.length; i++) {
+    const id = customs[i]!;
+    const sample = clips.find((c) => c.soundId === id);
+    rows.push({
+      lane: order.length + i,
+      soundId: id,
+      label: sample?.label || id.replace(/^custom-/, ''),
+      kind: 'custom',
+    });
+  }
+  return rows;
+}
+
+/**
+ * Assign each clip to its sound’s fixed track (one line per sample).
+ * Same sample instances share a track; different samples never stack.
+ */
+export function assignLanes(
+  clips: TimelineClip[],
+  catalogOrder: readonly string[] = defaultCatalogOrder(),
+): TimelineClip[] {
+  const order = normalizeCatalogOrder(catalogOrder);
+  const customs = customSoundIds(clips);
+  return clips.map((c) => ({
+    ...c,
+    lane: laneForSoundId(c.soundId, customs, order),
+  }));
 }
 
 /** True when a clip can be written to localStorage and survive a reload. */
