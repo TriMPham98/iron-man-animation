@@ -70,6 +70,26 @@ export function approachDepthSign(rest: THREE.Vector3): 1 | -1 {
 }
 
 /**
+ * Centerline pelvic girdle (high-tier hips#103).
+ *
+ * Rest sits near z≈0 but the plate wraps both depth hemispheres
+ * (bbox ≈ −0.11…+0.10). Default side-plate rule would pull it from +Z
+ * (camera); force −Z so it seats from behind the waist without clipping
+ * through the front of the suit.
+ *
+ * Match by rest pose (not shard index) so quality tiers stay stable.
+ * Measured high-tier rest ≈ (−0.014, 0.917, 0.001).
+ */
+export function isHipsPelvisGirdleRest(rest: THREE.Vector3): boolean {
+  return (
+    Math.abs(rest.x) < 0.04 &&
+    rest.y > 0.88 &&
+    rest.y < 0.96 &&
+    Math.abs(rest.z) < 0.03
+  );
+}
+
+/**
  * Scatter start on the plate’s depth hemisphere:
  *   anterior (rest.z ≳ 0) → +Z toward camera
  *   posterior (rest.z ≪ 0) → −Z from behind the suit
@@ -101,7 +121,10 @@ export function scatterStart(
   }
 
   const profile = (wave && WAVE_SCATTER[wave]) || DEFAULT_SCATTER;
-  const depthSign = approachDepthSign(rest);
+  // Pelvic girdle: always approach from behind (see isHipsPelvisGirdleRest)
+  const depthSign: 1 | -1 = isHipsPelvisGirdleRest(rest)
+    ? -1
+    : approachDepthSign(rest);
 
   // Map legacy radius range → scale so scatter cloud stays readable
   const midR = (radiusMin + radiusMax) * 0.5;

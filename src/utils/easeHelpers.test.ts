@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   approachDepthSign,
+  isHipsPelvisGirdleRest,
   flightPathKeysFrom,
   hashSeed,
   isFaceplateRest,
@@ -130,6 +131,19 @@ describe('depth-aware scatter (anterior + posterior)', () => {
     expect(approachDepthSign(rest)).toBe(1);
     const start = scatterStart(rest, 'side-arm', 3.5, 8.5, 'arms');
     expect(start.z).toBeGreaterThan(rest.z + 0.75);
+  });
+
+  it('pelvic girdle (hips#103 rest) approaches from behind despite z≈0', () => {
+    // Measured high-tier shard-103-hips rest
+    const rest = new THREE.Vector3(-0.0142, 0.9168, 0.0012);
+    expect(isHipsPelvisGirdleRest(rest)).toBe(true);
+    // Default depth rule would pick +Z (side/near-zero plate)
+    expect(approachDepthSign(rest)).toBe(1);
+    const start = scatterStart(rest, 'shard-103-hips', 3.5, 8.5, 'hips');
+    expect(start.z).toBeLessThan(rest.z - 0.75);
+    // Magnetic path stays on the posterior side
+    const path = magneticPath(start, rest, 'shard-103-hips');
+    expect(path.waypoint.z).toBeLessThan(rest.z);
   });
 });
 
