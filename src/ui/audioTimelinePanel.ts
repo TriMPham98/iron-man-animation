@@ -21,6 +21,12 @@ import {
 } from '../audio/timelineModel';
 import { colorForSoundId, SOUNDS } from '../audio/sounds';
 import {
+  collectSnapTargets,
+  snapClipStart,
+  snapTime,
+  type SnapTarget,
+} from '../audio/snapping';
+import {
   drawGainEnvelope,
   paintClipWaveform,
   prewarmWaveforms,
@@ -35,6 +41,10 @@ const LANE_H_MIN = 26;
 const LANE_GAP = 2;
 const RULER_H = 16;
 const MIN_CROP = 0.05;
+/** Snap magnet radius in pixels — converted to seconds per zoom level. */
+const SNAP_PX = 7;
+/** Undo depth. Each entry is a clip-array snapshot (small, plain objects). */
+const HISTORY_LIMIT = 100;
 
 export type AudioTimelinePanel = {
   /** Show/hide with director mode. */
@@ -128,9 +138,14 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const btnDelete = el<HTMLButtonElement>('atl-delete');
   const btnZoomIn = el<HTMLButtonElement>('atl-zoom-in');
   const btnZoomOut = el<HTMLButtonElement>('atl-zoom-out');
+  const btnSnap = el<HTMLButtonElement>('atl-snap');
+  const btnUndo = el<HTMLButtonElement>('atl-undo');
+  const btnRedo = el<HTMLButtonElement>('atl-redo');
+  const snapGuideEl = el<HTMLDivElement>('atl-snap-guide');
   const clipCountEl = el<HTMLSpanElement>('atl-clip-count');
 
   const LOOP_STORAGE_KEY = 'mark-suit-audio-loop';
+  const SNAP_STORAGE_KEY = 'mark-suit-audio-snap';
 
   const engine = createAudioEngine();
   /**
@@ -158,10 +173,32 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   } catch {
     loopEnabled = false;
   }
+  let snapEnabled = true;
+  try {
+    snapEnabled = window.localStorage.getItem(SNAP_STORAGE_KEY) !== '0';
+  } catch {
+    snapEnabled = true;
+  }
   let seekHandler: ((progress01: number) => void) | null = null;
   let togglePauseHandler: (() => void) | null = null;
   let loopChangeHandler: ((enabled: boolean) => void) | null = null;
   let scrubbing = false;
+
+  /**
+   * Undo/redo over whole clip-list snapshots. Clips are plain objects that
+   * every mutation path already replaces immutably, so a shallow array copy
+   * is a complete restore point.
+   */
+  const undoStack: TimelineClip[][] = [];
+  const redoStack: TimelineClip[][] = [];
+  /**
+   * Snapshot taken before a continuous gesture (fader drag, clip drag) so
+   * undo rewinds the whole gesture rather than its last frame.
+   */
+  let gestureBase: TimelineClip[] | null = null;
+
+  /** Object URLs minted for imported files — revoked on destroy. */
+  const objectUrls = new Set<string>();
 
   const applyLoopVisual = () => {
     btnLoop.classList.toggle('is-active', loopEnabled);
@@ -185,6 +222,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   let dragClipId: string | null = null;
   let dragOriginX = 0;
   let dragStartSnapshot: TimelineClip | null = null;
+  /** Snap targets frozen at drag start — other clips can't move mid-gesture. */
+  let dragSnapTargets: SnapTarget[] = [];
 
   const getDuration = async (file: string): Promise<number> => {
     const hit = durationCache.get(file);
@@ -240,9 +279,89 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   window.addEventListener('pagehide', flushPersist);
   window.addEventListener('beforeunload', flushPersist);
 
+  const syncHistoryButtons = () => {
+    btnUndo.disabled = undoStack.length === 0;
+    btnRedo.disabled = redoStack.length === 0;
+    btnUndo.title = undoStack.length
+      ? `Undo (⌘Z) — ${undoStack.length} step${undoStack.length === 1 ? '' : 's'}`
+      : 'Nothing to undo';
+    btnRedo.title = redoStack.length ? 'Redo (⇧⌘Z)' : 'Nothing to redo';
+  };
+  syncHistoryButtons();
+
+  /**
+   * Record a restore point. Pass `base` to rewind past a whole gesture
+   * (the pre-drag snapshot) instead of the already-mutated current list.
+   */
+  const pushHistory = (base?: TimelineClip[] | null) => {
+    undoStack.push([...(base ?? clips)]);
+    if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+    // Any fresh edit invalidates the redo branch.
+    redoStack.length = 0;
+    syncHistoryButtons();
+  };
+
+  /**
+   * Re-arm the transport schedule after an edit.
+   *
+   * `onTransportPlay` bakes the whole clip schedule into timers when it
+   * runs, so a move/gain/crop change made mid-playback would otherwise stay
+   * silent until the next seek. Re-running it from the live playhead lets
+   * the director tune while listening.
+   */
+  const rescheduleIfPlaying = () => {
+    if (playingFrom == null) return;
+    onTransportPlay(playheadSec);
+  };
+
+  /** Shared tail of every mutation: save, repaint, re-arm audio. */
+  const commit = (opts?: { skipRender?: boolean }) => {
+    persist();
+    if (!opts?.skipRender) {
+      renderClips();
+      renderMeta();
+    }
+    rescheduleIfPlaying();
+  };
+
+  const restoreSnapshot = (next: TimelineClip[]) => {
+    clips = assignLanes(next, catalogOrder);
+    // Selection may point at a clip that no longer exists in this snapshot.
+    if (selectedId && !clips.some((c) => c.id === selectedId)) {
+      selectedId = null;
+    }
+    engine.stop();
+    commit();
+    syncHistoryButtons();
+  };
+
+  const undo = () => {
+    const prev = undoStack.pop();
+    if (!prev) return;
+    redoStack.push([...clips]);
+    restoreSnapshot(prev);
+  };
+
+  const redo = () => {
+    const next = redoStack.pop();
+    if (!next) return;
+    undoStack.push([...clips]);
+    restoreSnapshot(next);
+  };
+
+  /**
+   * Selection is a CSS class, not a reason to rebuild the track.
+   *
+   * This used to call `renderClips()`, which tore down every clip node —
+   * including the one that had just received `pointerdown`. Capturing the
+   * pointer on a detached element throws InvalidStateError, so the whole
+   * drag silently failed to engage.
+   */
   const select = (id: string | null) => {
     selectedId = id;
-    renderClips();
+    for (const node of lanesEl.querySelectorAll<HTMLElement>('.atl-clip')) {
+      node.classList.toggle('selected', node.dataset.id === id);
+    }
     renderMeta();
   };
 
@@ -277,6 +396,13 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     return Math.max(vw, Math.floor(assemblyDuration * pxPerSec));
   };
 
+  /**
+   * Ruler minor-tick spacing in seconds. Always keeps 1s major ticks; adds
+   * 0.5s minors when zoomed enough. Never drops to 2s-only — second marks
+   * stay readable while scrubbing. Doubles as the snap grid.
+   */
+  const gridStep = () => (pxPerSec >= 48 ? 0.5 : pxPerSec >= 22 ? 1 : 2);
+
   const renderRuler = () => {
     const w = contentWidth();
     const labelW = labelRailW();
@@ -305,9 +431,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     lanesEl.style.width = '100%';
 
     rulerEl.replaceChildren();
-    // Always keep 1s major ticks; add 0.5s minor when zoomed enough.
-    // Never drop to 2s-only — second marks stay readable while scrubbing.
-    const minorStep = pxPerSec >= 48 ? 0.5 : pxPerSec >= 22 ? 1 : 2;
+    const minorStep = gridStep();
     const majorEvery = minorStep <= 1 ? 1 : 2;
     for (let t = 0; t <= assemblyDuration + 1e-6; t += minorStep) {
       const mark = document.createElement('div');
@@ -435,6 +559,81 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     }
   };
 
+  /** Clip caption: name + crop range + any non-default gain/pitch/fades. */
+  const clipLabelHtml = (c: TimelineClip): string => {
+    const volPct = Math.round(c.volume * 100);
+    const pitch = clampPitchValue(c.pitch);
+    const gainBits: string[] = [];
+    if (volPct !== 100) gainBits.push(`${volPct}%`);
+    if (Math.abs(pitch - 1) > 0.005) gainBits.push(`${pitch.toFixed(2)}×`);
+    if (c.fadeIn > 0.001) gainBits.push(`↑${fmt(c.fadeIn, 2)}`);
+    if (c.fadeOut > 0.001) gainBits.push(`↓${fmt(c.fadeOut, 2)}`);
+    const trimmed = c.cropIn > 0.001 || c.cropOut < c.sourceDuration - 0.001;
+    return `${escapeHtml(c.label)}${
+      trimmed
+        ? ` <em class="atl-clip-crop-tag">${fmt(c.cropIn, 2)}–${fmt(c.cropOut, 2)}</em>`
+        : ''
+    }${
+      gainBits.length
+        ? ` <em class="atl-clip-gain-tag">${gainBits.join(' · ')}</em>`
+        : ''
+    }`;
+  };
+
+  const clipNode = (id: string): HTMLElement | null =>
+    lanesEl.querySelector(`.atl-clip[data-id="${CSS.escape(id)}"]`);
+
+  /**
+   * Patch one clip's DOM in place.
+   *
+   * Drag used to call `renderClips()` per pointermove, which tore down and
+   * rebuilt every track header and every clip node (plus a canvas repaint
+   * each) to move a single rectangle — and destroyed the very node holding
+   * the pointer capture. Geometry-only updates keep dragging cheap.
+   */
+  const updateClipNode = (c: TimelineClip, opts?: { repaintWave?: boolean }) => {
+    const node = clipNode(c.id);
+    if (!node) return;
+    const dur = clipDuration(c);
+    node.style.left = `${c.start * pxPerSec}px`;
+    node.style.width = `${Math.max(8, dur * pxPerSec)}px`;
+
+    const label = node.querySelector('.atl-clip-label');
+    if (label) label.innerHTML = clipLabelHtml(c);
+
+    const gainEl = node.querySelector(
+      '.atl-clip-gain',
+    ) as HTMLCanvasElement | null;
+    if (gainEl) {
+      drawGainEnvelope(gainEl, {
+        volume: c.volume,
+        fadeIn: c.fadeIn,
+        fadeOut: c.fadeOut,
+        duration: Math.max(1e-3, dur),
+      });
+    }
+
+    // Only crop drags change which slice of the source is visible.
+    if (opts?.repaintWave) {
+      const wave = node.querySelector(
+        '.atl-clip-wave',
+      ) as HTMLCanvasElement | null;
+      if (wave) {
+        void paintClipWaveform(
+          wave,
+          c.file,
+          c.cropIn,
+          c.cropOut,
+          c.sourceDuration,
+          {
+            color: 'rgba(255, 255, 255, 0.5)',
+            fillColor: 'rgba(255, 255, 255, 0.14)',
+          },
+        );
+      }
+    }
+  };
+
   const renderClips = () => {
     layoutLanes();
     renderTrackHeaders();
@@ -459,9 +658,6 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       node.style.height = `${laneH}px`;
       node.style.setProperty('--clip', colorForSoundId(c.soundId));
 
-      const trimmed =
-        c.cropIn > 0.001 || c.cropOut < c.sourceDuration - 0.001;
-
       const wave = document.createElement('canvas');
       wave.className = 'atl-clip-wave';
       wave.setAttribute('aria-hidden', 'true');
@@ -472,22 +668,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
       const label = document.createElement('span');
       label.className = 'atl-clip-label';
-      const volPct = Math.round(c.volume * 100);
-      const pitch = clampPitchValue(c.pitch);
-      const gainBits: string[] = [];
-      if (volPct !== 100) gainBits.push(`${volPct}%`);
-      if (Math.abs(pitch - 1) > 0.005) gainBits.push(`${pitch.toFixed(2)}×`);
-      if (c.fadeIn > 0.001) gainBits.push(`↑${fmt(c.fadeIn, 2)}`);
-      if (c.fadeOut > 0.001) gainBits.push(`↓${fmt(c.fadeOut, 2)}`);
-      label.innerHTML = `${escapeHtml(c.label)}${
-        trimmed
-          ? ` <em class="atl-clip-crop-tag">${fmt(c.cropIn, 2)}–${fmt(c.cropOut, 2)}</em>`
-          : ''
-      }${
-        gainBits.length
-          ? ` <em class="atl-clip-gain-tag">${gainBits.join(' · ')}</em>`
-          : ''
-      }`;
+      label.innerHTML = clipLabelHtml(c);
 
       const handleIn = document.createElement('span');
       handleIn.className = 'atl-clip-handle left';
@@ -638,6 +819,18 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     }
   };
 
+  /** Snap tolerance in seconds — a fixed pixel radius at any zoom. */
+  const snapToleranceSec = () => SNAP_PX / Math.max(1e-6, pxPerSec);
+
+  const showSnapGuide = (target: SnapTarget | null) => {
+    if (!target) {
+      snapGuideEl.classList.remove('is-active');
+      return;
+    }
+    snapGuideEl.className = `atl-snap-guide is-active kind-${target.kind}`;
+    snapGuideEl.style.left = `${labelRailW() + target.time * pxPerSec}px`;
+  };
+
   const beginDrag = (e: PointerEvent, id: string, mode: DragMode) => {
     e.preventDefault();
     e.stopPropagation();
@@ -648,7 +841,21 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     dragClipId = id;
     dragOriginX = e.clientX;
     dragStartSnapshot = { ...c };
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    // Rewind point for the gesture as a whole, banked on pointerup.
+    gestureBase = [...clips];
+    dragSnapTargets = collectSnapTargets({
+      clips,
+      excludeId: id,
+      playheadSec,
+      assemblyDuration,
+      gridStep: gridStep(),
+    });
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    } catch {
+      // Capture is an optimisation — window-level move/up listeners still
+      // drive the drag if the pointer is already gone.
+    }
   };
 
   const onPointerMove = (e: PointerEvent) => {
@@ -662,26 +869,52 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     const base = dragStartSnapshot;
     let next: TimelineClip = { ...base };
 
+    // Alt bypasses the magnet for fine placement (Logic / Ableton habit).
+    const tol = snapEnabled && !e.altKey ? snapToleranceSec() : 0;
+    let hit: SnapTarget | null = null;
+
     if (dragMode === 'move') {
-      next.start = Math.max(0, base.start + dt);
+      const raw = Math.max(0, base.start + dt);
+      const snapped = snapClipStart(
+        raw,
+        clipDuration(base),
+        dragSnapTargets,
+        tol,
+      );
+      next.start = snapped.time;
+      hit = snapped.target;
     } else if (dragMode === 'crop-in') {
       // Drag left edge: change cropIn; keep right edge fixed on timeline
+      const rawStart = Math.max(0, base.start + dt);
+      const snapped = snapTime(rawStart, dragSnapTargets, tol);
+      hit = snapped.target;
+      const delta = snapped.time - base.start;
       const maxIn = base.cropOut - MIN_CROP;
-      let newIn = base.cropIn + dt;
-      newIn = Math.min(maxIn, Math.max(0, newIn));
-      const delta = newIn - base.cropIn;
+      const newIn = Math.min(maxIn, Math.max(0, base.cropIn + delta));
+      // Re-derive start from the clamped crop so the right edge holds still.
       next.cropIn = newIn;
-      next.start = Math.max(0, base.start + delta);
+      next.start = Math.max(0, base.start + (newIn - base.cropIn));
+      if (Math.abs(next.start - snapped.time) > 1e-6) hit = null;
     } else if (dragMode === 'crop-out') {
+      const rawEnd = base.start + (base.cropOut + dt - base.cropIn);
+      const snapped = snapTime(rawEnd, dragSnapTargets, tol);
+      hit = snapped.target;
       const minOut = base.cropIn + MIN_CROP;
-      let newOut = base.cropOut + dt;
-      newOut = Math.min(base.sourceDuration, Math.max(minOut, newOut));
+      const newOut = Math.min(
+        base.sourceDuration,
+        Math.max(minOut, base.cropIn + (snapped.time - base.start)),
+      );
       next.cropOut = newOut;
+      if (Math.abs(base.start + newOut - base.cropIn - snapped.time) > 1e-6) {
+        hit = null;
+      }
     }
 
     next = clampCrop(next);
     clips = clips.map((c) => (c.id === dragClipId ? next : c));
-    renderClips();
+    // Geometry-only patch — no full rebuild while the pointer is down.
+    updateClipNode(next, { repaintWave: dragMode !== 'move' });
+    showSnapGuide(hit);
     renderMeta();
   };
 
@@ -694,13 +927,19 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       return;
     }
     if (dragMode) {
+      const moved =
+        gestureBase != null &&
+        JSON.stringify(gestureBase) !== JSON.stringify(clips);
       dragMode = null;
       dragClipId = null;
       dragStartSnapshot = null;
+      dragSnapTargets = [];
+      showSnapGuide(null);
       clips = assignLanes(clips, catalogOrder);
-      persist();
-      renderClips();
-      renderMeta();
+      // A click that never moved the clip shouldn't burn an undo step.
+      if (moved) pushHistory(gestureBase);
+      gestureBase = null;
+      commit();
     }
   };
 
@@ -726,11 +965,10 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     const srcDur = await getDuration(def.file);
     const clip = createClipFromSound(soundId, startSec, srcDur);
     if (!clip) return;
+    pushHistory();
     clips = assignLanes([...clips, clip], catalogOrder);
-    persist();
-    select(clip.id);
-    renderClips();
-    renderMeta();
+    selectedId = clip.id;
+    commit();
   };
 
   // Drop from library
@@ -763,11 +1001,14 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   const importExternalFiles = async (files: FileList, startSec: number) => {
     let t = startSec;
+    const before = [...clips];
+    let added = false;
     for (const file of [...files]) {
       if (!file.type.startsWith('audio/') && !/\.(mp3|wav|ogg|m4a)$/i.test(file.name)) {
         continue;
       }
       const url = URL.createObjectURL(file);
+      objectUrls.add(url);
       const srcDur = await probeBlobDuration(url);
       durationCache.set(url, srcDur);
       const clip: TimelineClip = clampCrop({
@@ -785,14 +1026,15 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
         fadeOut: 0,
         pitch: 1,
       });
-      clips.push(clip);
+      clips = [...clips, clip];
+      added = true;
       t += clipDuration(clip) + 0.05;
-      select(clip.id);
+      selectedId = clip.id;
     }
+    if (!added) return;
+    pushHistory(before);
     clips = assignLanes(clips, catalogOrder);
-    persist();
-    renderClips();
-    renderMeta();
+    commit();
   };
 
   const probeBlobDuration = (url: string): Promise<number> =>
@@ -839,13 +1081,23 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       fadeIn,
       fadeOut,
     });
-    clips = assignLanes(
+    // A fader drag already mutated `clips` live — rewind to the pre-drag
+    // snapshot so one undo covers the whole gesture.
+    const before = gestureBase;
+    gestureBase = null;
+    const candidate = assignLanes(
       clips.map((x) => (x.id === c.id ? next : x)),
       catalogOrder,
     );
-    persist();
-    renderClips();
-    renderMeta();
+    if (JSON.stringify(candidate) === JSON.stringify(before ?? clips)) {
+      clips = candidate;
+      renderClips();
+      renderMeta();
+      return;
+    }
+    pushHistory(before);
+    clips = candidate;
+    commit();
   };
 
   const applyVolumeLive = () => {
@@ -853,21 +1105,13 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     if (!c) return;
     const volume = Number(volInput.value) / 100;
     if (Number.isNaN(volume)) return;
+    // First frame of the fader gesture — bank a rewind point.
+    if (!gestureBase) gestureBase = [...clips];
     volReadout.textContent = `${Math.round(volume * 100)}%`;
     const next = clampCrop({ ...c, volume });
     clips = clips.map((x) => (x.id === c.id ? next : x));
     // Live envelope while dragging the fader; persist on change/pointerup
-    const node = lanesEl.querySelector(
-      `.atl-clip[data-id="${CSS.escape(c.id)}"] .atl-clip-gain`,
-    ) as HTMLCanvasElement | null;
-    if (node) {
-      drawGainEnvelope(node, {
-        volume: next.volume,
-        fadeIn: next.fadeIn,
-        fadeOut: next.fadeOut,
-        duration: Math.max(1e-3, clipDuration(next)),
-      });
-    }
+    updateClipNode(next);
   };
 
   const applyPitchLive = () => {
@@ -875,32 +1119,12 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     if (!c) return;
     const pitch = sliderToPitch(pitchInput.value);
     if (Number.isNaN(pitch)) return;
+    if (!gestureBase) gestureBase = [...clips];
     pitchReadout.textContent = formatPitchReadout(pitch);
     const next = clampCrop({ ...c, pitch });
     clips = clips.map((x) => (x.id === c.id ? next : x));
     // Refresh label pitch tag while dragging
-    const label = lanesEl.querySelector(
-      `.atl-clip[data-id="${CSS.escape(c.id)}"] .atl-clip-label`,
-    );
-    if (label) {
-      const volPct = Math.round(next.volume * 100);
-      const gainBits: string[] = [];
-      if (volPct !== 100) gainBits.push(`${volPct}%`);
-      if (Math.abs(pitch - 1) > 0.005) gainBits.push(`${pitch.toFixed(2)}×`);
-      if (next.fadeIn > 0.001) gainBits.push(`↑${fmt(next.fadeIn, 2)}`);
-      if (next.fadeOut > 0.001) gainBits.push(`↓${fmt(next.fadeOut, 2)}`);
-      const trimmed =
-        next.cropIn > 0.001 || next.cropOut < next.sourceDuration - 0.001;
-      label.innerHTML = `${escapeHtml(next.label)}${
-        trimmed
-          ? ` <em class="atl-clip-crop-tag">${fmt(next.cropIn, 2)}–${fmt(next.cropOut, 2)}</em>`
-          : ''
-      }${
-        gainBits.length
-          ? ` <em class="atl-clip-gain-tag">${gainBits.join(' · ')}</em>`
-          : ''
-      }`;
-    }
+    updateClipNode(next);
   };
 
   cropInInput.addEventListener('change', applyMetaFromInputs);
@@ -920,13 +1144,12 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       const sec = Number(btn.dataset.fade);
       if (Number.isNaN(sec)) return;
       const next = clampCrop({ ...c, fadeIn: sec, fadeOut: sec });
+      pushHistory();
       clips = assignLanes(
         clips.map((x) => (x.id === c.id ? next : x)),
         catalogOrder,
       );
-      persist();
-      renderClips();
-      renderMeta();
+      commit();
     });
   }
 
@@ -934,11 +1157,10 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     if (!selectedId) return false;
     // Stop playback if this instance was sounding
     engine.stop(selectedId);
+    pushHistory();
     clips = clips.filter((c) => c.id !== selectedId);
     selectedId = null;
-    persist();
-    renderClips();
-    renderMeta();
+    commit();
     return true;
   };
 
@@ -949,12 +1171,11 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   btnClear.addEventListener('click', () => {
     if (clips.length === 0) return;
     if (!window.confirm('Clear all audio clips from the timeline?')) return;
+    pushHistory();
     clips = [];
     selectedId = null;
     engine.stop();
-    persist();
-    renderClips();
-    renderMeta();
+    commit();
   });
 
   btnCopy.addEventListener('click', async () => {
@@ -992,6 +1213,36 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     btnMute.classList.toggle('is-muted', muted);
     btnMute.textContent = muted ? 'UNMUTE' : 'MUTE';
     btnMute.setAttribute('aria-pressed', muted ? 'true' : 'false');
+    // Muting stops every voice and the engine refuses to start new ones, so
+    // unmuting has to rebuild the schedule — otherwise the transport stays
+    // silent until the next seek or replay.
+    if (!muted) rescheduleIfPlaying();
+  });
+
+  const applySnapVisual = () => {
+    btnSnap.classList.toggle('is-active', snapEnabled);
+    btnSnap.setAttribute('aria-pressed', snapEnabled ? 'true' : 'false');
+    btnSnap.title = snapEnabled
+      ? 'Snap on — ticks, playhead, clip edges (hold Alt to bypass)'
+      : 'Snap off — free placement';
+  };
+  applySnapVisual();
+
+  btnSnap.addEventListener('click', () => {
+    snapEnabled = !snapEnabled;
+    try {
+      window.localStorage.setItem(SNAP_STORAGE_KEY, snapEnabled ? '1' : '0');
+    } catch {
+      /* private mode */
+    }
+    applySnapVisual();
+  });
+
+  btnUndo.addEventListener('click', () => {
+    undo();
+  });
+  btnRedo.addEventListener('click', () => {
+    redo();
   });
 
   btnZoomIn.addEventListener('click', () => {
@@ -1027,12 +1278,29 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       : null;
   ro?.observe(trackScroll);
 
-  // Delete / Backspace removes the highlighted clip (global while panel open)
+  // Delete / Backspace removes the highlighted clip; ⌘Z / ⇧⌘Z walk history
+  // (global while the panel is open)
   const onWindowKeydown = (e: KeyboardEvent) => {
-    if (e.key !== 'Delete' && e.key !== 'Backspace') return;
     if (root.classList.contains('hidden')) return;
     const tag = (e.target as HTMLElement | null)?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.shiftKey) redo();
+      else undo();
+      return;
+    }
+    // Windows/Linux redo convention
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
+      e.preventDefault();
+      e.stopPropagation();
+      redo();
+      return;
+    }
+
+    if (e.key !== 'Delete' && e.key !== 'Backspace') return;
     if (!selectedId) return;
     e.preventDefault();
     e.stopPropagation();
@@ -1158,6 +1426,10 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     destroy: () => {
       flushPersist();
       onTransportStop();
+      // Held for the panel's lifetime because undo can resurrect a deleted
+      // imported clip — only safe to release once the panel is going away.
+      for (const url of objectUrls) URL.revokeObjectURL(url);
+      objectUrls.clear();
       ro?.disconnect();
       window.removeEventListener('pagehide', flushPersist);
       window.removeEventListener('beforeunload', flushPersist);

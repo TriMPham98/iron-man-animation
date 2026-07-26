@@ -229,6 +229,17 @@
             >
               LOOP
             </button>
+            <button
+              id="atl-snap"
+              type="button"
+              class="atl-btn atl-btn-snap"
+              aria-pressed="true"
+              title="Snap to ruler ticks, playhead and clip edges (hold Alt to bypass)"
+            >
+              SNAP
+            </button>
+            <button id="atl-undo" type="button" class="atl-btn" disabled title="Undo (⌘Z)">UNDO</button>
+            <button id="atl-redo" type="button" class="atl-btn" disabled title="Redo (⇧⌘Z)">REDO</button>
             <button id="atl-zoom-out" type="button" class="atl-btn" title="Zoom out">−</button>
             <button id="atl-zoom-in" type="button" class="atl-btn" title="Zoom in">+</button>
             <button id="atl-mute" type="button" class="atl-btn" aria-pressed="false">MUTE</button>
@@ -260,6 +271,7 @@
                     <div id="atl-drop-hint" class="atl-drop-hint">Drop sample here</div>
                   </div>
                 </div>
+                <div id="atl-snap-guide" class="atl-snap-guide" aria-hidden="true"></div>
                 <div id="atl-playhead" class="atl-playhead" aria-hidden="true"></div>
               </div>
             </div>

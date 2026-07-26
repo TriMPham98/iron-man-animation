@@ -982,6 +982,41 @@ body.viewer-mode .reclass-panel {
   pointer-events: none;
 }
 
+/* Magnet guide — shown only while a drag is stuck to a snap target */
+.atl-snap-guide {
+  display: none;
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 1px;
+  margin-left: -0.5px;
+  background: rgba(232, 197, 71, 0.85);
+  box-shadow: 0 0 6px rgba(232, 197, 71, 0.5);
+  pointer-events: none;
+  z-index: 11;
+}
+
+.atl-snap-guide.is-active {
+  display: block;
+}
+
+/* Playhead and clip-edge snaps read as "musical", grid as neutral */
+.atl-snap-guide.kind-playhead {
+  background: rgba(126, 232, 255, 0.9);
+  box-shadow: 0 0 6px rgba(126, 232, 255, 0.55);
+}
+
+.atl-snap-guide.kind-grid {
+  background: rgba(232, 228, 217, 0.45);
+  box-shadow: none;
+}
+
+.atl-btn-snap.is-active {
+  color: var(--gold-bright);
+  border-color: rgba(201, 162, 39, 0.5);
+  background: rgba(201, 162, 39, 0.12);
+}
+
 .atl-track-scroll.is-scrubbing,
 .audio-timeline.is-scrubbing {
   cursor: ew-resize;

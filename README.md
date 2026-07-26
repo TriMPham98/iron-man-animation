@@ -47,6 +47,9 @@ In director mode you also get:
 - Click a plate to highlight and inspect it
 - **RECLASS** panel (top-right): queue mis-tagged plates → **COPY** a pasteable card for chat
 - **AUDIO** timeline (bottom): scrub assembly time, pause, drag SFX, crop clips, **COPY** a pasteable cue card
+  - **SNAP** — clip edges stick to ruler ticks, the playhead, and other clips; hold `Alt` while dragging to place freely
+  - **UNDO** / **REDO** (`⌘Z` / `⇧⌘Z`, `Ctrl` on Windows) — covers moves, crops, gain, deletes and CLEAR
+  - Edits made while the sequence is playing re-arm the transport immediately, so you can tune against what you hear
 
 ### Reclass card workflow
 
