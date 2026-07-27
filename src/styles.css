@@ -10,7 +10,7 @@
   --gold: #c9a227;
   --gold-bright: #e8c547;
   --red: #b01020;
-  --bg: #050508;
+  --bg: #070b14;
   --text: #e8e4d9;
   --muted: rgba(232, 228, 217, 0.55);
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
@@ -62,7 +62,7 @@ body.scene-ready #app {
   height: 100%;
   z-index: 0;
   touch-action: none;
-  background: #050508;
+  background: var(--bg);
 }
 
 /* —— overlays —— */

@@ -59,7 +59,7 @@ async function boot(): Promise<void> {
   const camera = createCamera();
   const lookTarget = new THREE.Vector3(0, 0.95, 0);
 
-  createEnvironment(scene);
+  createEnvironment(scene, quality);
   const lights = createLights();
   scene.add(lights.group);
   applyStudioEnvironment(renderer, scene);

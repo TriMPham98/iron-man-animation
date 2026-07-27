@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { COLORS } from '../utils/colors';
 
 /**
  * Bake a warm studio PMREM so gold metal keeps color in reflections.
@@ -10,7 +11,7 @@ export function applyStudioEnvironment(
 ): void {
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envScene = new THREE.Scene();
-  envScene.background = new THREE.Color(0x0a0e18);
+  envScene.background = new THREE.Color(COLORS.bg);
   envScene.add(new THREE.HemisphereLight(0xc0d4f0, 0x1a1018, 1.8));
   const envKey = new THREE.DirectionalLight(0xfff2dc, 4.0);
   envKey.position.set(3, 8, 2);

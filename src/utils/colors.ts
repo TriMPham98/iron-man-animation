@@ -16,6 +16,10 @@ export const COLORS = {
   reactor: 0x6ee7ff,
   reactorCore: 0xe8fcff,
   eye: 0xfff3b0,
-  fog: 0x050508,
-  bg: 0x050508,
+  /**
+   * Cool hangar void — shared by scene.background, FogExp2, CSS --bg,
+   * and the WebGL clear color so loader → canvas never flashes a mismatch.
+   */
+  fog: 0x070b14,
+  bg: 0x070b14,
 } as const;

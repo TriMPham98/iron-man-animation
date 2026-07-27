@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { COLORS } from '../utils/colors';
 
 export interface CreateRendererOptions {
   /** Upper bound for devicePixelRatio (default 1.75 = high tier). */
@@ -18,8 +19,8 @@ export function createRenderer(
     powerPreference: 'high-performance',
   });
 
-  // Match page shell so WebGL never flashes white on first frame
-  renderer.setClearColor(0x050508, 1);
+  // Match page shell + scene void so WebGL never flashes a mismatched clear
+  renderer.setClearColor(COLORS.bg, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // Tone mapping handled in OutputPass when composer is active; keep a
   // bright baseline for the no-bloom fallback path.
