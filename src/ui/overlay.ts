@@ -23,7 +23,7 @@ export interface OverlayHandles {
   hideLoading: () => void;
   showHud: () => void;
   setStatus: (text: string, online?: boolean) => void;
-  /** Legacy no-op — bottom HUD bar removed. */
+  /** Updates integrity strip under the status line. */
   setIntegrity: (text: string) => void;
   setHintVisible: (v: boolean) => void;
   /** Legacy no-op — R / S keys still work via bindInput. */
@@ -39,7 +39,7 @@ export interface OverlayHandles {
   onDirectorModeChange: (cb: (enabled: boolean) => void) => void;
   /** Show/hide director chrome based on current mode. */
   syncDirectorChrome: () => void;
-  /** Legacy no-ops — bottom bar / scrubber chrome removed or lives on the DAW. */
+  /** Assembly progress 0–1 → integrity bar + brand live glow. */
   setDebugProgress: (p: number) => void;
   setDebugPaused: (paused: boolean) => void;
   setDebugActivePieces: (pieces: DebugActivePiece[]) => void;
@@ -83,13 +83,22 @@ export function createOverlay(): OverlayHandles {
   const loadingFill = el<HTMLDivElement>('loading-fill');
   const hudTop = el<HTMLElement>('hud-top');
   const hudCenter = el<HTMLDivElement>('hud-center');
+  const hudFrame = el<HTMLDivElement>('hud-frame');
   const status = el<HTMLParagraphElement>('status');
   const directorBtn = el<HTMLButtonElement>('director-btn');
   const clock = el<HTMLSpanElement>('hud-clock');
   const title = el<HTMLHeadingElement>('title');
+  const progressBar = el<HTMLDivElement>('hud-progress');
+  const progressFill = el<HTMLDivElement>('hud-progress-fill');
+  const integrity = el<HTMLSpanElement>('hud-integrity');
 
   let directorModeHandler: ((enabled: boolean) => void) | null = null;
   let directorMode = readDirectorPreference();
+  let lastStatus = '';
+  let statusFlashTimer = 0;
+  let clockTickTimer = 0;
+  let lastClockWhole = -1;
+  let hudBooted = false;
 
   // ── Reclass panel state ────────────────────────────────────────
   const RECLASS_COLLAPSE_KEY = 'mark-suit-reclass-collapsed';
@@ -281,6 +290,28 @@ export function createOverlay(): OverlayHandles {
 
   applyDirectorChrome();
 
+  const setProgressVisual = (p: number) => {
+    const clamped = Math.min(1, Math.max(0, p));
+    const pct = Math.round(clamped * 100);
+    progressFill.style.width = `${pct}%`;
+    progressBar.setAttribute('aria-valuenow', String(pct));
+    progressBar.classList.toggle('is-complete', clamped >= 0.999);
+    integrity.textContent = `INT ${String(pct).padStart(3, ' ')}%`;
+    // Live brand glow while assembly is underway
+    hudTop.classList.toggle('is-live', clamped > 0.001 && clamped < 0.999);
+  };
+
+  const flashStatus = () => {
+    status.classList.remove('is-updating');
+    // Force reflow so the animation restarts when status changes rapidly
+    void status.offsetWidth;
+    status.classList.add('is-updating');
+    window.clearTimeout(statusFlashTimer);
+    statusFlashTimer = window.setTimeout(() => {
+      status.classList.remove('is-updating');
+    }, 480);
+  };
+
   return {
     setLoadingProgress: (p: number) => {
       loadingFill.style.width = `${Math.round(Math.min(1, Math.max(0, p)) * 100)}%`;
@@ -291,17 +322,44 @@ export function createOverlay(): OverlayHandles {
     showHud: () => {
       hudTop.classList.remove('hidden');
       hudCenter.classList.remove('hidden');
+      hudFrame.classList.remove('hidden');
       applyDirectorChrome();
+
+      if (!hudBooted) {
+        hudBooted = true;
+        hudTop.classList.add('is-booting');
+        hudFrame.classList.add('is-booted');
+        // After entrance settles, keep progress bar visible without re-running rise-in
+        window.setTimeout(() => {
+          hudTop.classList.remove('is-booting');
+          hudTop.classList.add('is-booted');
+        }, 900);
+      } else {
+        hudTop.classList.add('is-booted');
+        hudFrame.classList.add('is-booted');
+      }
     },
     setStatus: (text: string, online = false) => {
+      const changed = text !== lastStatus;
+      lastStatus = text;
       status.textContent = text;
       status.classList.toggle('online', online);
+      if (changed && text) flashStatus();
     },
-    setIntegrity: (_text: string) => {
-      /* bottom HUD removed */
+    setIntegrity: (text: string) => {
+      // Prefer numeric progress from setDebugProgress; keep text as fallback label
+      const match = text.match(/(\d+)\s*%/);
+      if (match) {
+        const pct = Number(match[1]);
+        if (Number.isFinite(pct)) {
+          setProgressVisual(pct / 100);
+          return;
+        }
+      }
+      integrity.textContent = text.replace(/^INTEGRITY\s+/i, 'INT ');
     },
     setHintVisible: (_v: boolean) => {
-      /* bottom HUD removed — R / S / Space still work */
+      /* bottom HUD removed — R / S keys still work */
     },
     setReplayEnabled: (_v: boolean) => {
       /* use R */
@@ -321,6 +379,15 @@ export function createOverlay(): OverlayHandles {
       const whole = Math.floor(s);
       const frac = Math.floor((s - whole) * 100);
       clock.textContent = `${String(m).padStart(2, '0')}:${String(whole).padStart(2, '0')}.${String(frac).padStart(2, '0')}`;
+      // Soft gold tick once per whole second
+      if (whole !== lastClockWhole) {
+        lastClockWhole = whole;
+        clock.classList.add('is-tick');
+        window.clearTimeout(clockTickTimer);
+        clockTickTimer = window.setTimeout(() => {
+          clock.classList.remove('is-tick');
+        }, 120);
+      }
     },
     fadeTitle: (hide: boolean) => {
       // Collapse title so only status remains in the top bar (still off the suit)
@@ -328,8 +395,6 @@ export function createOverlay(): OverlayHandles {
       title.style.maxHeight = hide ? '0' : '2rem';
       title.style.marginBottom = hide ? '0' : '0.2rem';
       title.style.overflow = 'hidden';
-      title.style.transition =
-        'opacity 0.8s ease, max-height 0.8s ease, margin 0.8s ease';
     },
     isDirectorMode: () => directorMode,
     setDirectorMode: (enabled: boolean) => {
@@ -344,8 +409,8 @@ export function createOverlay(): OverlayHandles {
     syncDirectorChrome: () => {
       applyDirectorChrome();
     },
-    setDebugProgress: (_p: number) => {
-      /* progress scrub lives on the audio timeline playhead */
+    setDebugProgress: (p: number) => {
+      setProgressVisual(p);
     },
     setDebugPaused: (_paused: boolean) => {
       /* pause control lives on the audio timeline toolbar */

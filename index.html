@@ -115,11 +115,34 @@
       <div id="vignette" aria-hidden="true"></div>
       <div id="scanlines" aria-hidden="true"></div>
 
+      <!-- Decorative tech frame — animates in with HUD boot -->
+      <div id="hud-frame" class="hud-frame hidden" aria-hidden="true">
+        <span class="hud-corner hud-corner-tl"></span>
+        <span class="hud-corner hud-corner-tr"></span>
+        <span class="hud-corner hud-corner-bl"></span>
+        <span class="hud-corner hud-corner-br"></span>
+      </div>
+
       <header id="hud-top" class="hud hud-top hidden">
-        <span class="hud-brand">MK III</span>
+        <div class="hud-brand-wrap">
+          <span class="hud-brand">MK III</span>
+          <span class="hud-brand-sub" aria-hidden="true">STARK INDUSTRIES</span>
+        </div>
         <div id="hud-center" class="hud-center">
           <h1 id="title" class="title">ASSEMBLY SEQUENCE</h1>
           <p id="status" class="status" aria-live="polite">STAND BY</p>
+          <div
+            id="hud-progress"
+            class="hud-progress"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-label="Assembly integrity"
+          >
+            <div id="hud-progress-fill" class="hud-progress-fill"></div>
+            <span id="hud-integrity" class="hud-integrity">INT 000%</span>
+          </div>
         </div>
         <div class="hud-top-right">
           <button
