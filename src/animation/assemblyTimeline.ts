@@ -203,8 +203,20 @@ export function createAssemblyTimeline(
   let userOwnsCamera = false;
   /** Timeline time when seamless final mesh swaps in (for scrub restore). */
   let finalSwapTime = 0;
+  /**
+   * Timeline time when the suit is “done” for HUD integrity (systems online).
+   * Trailing camera pullback extends total duration past this — progress for
+   * the integrity bar is normalized to this mark so it hits 100% with the suit.
+   */
+  let assemblyEndTime = 1;
   /** Launch→lock windows for every plate (rebuilt with the timeline). */
   let motionSpans: PieceMotionSpan[] = [];
+
+  /** Integrity / UI progress 0–1 (hits 1 at systems online, not camera tail). */
+  const assemblyProgressAt = (timeSec: number): number => {
+    const end = Math.max(assemblyEndTime, 1e-6);
+    return THREE.MathUtils.clamp(timeSec / end, 0, 1);
+  };
 
   const reportActivePieces = (timeSec: number) => {
     const active: ActivePieceInfo[] = [];
@@ -366,12 +378,14 @@ export function createAssemblyTimeline(
     const timeline = gsap.timeline({
       paused: true,
       onUpdate: () => {
-        callbacks.onProgress?.(timeline.progress());
+        // Normalize to assembly end — not full timeline (camera pullback tail).
+        callbacks.onProgress?.(assemblyProgressAt(timeline.time()));
         reportActivePieces(timeline.time());
       },
       onComplete: () => {
         playing = false;
         callbacks.onStatus?.('SYSTEMS ONLINE');
+        callbacks.onProgress?.(1);
         callbacks.onActivePieces?.([]);
         callbacks.onComplete?.();
       },
@@ -839,12 +853,16 @@ export function createAssemblyTimeline(
       finalSwapTime,
     );
 
+    // Suit systems complete — integrity bar reaches 100% here (not after the
+    // trailing hero pullback camera, which only frames the finished suit).
+    assemblyEndTime = eyesT + 1.9;
     timeline.call(
       () => {
         callbacks.onStatus?.('SYSTEMS ONLINE');
+        callbacks.onProgress?.(1);
       },
       undefined,
-      eyesT + 1.9,
+      assemblyEndTime,
     );
 
     // ── Camera path ────────────────────────────────────────────────
@@ -1057,12 +1075,19 @@ export function createAssemblyTimeline(
 
   const syncAfterSeek = (progress01: number) => {
     const timeline = ensureTl();
-    const p = THREE.MathUtils.clamp(progress01, 0, 1);
-    const dur = Math.max(timeline.duration(), 1e-6);
-    const t = p * dur;
+    const uiP = THREE.MathUtils.clamp(progress01, 0, 1);
+    const fullDur = Math.max(timeline.duration(), 1e-6);
+    const asmEnd = Math.max(assemblyEndTime, 1e-6);
+    // Scrub 0–1 maps onto the assembly window (systems online), not the
+    // trailing camera tail — same scale as getDuration / getProgress / HUD.
+    const t =
+      uiP >= 0.999
+        ? Math.min(fullDur, Math.max(asmEnd, finalSwapTime))
+        : uiP * asmEnd;
+    const p = THREE.MathUtils.clamp(t / fullDur, 0, 1);
 
     // Suppress call()/onComplete — we own final-mesh swap + status while scrubbing.
-    if (t >= finalSwapTime - 1e-4 || p >= 0.999) {
+    if (t >= finalSwapTime - 1e-4 || uiP >= 0.999) {
       timeline.progress(p, true);
       applyCamera();
       syncSystems();
@@ -1086,8 +1111,8 @@ export function createAssemblyTimeline(
       syncSystems();
     }
 
-    callbacks.onProgress?.(p);
-    reportActivePieces(t);
+    callbacks.onProgress?.(assemblyProgressAt(timeline.time()));
+    reportActivePieces(timeline.time());
   };
 
   tl = build();
@@ -1136,15 +1161,20 @@ export function createAssemblyTimeline(
       // Scrub re-attaches to the cinematic path unless explicitly preserving
       // free-look. Orbit (bindInput) is what claims ownership again.
       userOwnsCamera = !!opts?.preserveCamera;
+      // Map scrub 0–1 onto the full GSAP timeline (includes camera tail) so
+      // director tools can still reach the final hero frame.
       syncAfterSeek(progress01);
     },
     getProgress: () => {
       if (!tl) return 0;
-      return tl.progress();
+      // Integrity / session progress is assembly-normalized (not camera tail).
+      return assemblyProgressAt(tl.time());
     },
     getDuration: () => {
       if (!tl) return 0;
-      return tl.duration();
+      // Expose assembly span for HUD/audio so 100% lines up with systems online.
+      // Trailing camera still runs on the GSAP timeline past this mark.
+      return Math.max(assemblyEndTime, 1e-6);
     },
     kill: () => {
       tl?.kill();
