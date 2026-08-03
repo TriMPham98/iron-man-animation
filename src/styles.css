@@ -14,6 +14,13 @@
   --text: #e8e4d9;
   --muted: rgba(232, 228, 217, 0.55);
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* JARVIS holographic accents */
+  --cyan: #7ee8ff;
+  --cyan-bright: #b8f4ff;
+  --cyan-dim: rgba(126, 232, 255, 0.35);
+  --holo-border: rgba(126, 232, 255, 0.28);
+  --holo-glow: rgba(126, 232, 255, 0.45);
+  --panel-bg: rgba(6, 10, 18, 0.55);
 }
 
 html,
@@ -395,7 +402,7 @@ body.scene-ready #app {
 }
 
 .director-btn.is-active {
-  color: #7ee8ff;
+  color: var(--cyan);
   border-color: rgba(126, 232, 255, 0.5);
   background: rgba(126, 232, 255, 0.08);
   box-shadow: 0 0 12px rgba(126, 232, 255, 0.18);
@@ -412,118 +419,170 @@ body.scene-ready #app {
   }
 }
 
-/* Keyboard-only affordance (Tab). Cleared after pointer via blurButtons. */
-.director-btn:focus-visible,
-.atl-btn:focus-visible,
-.reclass-btn:focus-visible,
-.reclass-toggle:focus-visible {
-  outline: 2px solid rgba(232, 197, 71, 0.65);
-  outline-offset: 2px;
-}
-
-/* Center column of top bar — always above the viewport figure */
-.hud-center {
-  justify-self: center;
-  text-align: center;
+/*
+  JARVIS top-bar center brief
+  ───────────────────────────
+  Replaces the old title / status / INT loading strip.
+  In-flow in #hud-center; only visible during assembly, then auto-dismisses.
+*/
+.jarvis-panel {
   pointer-events: none;
-  max-width: 100%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.title {
-  font-size: clamp(0.62rem, 1.2vw, 0.78rem);
-  font-weight: 600;
-  letter-spacing: 0.28em;
-  color: var(--gold-bright);
-  margin: 0 0 0.2rem;
-  text-shadow: 0 0 16px rgba(201, 162, 39, 0.3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  width: 100%;
+  max-width: min(32rem, 100%);
+  margin: 0 auto;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-0.25rem);
+  font-family: var(--mono);
   transition:
-    opacity 0.8s ease,
-    max-height 0.8s ease,
-    margin 0.8s ease;
+    opacity 0.35s ease,
+    transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0.35s;
 }
 
-.status {
-  font-size: clamp(0.55rem, 1vw, 0.62rem);
-  letter-spacing: 0.16em;
+.jarvis-panel.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-0.25rem);
+  /* Collapse so top bar stays slim after dismiss */
+  max-height: 0;
+  overflow: hidden;
+  margin: 0;
+}
+
+.jarvis-panel.is-entering,
+.jarvis-panel.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  max-height: 8rem;
+}
+
+.jarvis-panel.is-entering {
+  animation: jarvis-panel-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.jarvis-panel.is-leaving {
+  opacity: 0;
+  visibility: visible;
+  transform: translateY(-0.2rem);
+  max-height: 8rem;
+}
+
+@keyframes jarvis-panel-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-0.4rem);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.jarvis-panel-inner {
+  padding: 0.15rem 0.25rem 0.2rem;
+}
+
+.jarvis-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.2rem;
+  min-width: 0;
+}
+
+.jarvis-mark {
+  color: var(--cyan);
+  font-size: 0.5rem;
+  line-height: 1;
+  text-shadow: 0 0 8px var(--holo-glow);
+  animation: jarvis-mark-pulse 2s ease-in-out infinite;
+}
+
+.jarvis-title {
+  font-size: 0.48rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--cyan);
+  text-shadow: 0 0 10px rgba(126, 232, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.jarvis-lamps {
+  display: flex;
+  gap: 0.28rem;
+  flex-shrink: 0;
+}
+
+.jarvis-lamp {
+  font-size: 0.34rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 0.08rem 0.22rem;
+  color: rgba(232, 228, 217, 0.28);
+  border: 1px solid rgba(201, 162, 39, 0.18);
+  transition:
+    color 0.25s ease,
+    border-color 0.25s ease,
+    background 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.jarvis-lamp.is-on {
+  color: var(--cyan-bright);
+  border-color: rgba(126, 232, 255, 0.5);
+  background: rgba(126, 232, 255, 0.1);
+  box-shadow: 0 0 8px rgba(126, 232, 255, 0.2);
+}
+
+.jarvis-int {
+  margin-left: auto;
+  font-size: 0.42rem;
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(201, 162, 39, 0.75);
+}
+
+.jarvis-panel.is-complete .jarvis-int {
+  color: var(--cyan-bright);
+  text-shadow: 0 0 8px rgba(126, 232, 255, 0.35);
+}
+
+/* Primary status line (replaces old .status under title) */
+.jarvis-status {
+  margin: 0 0 0.28rem;
+  font-size: clamp(0.52rem, 1vw, 0.6rem);
+  letter-spacing: 0.14em;
   color: var(--muted);
   min-height: 1.1em;
-  margin: 0;
-  transition: color 0.3s ease, text-shadow 0.3s ease;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: color 0.3s ease, text-shadow 0.3s ease;
 }
 
-/* Flash when status text changes mid-sequence */
-.status.is-updating {
+.jarvis-status.is-updating {
   animation: hud-status-flash 0.45s ease-out;
 }
 
-@keyframes hud-status-flash {
-  0% {
-    opacity: 0.35;
-    letter-spacing: 0.28em;
-    filter: brightness(1.6);
-  }
-  40% {
-    opacity: 1;
-    letter-spacing: 0.16em;
-    filter: brightness(1.15);
-  }
-  100% {
-    opacity: 1;
-    letter-spacing: 0.16em;
-    filter: brightness(1);
-  }
+.jarvis-status.online {
+  color: var(--cyan);
+  text-shadow: 0 0 14px rgba(126, 232, 255, 0.45);
 }
 
-.status.online {
-  color: #7ee8ff;
-  text-shadow: 0 0 16px rgba(126, 232, 255, 0.45);
-  animation: hud-online-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes hud-online-pulse {
-  0%,
-  100% {
-    text-shadow: 0 0 12px rgba(126, 232, 255, 0.35);
-  }
-  50% {
-    text-shadow: 0 0 22px rgba(126, 232, 255, 0.7);
-  }
-}
-
-/* Integrity strip under status */
-.hud-progress {
+/* Integrity bar inside JARVIS (replaces old .hud-progress strip) */
+.jarvis-progress {
   position: relative;
-  width: min(14rem, 42vw);
-  height: 0.28rem;
-  margin-top: 0.45rem;
-  margin-bottom: 0.95rem;
+  width: 100%;
+  height: 0.22rem;
+  margin-bottom: 0.35rem;
   background: rgba(201, 162, 39, 0.12);
-  border: 1px solid rgba(201, 162, 39, 0.22);
-  opacity: 0;
-  transform: scaleX(0.92);
-  transform-origin: center;
-  transition:
-    opacity 0.4s ease,
-    transform 0.4s cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 0.3s ease;
+  border: 1px solid rgba(201, 162, 39, 0.2);
+  overflow: hidden;
 }
 
-.hud-top.is-booted .hud-progress {
-  opacity: 1;
-  transform: scaleX(1);
-}
-
-.hud-progress-fill {
+.jarvis-progress-fill {
   height: 100%;
   width: 0%;
   background: linear-gradient(
@@ -532,14 +591,12 @@ body.scene-ready #app {
     var(--gold),
     var(--gold-bright)
   );
-  box-shadow: 0 0 10px rgba(232, 197, 71, 0.35);
+  box-shadow: 0 0 8px rgba(232, 197, 71, 0.3);
   transition: width 0.12s linear;
   position: relative;
-  overflow: hidden;
 }
 
-/* Scanning sheen across the fill */
-.hud-progress-fill::after {
+.jarvis-progress-fill::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -553,6 +610,168 @@ body.scene-ready #app {
   animation: hud-progress-sheen 2.4s ease-in-out infinite;
 }
 
+.jarvis-progress.is-complete {
+  border-color: rgba(126, 232, 255, 0.4);
+}
+
+.jarvis-progress.is-complete .jarvis-progress-fill {
+  background: linear-gradient(90deg, #3ad0ff, var(--cyan), var(--cyan-bright));
+  box-shadow: 0 0 12px rgba(126, 232, 255, 0.4);
+}
+
+/* Horizontal wave pipeline */
+.jarvis-pipeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  gap: 0.12rem;
+  overflow: hidden;
+}
+
+.jarvis-pipe-node {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.14rem;
+  font-size: 0.3rem;
+  letter-spacing: 0.05em;
+  color: rgba(232, 228, 217, 0.28);
+  transition: color 0.25s ease;
+}
+
+.jarvis-pipe-dot {
+  width: 0.28rem;
+  height: 0.28rem;
+  border-radius: 50%;
+  border: 1px solid rgba(126, 232, 255, 0.22);
+  background: transparent;
+  transition:
+    background 0.25s ease,
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.jarvis-pipe-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jarvis-pipe-node.is-active {
+  color: var(--cyan-bright);
+}
+
+.jarvis-pipe-node.is-active .jarvis-pipe-dot {
+  border-color: var(--cyan);
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--holo-glow);
+  animation: jarvis-node-active 1.4s ease-in-out infinite;
+}
+
+.jarvis-pipe-node.is-done {
+  color: rgba(126, 232, 255, 0.55);
+}
+
+.jarvis-pipe-node.is-done .jarvis-pipe-dot {
+  border-color: rgba(126, 232, 255, 0.5);
+  background: rgba(126, 232, 255, 0.5);
+}
+
+@keyframes jarvis-node-active {
+  0%,
+  100% {
+    box-shadow: 0 0 5px rgba(126, 232, 255, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(126, 232, 255, 0.75);
+  }
+}
+
+@keyframes jarvis-mark-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* One-shot corner flash when systems go online (not permanent) */
+.hud-frame.is-online-flash .hud-corner {
+  animation: jarvis-online-bloom 1.5s ease-out both;
+}
+
+@keyframes jarvis-online-bloom {
+  0% {
+    border-color: rgba(201, 162, 39, 0.55);
+  }
+  35% {
+    border-color: rgba(126, 232, 255, 0.9);
+    box-shadow: 0 0 12px rgba(126, 232, 255, 0.35);
+  }
+  100% {
+    border-color: rgba(201, 162, 39, 0.55);
+    box-shadow: none;
+  }
+}
+
+body.director-mode .jarvis-pipe-label {
+  display: none;
+}
+
+/* Slimmer top bar when JARVIS is dismissed (showcase) */
+.hud-top:not(.is-jarvis-live) {
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+/* Keyboard-only affordance (Tab). Cleared after pointer via blurButtons. */
+.director-btn:focus-visible,
+.atl-btn:focus-visible,
+.reclass-btn:focus-visible,
+.reclass-toggle:focus-visible {
+  outline: 2px solid rgba(232, 197, 71, 0.65);
+  outline-offset: 2px;
+}
+
+/* Center column of top bar — JARVIS assembly brief (or empty after dismiss) */
+.hud-center {
+  justify-self: center;
+  text-align: center;
+  pointer-events: none;
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+@keyframes hud-status-flash {
+  0% {
+    opacity: 0.35;
+    letter-spacing: 0.24em;
+    filter: brightness(1.6);
+  }
+  40% {
+    opacity: 1;
+    letter-spacing: 0.14em;
+    filter: brightness(1.15);
+  }
+  100% {
+    opacity: 1;
+    letter-spacing: 0.14em;
+    filter: brightness(1);
+  }
+}
+
 @keyframes hud-progress-sheen {
   0%,
   30% {
@@ -562,31 +781,6 @@ body.scene-ready #app {
   100% {
     transform: translateX(120%);
   }
-}
-
-.hud-progress.is-complete {
-  border-color: rgba(126, 232, 255, 0.4);
-}
-
-.hud-progress.is-complete .hud-progress-fill {
-  background: linear-gradient(90deg, #3ad0ff, #7ee8ff, #b8f4ff);
-  box-shadow: 0 0 14px rgba(126, 232, 255, 0.45);
-}
-
-.hud-integrity {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 0.22rem);
-  font-size: 0.42rem;
-  letter-spacing: 0.14em;
-  color: rgba(201, 162, 39, 0.7);
-  font-variant-numeric: tabular-nums;
-  transition: color 0.3s ease;
-  pointer-events: none;
-}
-
-.hud-progress.is-complete .hud-integrity {
-  color: rgba(126, 232, 255, 0.85);
 }
 
 /* —— director reclassifier card (top-right, clear of audio timeline) —— */
@@ -1616,6 +1810,12 @@ body.director-mode .audio-timeline:not(.hidden) {
   }
 }
 
+@media (max-width: 720px) {
+  .jarvis-pipe-label {
+    display: none;
+  }
+}
+
 @media (max-width: 600px) {
   .hud {
     padding: 0.9rem 1rem;
@@ -1643,18 +1843,13 @@ body.director-mode .audio-timeline:not(.hidden) {
     letter-spacing: 0.14em;
   }
 
-  .hud-progress {
-    width: min(12rem, 70vw);
-  }
-
-  .title {
-    letter-spacing: 0.14em;
-    font-size: 0.58rem;
-  }
-
-  .status {
-    font-size: 0.52rem;
+  .jarvis-status {
+    font-size: 0.5rem;
     letter-spacing: 0.1em;
+  }
+
+  .jarvis-lamps {
+    display: none;
   }
 }
 
@@ -1665,16 +1860,19 @@ body.director-mode .audio-timeline:not(.hidden) {
 
   .loading-mark,
   .hud-top.is-live .hud-brand,
-  .status.online,
   .director-btn.is-active,
-  .hud-progress-fill::after,
+  .jarvis-progress-fill::after,
   .hud-frame.is-booted .hud-corner,
   .hud-top.is-booting .hud-brand-wrap,
   .hud-top.is-booting .hud-center,
   .hud-top.is-booting .hud-top-right,
   body.director-mode .reclass-panel:not(.hidden),
   body.director-mode .audio-timeline:not(.hidden),
-  .status.is-updating {
+  .jarvis-status.is-updating,
+  .jarvis-panel.is-entering,
+  .jarvis-pipe-node.is-active .jarvis-pipe-dot,
+  .jarvis-mark,
+  .hud-frame.is-online-flash .hud-corner {
     animation: none !important;
   }
 
@@ -1686,13 +1884,18 @@ body.director-mode .audio-timeline:not(.hidden) {
     transform: none;
   }
 
-  .title,
-  .status,
+  .jarvis-panel.is-visible,
+  .jarvis-panel.is-entering {
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+    max-height: 8rem;
+  }
+
   #loading,
-  .hud-progress,
-  .hud-progress-fill,
   .reclass-panel,
-  .audio-timeline {
+  .audio-timeline,
+  .jarvis-panel {
     transition: none !important;
   }
 }
@@ -1700,16 +1903,19 @@ body.director-mode .audio-timeline:not(.hidden) {
 /* Body flag from JS when reduced-motion preference is on */
 body.reduced-motion .loading-mark,
 body.reduced-motion .hud-top.is-live .hud-brand,
-body.reduced-motion .status.online,
 body.reduced-motion .director-btn.is-active,
-body.reduced-motion .hud-progress-fill::after,
+body.reduced-motion .jarvis-progress-fill::after,
 body.reduced-motion .hud-frame.is-booted .hud-corner,
 body.reduced-motion .hud-top.is-booting .hud-brand-wrap,
 body.reduced-motion .hud-top.is-booting .hud-center,
 body.reduced-motion .hud-top.is-booting .hud-top-right,
-body.reduced-motion .status.is-updating,
+body.reduced-motion .jarvis-status.is-updating,
 body.reduced-motion.director-mode .reclass-panel:not(.hidden),
-body.reduced-motion.director-mode .audio-timeline:not(.hidden) {
+body.reduced-motion.director-mode .audio-timeline:not(.hidden),
+body.reduced-motion .jarvis-panel.is-entering,
+body.reduced-motion .jarvis-pipe-node.is-active .jarvis-pipe-dot,
+body.reduced-motion .jarvis-mark,
+body.reduced-motion .hud-frame.is-online-flash .hud-corner {
   animation: none !important;
 }
 

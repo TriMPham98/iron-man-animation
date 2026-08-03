@@ -61,11 +61,21 @@ In director mode you also get:
 6. Paste the card in chat so wave gates can be updated
 7. Press **M** again (or the header) to minimize back to a chip
 
+### JARVIS briefing (top-bar center)
+
+JARVIS **is** the assembly loading UI — it replaces the old title / status / integrity strip in the top bar center:
+
+- Status line + integrity bar + wave pipeline + ARC / HUD / REP lamps
+- Appears when the sequence starts; shows **SYSTEMS ONLINE** once, then **auto-dismisses** so the showcase is just brand + clock
+- Reappears on replay (`R`); brief corner flash on online
+
+Decorative motion respects reduced-motion preferences.
+
 ### Accessibility
 
 - `prefers-reduced-motion: reduce` skips the plate cascade and lands on the finished suit with systems online.
 - Status and integrity use live regions; canvas has an accessible label.
-- Scanline overlay is disabled under reduced motion.
+- Scanline overlay and JARVIS decorative loops are disabled under reduced motion.
 
 ## Stack
 

@@ -7,6 +7,7 @@ import {
 import type { Suit } from '../suit/Suit';
 import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
+import { isPieceWave } from '../ui/jarvisHud';
 
 const VIEWER_HINT =
   'Drag to orbit · R replay · Space pause · S skip · ←→ scrub';
@@ -214,6 +215,8 @@ export function createAssemblySession(
     ui.fadeTitle(true);
     ui.setIntegrity('INTEGRITY 100%');
     ui.setStatus('SYSTEMS ONLINE', true);
+    ui.setSystemsOnline(true);
+    ui.setActiveWave(null);
     ui.setDebugProgress(1);
     ui.setDebugActivePieces([]);
     audioStop();
@@ -232,12 +235,18 @@ export function createAssemblySession(
     ui.setSkipEnabled(true);
     ui.setHintVisible(false);
     ui.fadeTitle(false);
+    ui.setSystemsOnline(false);
   };
 
   assembly = createAssemblyTimeline(suit, camera, lookTarget, {
     onStatus: (text) => {
       const online = text.includes('ONLINE') || text.includes('STABLE');
       ui.setStatus(text, online);
+    },
+    onWave: (wave) => {
+      if (isPieceWave(wave)) {
+        ui.setActiveWave(wave);
+      }
     },
     onProgress: (t) => {
       const pct = Math.round(t * 100);
@@ -284,6 +293,7 @@ export function createAssemblySession(
   const startSequence = () => {
     clearPick();
     clearCompleteClock();
+    ui.resetJarvisChrome();
 
     if (reducedMotion) {
       finishInstantly();

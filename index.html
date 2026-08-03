@@ -128,20 +128,41 @@
           <span class="hud-brand">MK III</span>
           <span class="hud-brand-sub" aria-hidden="true">STARK INDUSTRIES</span>
         </div>
+        <!--
+          Center column = JARVIS assembly brief (replaces old title/status/INT bar).
+          Shown only during assembly; auto-dismisses after systems online.
+        -->
         <div id="hud-center" class="hud-center">
-          <h1 id="title" class="title">ASSEMBLY SEQUENCE</h1>
-          <p id="status" class="status" aria-live="polite">STAND BY</p>
           <div
-            id="hud-progress"
-            class="hud-progress"
-            role="progressbar"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow="0"
-            aria-label="Assembly integrity"
+            id="jarvis-panel"
+            class="jarvis-panel is-hidden"
+            aria-hidden="true"
           >
-            <div id="hud-progress-fill" class="hud-progress-fill"></div>
-            <span id="hud-integrity" class="hud-integrity">INT 000%</span>
+            <div class="jarvis-panel-inner">
+              <header class="jarvis-panel-head">
+                <span class="jarvis-mark" aria-hidden="true">◆</span>
+                <span class="jarvis-title">J.A.R.V.I.S.</span>
+                <div class="jarvis-lamps" role="group" aria-label="System lamps">
+                  <span id="lamp-arc" class="jarvis-lamp" data-lamp="arc" title="Arc reactor">ARC</span>
+                  <span id="lamp-hud" class="jarvis-lamp" data-lamp="hud" title="Helmet HUD">HUD</span>
+                  <span id="lamp-rep" class="jarvis-lamp" data-lamp="rep" title="Repulsors">REP</span>
+                </div>
+                <span id="jarvis-int" class="jarvis-int" aria-hidden="true">0%</span>
+              </header>
+              <p id="status" class="jarvis-status" aria-live="polite">STAND BY</p>
+              <div
+                id="hud-progress"
+                class="jarvis-progress"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+                aria-label="Assembly integrity"
+              >
+                <div id="hud-progress-fill" class="jarvis-progress-fill"></div>
+              </div>
+              <ol id="hud-pipeline" class="jarvis-pipeline" aria-hidden="true"></ol>
+            </div>
           </div>
         </div>
         <div class="hud-top-right">

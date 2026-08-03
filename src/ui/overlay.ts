@@ -8,6 +8,13 @@ import {
   type ReclassEntry,
 } from './reclassCard';
 import {
+  applyPipelineStates,
+  JARVIS_DISMISS_MS,
+  lampsForProgress,
+  mountPipeline,
+  type SystemLamp,
+} from './jarvisHud';
+import {
   readDirectorPreference,
   writeDirectorPreference,
 } from './viewerMode';
@@ -59,6 +66,17 @@ export interface OverlayHandles {
   setReclassCollapsed: (collapsed: boolean) => void;
   toggleReclassCollapsed: () => void;
   isReclassCollapsed: () => boolean;
+  /** JARVIS: highlight active assembly wave in the pipeline. */
+  setActiveWave: (wave: PieceWave | null) => void;
+  /** @deprecated Log folded into setStatus; kept as no-op for callers. */
+  pushSystemLog: (line: string) => void;
+  /** JARVIS: systems-online flourish, then auto-dismiss the panel. */
+  setSystemsOnline: (online: boolean) => void;
+  /**
+   * JARVIS: reset state and show the top-bar briefing for a new assembly run.
+   * Replaces the old title/status/INT loading strip while visible.
+   */
+  resetJarvisChrome: () => void;
 }
 
 export interface DebugPickedPiece {
@@ -78,6 +96,10 @@ function el<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
+function elOptional<T extends HTMLElement>(id: string): T | null {
+  return document.getElementById(id) as T | null;
+}
+
 export function createOverlay(): OverlayHandles {
   const loading = el<HTMLDivElement>('loading');
   const loadingFill = el<HTMLDivElement>('loading-fill');
@@ -87,10 +109,18 @@ export function createOverlay(): OverlayHandles {
   const status = el<HTMLParagraphElement>('status');
   const directorBtn = el<HTMLButtonElement>('director-btn');
   const clock = el<HTMLSpanElement>('hud-clock');
-  const title = el<HTMLHeadingElement>('title');
   const progressBar = el<HTMLDivElement>('hud-progress');
   const progressFill = el<HTMLDivElement>('hud-progress-fill');
-  const integrity = el<HTMLSpanElement>('hud-integrity');
+
+  // JARVIS lives in the top-bar center (replaces old title/status/INT strip)
+  const jarvisPanel = elOptional<HTMLDivElement>('jarvis-panel');
+  const hudPipeline = elOptional<HTMLOListElement>('hud-pipeline');
+  const jarvisInt = elOptional<HTMLSpanElement>('jarvis-int');
+  const lampEls: Record<SystemLamp, HTMLElement | null> = {
+    arc: elOptional<HTMLElement>('lamp-arc'),
+    hud: elOptional<HTMLElement>('lamp-hud'),
+    rep: elOptional<HTMLElement>('lamp-rep'),
+  };
 
   let directorModeHandler: ((enabled: boolean) => void) | null = null;
   let directorMode = readDirectorPreference();
@@ -99,6 +129,114 @@ export function createOverlay(): OverlayHandles {
   let clockTickTimer = 0;
   let lastClockWhole = -1;
   let hudBooted = false;
+
+  let activeWave: PieceWave | null = null;
+  let systemsOnline = false;
+  let dismissTimer = 0;
+  let lastProgress = 0;
+  const pipelineNodes = hudPipeline
+    ? mountPipeline(hudPipeline)
+    : new Map<PieceWave, HTMLLIElement>();
+
+  const reducedMotion = () =>
+    document.body.classList.contains('reduced-motion') ||
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const hideJarvisPanel = (immediate = false) => {
+    if (!jarvisPanel) return;
+    window.clearTimeout(dismissTimer);
+    jarvisPanel.classList.remove('is-visible', 'is-entering', 'is-complete');
+    hudTop.classList.remove('is-jarvis-live');
+    if (immediate || reducedMotion()) {
+      jarvisPanel.classList.add('is-hidden');
+      jarvisPanel.setAttribute('aria-hidden', 'true');
+      return;
+    }
+    jarvisPanel.classList.add('is-leaving');
+    window.setTimeout(() => {
+      jarvisPanel.classList.add('is-hidden');
+      jarvisPanel.classList.remove('is-leaving');
+      jarvisPanel.setAttribute('aria-hidden', 'true');
+    }, 420);
+  };
+
+  const showJarvisPanel = () => {
+    if (!jarvisPanel) return;
+    window.clearTimeout(dismissTimer);
+    jarvisPanel.classList.remove('is-hidden', 'is-leaving', 'is-complete');
+    jarvisPanel.setAttribute('aria-hidden', 'false');
+    hudTop.classList.add('is-jarvis-live');
+    if (reducedMotion()) {
+      jarvisPanel.classList.add('is-visible');
+      return;
+    }
+    jarvisPanel.classList.remove('is-visible');
+    void jarvisPanel.offsetWidth;
+    jarvisPanel.classList.add('is-entering');
+    window.setTimeout(() => {
+      jarvisPanel.classList.remove('is-entering');
+      jarvisPanel.classList.add('is-visible');
+    }, 400);
+  };
+
+  const applyLamps = (p: number, online: boolean) => {
+    const lit = lampsForProgress(p, online);
+    (['arc', 'hud', 'rep'] as SystemLamp[]).forEach((k) => {
+      lampEls[k]?.classList.toggle('is-on', lit.has(k));
+    });
+  };
+
+  const syncPipeline = () => {
+    applyPipelineStates(pipelineNodes, activeWave, systemsOnline);
+  };
+
+  const setActiveWave = (wave: PieceWave | null) => {
+    activeWave = wave;
+    syncPipeline();
+  };
+
+  const setSystemsOnline = (online: boolean) => {
+    systemsOnline = online;
+    document.body.classList.toggle('systems-online', online);
+    if (online) {
+      hudFrame.classList.add('is-online-flash');
+      window.setTimeout(() => {
+        hudFrame.classList.remove('is-online-flash');
+      }, 1600);
+    } else {
+      hudFrame.classList.remove('is-online-flash');
+    }
+    syncPipeline();
+    applyLamps(lastProgress, online);
+
+    if (online && jarvisPanel) {
+      jarvisPanel.classList.add('is-complete');
+      window.clearTimeout(dismissTimer);
+      // Brief “online” beat in the same panel, then clear the top center
+      dismissTimer = window.setTimeout(
+        () => hideJarvisPanel(false),
+        reducedMotion() ? 500 : JARVIS_DISMISS_MS,
+      );
+    } else if (!online && jarvisPanel?.classList.contains('is-hidden')) {
+      showJarvisPanel();
+    }
+  };
+
+  const resetJarvisChrome = () => {
+    window.clearTimeout(dismissTimer);
+    activeWave = null;
+    systemsOnline = false;
+    lastProgress = 0;
+    lastStatus = '';
+    document.body.classList.remove('systems-online');
+    hudFrame.classList.remove('is-online-flash');
+    status.textContent = 'STAND BY';
+    status.classList.remove('online', 'is-updating');
+    syncPipeline();
+    applyLamps(0, false);
+    setProgressVisual(0);
+    showJarvisPanel();
+  };
 
   // ── Reclass panel state ────────────────────────────────────────
   const RECLASS_COLLAPSE_KEY = 'mark-suit-reclass-collapsed';
@@ -293,12 +431,13 @@ export function createOverlay(): OverlayHandles {
   const setProgressVisual = (p: number) => {
     const clamped = Math.min(1, Math.max(0, p));
     const pct = Math.round(clamped * 100);
+    lastProgress = clamped;
     progressFill.style.width = `${pct}%`;
     progressBar.setAttribute('aria-valuenow', String(pct));
     progressBar.classList.toggle('is-complete', clamped >= 0.999);
-    integrity.textContent = `INT ${String(pct).padStart(3, ' ')}%`;
-    // Live brand glow while assembly is underway
+    if (jarvisInt) jarvisInt.textContent = `${pct}%`;
     hudTop.classList.toggle('is-live', clamped > 0.001 && clamped < 0.999);
+    applyLamps(clamped, systemsOnline || clamped >= 0.999);
   };
 
   const flashStatus = () => {
@@ -324,6 +463,7 @@ export function createOverlay(): OverlayHandles {
       hudCenter.classList.remove('hidden');
       hudFrame.classList.remove('hidden');
       applyDirectorChrome();
+      // JARVIS panel is shown by resetJarvisChrome on sequence start — not permanent
 
       if (!hudBooted) {
         hudBooted = true;
@@ -345,18 +485,14 @@ export function createOverlay(): OverlayHandles {
       status.textContent = text;
       status.classList.toggle('online', online);
       if (changed && text) flashStatus();
+      if (online) setSystemsOnline(true);
     },
     setIntegrity: (text: string) => {
-      // Prefer numeric progress from setDebugProgress; keep text as fallback label
       const match = text.match(/(\d+)\s*%/);
       if (match) {
         const pct = Number(match[1]);
-        if (Number.isFinite(pct)) {
-          setProgressVisual(pct / 100);
-          return;
-        }
+        if (Number.isFinite(pct)) setProgressVisual(pct / 100);
       }
-      integrity.textContent = text.replace(/^INTEGRITY\s+/i, 'INT ');
     },
     setHintVisible: (_v: boolean) => {
       /* bottom HUD removed — R / S keys still work */
@@ -389,12 +525,8 @@ export function createOverlay(): OverlayHandles {
         }, 120);
       }
     },
-    fadeTitle: (hide: boolean) => {
-      // Collapse title so only status remains in the top bar (still off the suit)
-      title.style.opacity = hide ? '0' : '1';
-      title.style.maxHeight = hide ? '0' : '2rem';
-      title.style.marginBottom = hide ? '0' : '0.2rem';
-      title.style.overflow = 'hidden';
+    fadeTitle: (_hide: boolean) => {
+      /* Title removed — JARVIS owns the top-center assembly brief */
     },
     isDirectorMode: () => directorMode,
     setDirectorMode: (enabled: boolean) => {
@@ -435,5 +567,11 @@ export function createOverlay(): OverlayHandles {
     setReclassCollapsed,
     toggleReclassCollapsed,
     isReclassCollapsed: () => reclassCollapsed,
+    setActiveWave,
+    pushSystemLog: (_line: string) => {
+      /* folded into setStatus */
+    },
+    setSystemsOnline,
+    resetJarvisChrome,
   };
 }
