@@ -597,20 +597,6 @@ body.scene-ready #app {
   position: relative;
 }
 
-.jarvis-progress-fill::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.35) 50%,
-    transparent 100%
-  );
-  transform: translateX(-120%);
-  animation: hud-progress-sheen 2.4s ease-in-out infinite;
-}
-
 .jarvis-progress.is-complete {
   border-color: rgba(126, 232, 255, 0.4);
 }
@@ -770,17 +756,6 @@ body.director-mode .jarvis-pipe-label {
     opacity: 1;
     letter-spacing: 0.14em;
     filter: brightness(1);
-  }
-}
-
-@keyframes hud-progress-sheen {
-  0%,
-  30% {
-    transform: translateX(-120%);
-  }
-  70%,
-  100% {
-    transform: translateX(120%);
   }
 }
 
@@ -1862,7 +1837,6 @@ body.director-mode .audio-timeline:not(.hidden) {
   .loading-mark,
   .hud-top.is-live .hud-brand,
   .director-btn.is-active,
-  .jarvis-progress-fill::after,
   .hud-frame.is-booted .hud-corner,
   .hud-top.is-booting .hud-brand-wrap,
   .hud-top.is-booting .hud-center,
@@ -1905,7 +1879,6 @@ body.director-mode .audio-timeline:not(.hidden) {
 body.reduced-motion .loading-mark,
 body.reduced-motion .hud-top.is-live .hud-brand,
 body.reduced-motion .director-btn.is-active,
-body.reduced-motion .jarvis-progress-fill::after,
 body.reduced-motion .hud-frame.is-booted .hud-corner,
 body.reduced-motion .hud-top.is-booting .hud-brand-wrap,
 body.reduced-motion .hud-top.is-booting .hud-center,
