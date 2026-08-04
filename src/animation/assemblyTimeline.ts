@@ -65,6 +65,8 @@ export interface AssemblyController {
   seek: (progress01: number, opts?: CameraControlOptions) => void;
   getProgress: () => number;
   getDuration: () => number;
+  /** Raw GSAP playhead seconds (includes opening hold). */
+  getTime: () => number;
   kill: () => void;
   isPlaying: () => boolean;
   isPaused: () => boolean;
@@ -75,6 +77,23 @@ export interface AssemblyController {
 }
 
 /**
+ * First-frame hangar hold before the cascade (camera push-in + JARVIS beats).
+ * Boots launch at this time — must stay in sync with `audioTimelineOffset()`.
+ */
+export const OPENING_HOLD = 0.88;
+
+/**
+ * Boots earliest when `choreTimeline.seed.json` was authored (pre-hold).
+ * SFX use this clock: audioSec = gsapTime − (OPENING_HOLD − AUDIO_SEED_ORIGIN).
+ */
+export const AUDIO_SEED_ORIGIN = 0.2;
+
+/** Offset from GSAP time → seed/audio timeline seconds. */
+export function audioTimelineOffset(): number {
+  return Math.max(0, OPENING_HOLD - AUDIO_SEED_ORIGIN);
+}
+
+/**
  * Mark III bottom→top timing — one continuous cascade.
  *
  * Root cause of “section pauses”: next wave was scheduled from previous
@@ -82,10 +101,11 @@ export interface AssemblyController {
  * left ~0.7s after the last launch of a wave with nothing new starting.
  *
  * Fix: chain each wave to the previous wave’s last *launch* (+ tiny gap),
- * not its last lock. WAVE_EARLIEST is only a soft floor for boots / open.
+ * not its last lock. WAVE_EARLIEST is only a soft floor for boots / open
+ * (boots earliest includes the opening hold).
  */
 const WAVE_EARLIEST: Record<string, number> = {
-  boots: 0.2,
+  boots: OPENING_HOLD,
   calves: 0,
   thighs: 0,
   hips: 0,
@@ -361,8 +381,18 @@ export function createAssemblyTimeline(
     shake.z = 0;
     motionSpans = [];
 
-    // Opening camera — 3/4 hero on the full suit (must be a timeline.set at
-    // t=0 so later FOV / look-target tweens cannot poison playhead 0).
+    // Opening: wider hangar establish → slow push to ¾ hero, then plates.
+    // t=0 must be a timeline.set so later FOV / look-target tweens cannot
+    // poison playhead 0 on reverse scrub / replay.
+    const OPEN_WIDE = {
+      x: 2.15,
+      y: 1.55,
+      z: 4.85,
+      lx: 0,
+      ly: 0.88,
+      lz: 0,
+      fov: BASE_FOV + 3.5,
+    };
     const OPEN_CAM = {
       x: 1.85,
       y: 1.35,
@@ -372,7 +402,7 @@ export function createAssemblyTimeline(
       lz: 0,
       fov: BASE_FOV,
     };
-    Object.assign(cameraProxy, OPEN_CAM);
+    Object.assign(cameraProxy, OPEN_WIDE);
     applyCamera();
 
     const timeline = gsap.timeline({
@@ -391,14 +421,44 @@ export function createAssemblyTimeline(
       },
     });
 
-    // Authoritative t=0 framing — survives reverse scrub / replay / property
-    // pollution from palm + faceplate FOV keyframes later on the same proxy.
-    timeline.set(cameraProxy, { ...OPEN_CAM }, 0);
+    // Authoritative t=0 framing — wider hangar establish
+    timeline.set(cameraProxy, { ...OPEN_WIDE }, 0);
     timeline.call(applyCamera, undefined, 0);
 
-    timeline.call(() => {
-      callbacks.onStatus?.('ASSEMBLY SEQUENCE INITIATED');
-    }, undefined, 0);
+    // Slow push into hero framing over the hold (empty pad → cascade ready)
+    timeline.to(
+      cameraProxy,
+      {
+        ...OPEN_CAM,
+        duration: OPENING_HOLD * 0.92,
+        ease: 'power1.inOut',
+        onUpdate: applyCamera,
+      },
+      0,
+    );
+
+    // Staged JARVIS status during the hold
+    timeline.call(
+      () => {
+        callbacks.onStatus?.('STANDBY // HANGAR LOCK');
+      },
+      undefined,
+      0,
+    );
+    timeline.call(
+      () => {
+        callbacks.onStatus?.('J.A.R.V.I.S. ONLINE');
+      },
+      undefined,
+      OPENING_HOLD * 0.32,
+    );
+    timeline.call(
+      () => {
+        callbacks.onStatus?.('ASSEMBLY SEQUENCE INITIATED');
+      },
+      undefined,
+      OPENING_HOLD * 0.72,
+    );
 
     /** When each wave's last plate finishes locking */
     const waveLockEnd: Partial<Record<string, number>> = {};
@@ -875,7 +935,7 @@ export function createAssemblyTimeline(
     const LOWER_FOV = BASE_FOV - 1.5; // mild optical zoom (~32.5°)
     const CHEST_FOV = BASE_FOV - 2.5; // tighter on the core (~31.5°)
 
-    // Boots cascade — drop look target toward the feet, ease in a step.
+    // Boots cascade — drop look target toward the feet after the opening hold.
     timeline.to(
       cameraProxy,
       {
@@ -890,7 +950,7 @@ export function createAssemblyTimeline(
         ease: 'power2.inOut',
         onUpdate: applyCamera,
       },
-      0.3,
+      OPENING_HOLD + 0.05,
     );
 
     // Thighs — lift framing to mid-leg. Keep this beat short so it hands off
@@ -1172,9 +1232,13 @@ export function createAssemblyTimeline(
     },
     getDuration: () => {
       if (!tl) return 0;
-      // Expose assembly span for HUD/audio so 100% lines up with systems online.
+      // Expose assembly span for HUD so 100% lines up with systems online.
       // Trailing camera still runs on the GSAP timeline past this mark.
       return Math.max(assemblyEndTime, 1e-6);
+    },
+    getTime: () => {
+      if (!tl) return 0;
+      return Math.max(0, tl.time());
     },
     kill: () => {
       tl?.kill();

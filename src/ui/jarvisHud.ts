@@ -6,6 +6,20 @@ export const JARVIS_LOG_CAP = 2;
 /** How long the panel stays after systems online before auto-hide (ms). */
 export const JARVIS_DISMISS_MS = 2200;
 
+/**
+ * True only for the final suit-complete status line.
+ * Intermediate beats like "ARC REACTOR ONLINE", "REPULSORS ONLINE",
+ * "J.A.R.V.I.S. ONLINE", and the power-wave "SYSTEMS ONLINE — ARC STABLE…"
+ * must not count — those used to dismiss the progress panel mid-cascade.
+ */
+export function isSystemsOnlineStatus(text: string): boolean {
+  const t = text.trim();
+  if (t === 'SYSTEMS ONLINE') return true;
+  // Reduced-motion / explicit end variants (not ARC STABLE power-wave copy)
+  if (t.startsWith('SYSTEMS ONLINE — REDUCED')) return true;
+  return false;
+}
+
 /** Short labels for the left pipeline rail. */
 export const WAVE_SHORT: Record<PieceWave, string> = {
   boots: 'BOOTS',

@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
+  audioTimelineOffset,
   createAssemblyTimeline,
   type AssemblyController,
 } from '../animation/assemblyTimeline';
 import type { Suit } from '../suit/Suit';
 import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
-import { isPieceWave } from '../ui/jarvisHud';
+import { isPieceWave, isSystemsOnlineStatus } from '../ui/jarvisHud';
 
 const VIEWER_HINT =
   'Drag to orbit · R replay · Space pause · S skip · ←→ scrub';
@@ -143,18 +144,31 @@ export function createAssemblySession(
   // Declared before callbacks so they can call into the controller once assigned.
   let assembly!: ReturnType<typeof createAssemblyTimeline>;
 
+  /** Visual assembly span (includes opening hold → systems online). */
   const asmDuration = () => Math.max(assembly.getDuration(), 1e-6);
+
+  /**
+   * SFX seed was authored before OPENING_HOLD. Map GSAP time onto that clock
+   * so plate hits stay aligned; hangar hold is silent lead-in.
+   */
+  const sfxOffset = () => audioTimelineOffset();
+  const audioDuration = () => Math.max(asmDuration() - sfxOffset(), 1e-6);
+  const toAudioSec = (gsapTime: number) => gsapTime - sfxOffset();
+  const fromAudioSec = (audioSec: number) => audioSec + sfxOffset();
 
   const syncAudioDuration = () => {
     if (!audioTimeline) return;
-    const dur = assembly.getDuration();
+    const dur = audioDuration();
     if (dur > 0) audioTimeline.setAssemblyDuration(dur);
   };
 
   const audioPlayFromProgress = (p: number) => {
     // Play in viewer and director — panel is authoring UI only.
+    // Pass seed-clock seconds (may be negative during the hangar hold so
+    // clip delays keep original absolute starts vs the cascade).
     if (!audioTimeline) return;
-    audioTimeline.onTransportPlay(p * asmDuration());
+    const gsapT = Math.max(0, Math.min(1, p)) * asmDuration();
+    audioTimeline.onTransportPlay(toAudioSec(gsapT));
   };
 
   const audioStop = () => {
@@ -163,7 +177,15 @@ export function createAssemblySession(
 
   const audioPlayhead = (p: number) => {
     if (!audioTimeline) return;
-    audioTimeline.setPlayhead(p * asmDuration());
+    const gsapT = Math.max(0, Math.min(1, p)) * asmDuration();
+    // Ruler playhead stays ≥ 0 (hold shows 0 until cascade clock starts).
+    audioTimeline.setPlayhead(Math.max(0, toAudioSec(gsapT)));
+  };
+
+  /** Sync playhead from live GSAP time (more accurate than progress alone). */
+  const audioPlayheadFromTime = () => {
+    if (!audioTimeline) return;
+    audioTimeline.setPlayhead(Math.max(0, toAudioSec(assembly.getTime())));
   };
 
   const syncDebugPauseLabel = () => {
@@ -240,8 +262,9 @@ export function createAssemblySession(
 
   assembly = createAssemblyTimeline(suit, camera, lookTarget, {
     onStatus: (text) => {
-      const online = text.includes('ONLINE') || text.includes('STABLE');
-      ui.setStatus(text, online);
+      // Only final SYSTEMS ONLINE dismisses the progress panel — not
+      // intermediate * ONLINE beats (reactor, repulsors, J.A.R.V.I.S., etc.).
+      ui.setStatus(text, isSystemsOnlineStatus(text));
     },
     onWave: (wave) => {
       if (isPieceWave(wave)) {
@@ -252,7 +275,8 @@ export function createAssemblySession(
       const pct = Math.round(t * 100);
       ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
       ui.setDebugProgress(t);
-      audioPlayhead(t);
+      // Seed clock from live GSAP time so hold doesn’t skew SFX vs plates
+      audioPlayheadFromTime();
       if (t < 0.999 && assemblyComplete) {
         // Scrubbed back from the end — keep free-look if user owns the camera
         applyAssemblyUi({
@@ -303,7 +327,8 @@ export function createAssemblySession(
 
     applyAssemblyUi();
     ui.setIntegrity('INTEGRITY   0%');
-    ui.setStatus('ASSEMBLY SEQUENCE INITIATED');
+    // Opening hold copy — timeline stages J.A.R.V.I.S. / INITIATED next
+    ui.setStatus('STANDBY // HANGAR LOCK');
     ui.setDebugProgress(0);
     assembly.rebuild();
     syncAudioDuration();
@@ -344,6 +369,7 @@ export function createAssemblySession(
     syncDebugPauseLabel();
   };
 
+  /** Seek visual assembly progress 0–1 (includes hangar hold in the span). */
   const seek = (p: number) => {
     // Scrub invalidates overlay parents / visibility — drop selection
     clearPick();
@@ -363,6 +389,17 @@ export function createAssemblySession(
       ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
       ui.setStatus('DEBUG SCRUB', false);
     }
+  };
+
+  /**
+   * Audio DAW scrub is 0–1 on the *seed* clock (no hangar hold).
+   * Convert to visual assembly progress before seeking.
+   */
+  const seekFromAudioProgress = (audioProgress01: number) => {
+    const audioT = Math.max(0, Math.min(1, audioProgress01)) * audioDuration();
+    const gsapT = fromAudioSec(audioT);
+    const p = gsapT / asmDuration();
+    seek(Math.min(1, Math.max(0, p)));
   };
 
   ui.onReplay(() => {
@@ -390,7 +427,7 @@ export function createAssemblySession(
   syncAudioDuration();
 
   audioTimeline?.onSeek((p) => {
-    seek(p);
+    seekFromAudioProgress(p);
   });
 
   audioTimeline?.onTogglePause(() => {

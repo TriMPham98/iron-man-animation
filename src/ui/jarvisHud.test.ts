@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   appendLogLine,
   isPieceWave,
+  isSystemsOnlineStatus,
   lampsForProgress,
   waveNodeStates,
   JARVIS_DISMISS_MS,
@@ -75,5 +76,24 @@ describe('isPieceWave', () => {
 describe('JARVIS_DISMISS_MS', () => {
   it('is a positive dismiss delay', () => {
     expect(JARVIS_DISMISS_MS).toBeGreaterThan(500);
+  });
+});
+
+describe('isSystemsOnlineStatus', () => {
+  it('accepts the final systems-online beat', () => {
+    expect(isSystemsOnlineStatus('SYSTEMS ONLINE')).toBe(true);
+    expect(isSystemsOnlineStatus('SYSTEMS ONLINE — REDUCED MOTION')).toBe(
+      true,
+    );
+  });
+
+  it('rejects intermediate ONLINE / STABLE lines mid-cascade', () => {
+    expect(isSystemsOnlineStatus('J.A.R.V.I.S. ONLINE')).toBe(false);
+    expect(isSystemsOnlineStatus('ARC REACTOR ONLINE')).toBe(false);
+    expect(isSystemsOnlineStatus('REPULSORS ONLINE')).toBe(false);
+    expect(isSystemsOnlineStatus('HELMET SEALED — HUD ONLINE…')).toBe(false);
+    expect(isSystemsOnlineStatus('SYSTEMS ONLINE — ARC STABLE…')).toBe(false);
+    expect(isSystemsOnlineStatus('ASSEMBLY SEQUENCE INITIATED')).toBe(false);
+    expect(isSystemsOnlineStatus('STANDBY // HANGAR LOCK')).toBe(false);
   });
 });

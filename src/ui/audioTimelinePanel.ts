@@ -1327,6 +1327,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     cancelSchedule();
     engine.stop();
     if (muted) return;
+    // `sec` is the seed/cascade clock. May be negative during a hangar hold
+    // so clip delays stay authored against original plate times.
     playingFrom = sec;
 
     for (const c of clips) {
@@ -1344,6 +1346,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       };
 
       if (c.start >= sec - 1e-4) {
+        // Negative playhead → longer delay (silent lead-in before cascade)
         const delay = (c.start - sec) * 1000;
         const tid = window.setTimeout(() => {
           if (playingFrom == null) return;

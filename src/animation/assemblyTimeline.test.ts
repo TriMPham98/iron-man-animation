@@ -3,7 +3,10 @@ import * as THREE from 'three';
 import type { ArmorPiece, PieceWave } from '../suit/waves';
 import { isFaceplateRest } from '../utils/easeHelpers';
 import {
+  AUDIO_SEED_ORIGIN,
+  audioTimelineOffset,
   groupHasFaceplate,
+  OPENING_HOLD,
   orderHelmetLaunchGroups,
   palmBeatEndFromHandsLock,
 } from './assemblyTimeline';
@@ -79,5 +82,20 @@ describe('palmBeatEndFromHandsLock', () => {
     // PALM_PRE_HOLD 0.12 + REPULSOR_RAMP 0.9 + PALM_POST_HOLD 0 = 1.02
     expect(palmBeatEndFromHandsLock(10)).toBeCloseTo(11.02, 5);
     expect(palmBeatEndFromHandsLock(10)).toBeLessThan(10 + 1.5);
+  });
+});
+
+describe('OPENING_HOLD + audioTimelineOffset', () => {
+  it('holds under 1.2s before boots', () => {
+    expect(OPENING_HOLD).toBeGreaterThan(0.5);
+    expect(OPENING_HOLD).toBeLessThan(1.2);
+  });
+
+  it('keeps SFX on the pre-hold seed clock', () => {
+    expect(audioTimelineOffset()).toBeCloseTo(
+      OPENING_HOLD - AUDIO_SEED_ORIGIN,
+      5,
+    );
+    expect(audioTimelineOffset()).toBeGreaterThan(0);
   });
 });
