@@ -3,8 +3,15 @@ import { WAVE_ORDER, type PieceWave } from '../suit/waves';
 /** Max visible lines in the compact ephemeral log. */
 export const JARVIS_LOG_CAP = 2;
 
-/** How long the panel stays after systems online before auto-hide (ms). */
-export const JARVIS_DISMISS_MS = 2200;
+/**
+ * Hold on SYSTEMS ONLINE flourish before the panel starts leaving (ms).
+ * Keep long enough for the cyan complete pulse to read, short enough to
+ * clear the top bar before the showcase spin settles.
+ */
+export const JARVIS_DISMISS_MS = 1800;
+
+/** Match `.jarvis-panel.is-leaving` collapse duration (ms). */
+export const JARVIS_LEAVE_MS = 520;
 
 /**
  * True only for the final suit-complete status line.

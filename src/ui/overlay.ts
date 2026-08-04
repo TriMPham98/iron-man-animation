@@ -10,6 +10,7 @@ import {
 import {
   applyPipelineStates,
   JARVIS_DISMISS_MS,
+  JARVIS_LEAVE_MS,
   lampsForProgress,
   mountPipeline,
   type SystemLamp,
@@ -145,19 +146,22 @@ export function createOverlay(): OverlayHandles {
   const hideJarvisPanel = (immediate = false) => {
     if (!jarvisPanel) return;
     window.clearTimeout(dismissTimer);
-    jarvisPanel.classList.remove('is-visible', 'is-entering', 'is-complete');
+    jarvisPanel.classList.remove('is-visible', 'is-entering');
     hudTop.classList.remove('is-jarvis-live');
     if (immediate || reducedMotion()) {
+      jarvisPanel.classList.remove('is-leaving', 'is-complete');
       jarvisPanel.classList.add('is-hidden');
       jarvisPanel.setAttribute('aria-hidden', 'true');
       return;
     }
+    // Collapse + fade while still is-complete (cyan finish state)
     jarvisPanel.classList.add('is-leaving');
+    jarvisPanel.classList.remove('is-visible');
     window.setTimeout(() => {
       jarvisPanel.classList.add('is-hidden');
-      jarvisPanel.classList.remove('is-leaving');
+      jarvisPanel.classList.remove('is-leaving', 'is-complete');
       jarvisPanel.setAttribute('aria-hidden', 'true');
-    }, 420);
+    }, JARVIS_LEAVE_MS);
   };
 
   const showJarvisPanel = () => {
@@ -170,13 +174,14 @@ export function createOverlay(): OverlayHandles {
       jarvisPanel.classList.add('is-visible');
       return;
     }
-    jarvisPanel.classList.remove('is-visible');
+    // Retrigger enter animation cleanly
+    jarvisPanel.classList.remove('is-visible', 'is-entering');
     void jarvisPanel.offsetWidth;
     jarvisPanel.classList.add('is-entering');
     window.setTimeout(() => {
       jarvisPanel.classList.remove('is-entering');
       jarvisPanel.classList.add('is-visible');
-    }, 400);
+    }, 450);
   };
 
   const applyLamps = (p: number, online: boolean) => {
@@ -196,20 +201,25 @@ export function createOverlay(): OverlayHandles {
   };
 
   const setSystemsOnline = (online: boolean) => {
+    // Edge-trigger the cyan flourish — assembly end + camera-tail complete
+    // both used to call this and fire a second flash.
+    const becameOnline = online && !systemsOnline;
     systemsOnline = online;
     document.body.classList.toggle('systems-online', online);
-    if (online) {
+
+    if (becameOnline) {
       hudFrame.classList.add('is-online-flash');
       window.setTimeout(() => {
         hudFrame.classList.remove('is-online-flash');
       }, 1600);
-    } else {
+    } else if (!online) {
       hudFrame.classList.remove('is-online-flash');
     }
+
     syncPipeline();
     applyLamps(lastProgress, online);
 
-    if (online && jarvisPanel) {
+    if (becameOnline && jarvisPanel) {
       jarvisPanel.classList.add('is-complete');
       window.clearTimeout(dismissTimer);
       // Brief “online” beat in the same panel, then clear the top center

@@ -6,6 +6,7 @@ import {
   lampsForProgress,
   waveNodeStates,
   JARVIS_DISMISS_MS,
+  JARVIS_LEAVE_MS,
   JARVIS_LOG_CAP,
 } from './jarvisHud';
 
@@ -73,9 +74,12 @@ describe('isPieceWave', () => {
   });
 });
 
-describe('JARVIS_DISMISS_MS', () => {
-  it('is a positive dismiss delay', () => {
+describe('JARVIS dismiss timing', () => {
+  it('holds complete long enough to read, then leaves', () => {
     expect(JARVIS_DISMISS_MS).toBeGreaterThan(500);
+    expect(JARVIS_DISMISS_MS).toBeLessThan(3000);
+    expect(JARVIS_LEAVE_MS).toBeGreaterThan(300);
+    expect(JARVIS_LEAVE_MS).toBeLessThan(800);
   });
 });
 

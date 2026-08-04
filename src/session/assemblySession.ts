@@ -261,8 +261,9 @@ export function createAssemblySession(
     ui.setHintVisible(true);
     ui.fadeTitle(true);
     ui.setIntegrity('INTEGRITY 100%');
+    // Status may already be SYSTEMS ONLINE from assemblyEndTime — avoid a
+    // second cyan flash; setSystemsOnline is edge-triggered either way.
     ui.setStatus('SYSTEMS ONLINE', true);
-    ui.setSystemsOnline(true);
     ui.setActiveWave(null);
     ui.setDebugProgress(1);
     ui.setDebugActivePieces([]);

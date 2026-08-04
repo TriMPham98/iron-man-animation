@@ -491,7 +491,9 @@ export function createAssemblyTimeline(
       },
       onComplete: () => {
         playing = false;
-        callbacks.onStatus?.('SYSTEMS ONLINE');
+        // SYSTEMS ONLINE already fired at assemblyEndTime (integrity 100%).
+        // Do not re-send status here — that double-triggered the cyan flash
+        // after the trailing camera pullback.
         callbacks.onProgress?.(1);
         callbacks.onActivePieces?.([]);
         callbacks.onComplete?.();

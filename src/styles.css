@@ -172,14 +172,33 @@ body.scene-ready #app {
   }
 }
 
-/* —— HUD frame (corner brackets) —— */
+/* —— HUD frame (corner brackets) ——
+   Top inset clears MK III / DIR / clock so L-brackets never overlap chrome.
+   Sides + bottom frame the 3D view only.
+*/
 .hud-frame {
   pointer-events: none;
   position: absolute;
-  inset: 0.85rem;
+  /* Default: clear slim top bar (brand + pad) */
+  top: 3.5rem;
+  right: 0.95rem;
+  bottom: 0.95rem;
+  left: 0.95rem;
   z-index: 9;
   opacity: 1;
-  transition: opacity 0.5s ease;
+  transition:
+    opacity 0.5s ease,
+    top 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Finished suit: slightly closer under the slim showcase header */
+body.systems-online .hud-frame {
+  top: 3.15rem;
+}
+
+/* Live JARVIS brief is taller — keep brackets below progress + pipeline */
+body:has(#hud-top.is-jarvis-live) .hud-frame {
+  top: 6.25rem;
 }
 
 .hud-frame.hidden {
@@ -188,9 +207,9 @@ body.scene-ready #app {
 
 .hud-corner {
   position: absolute;
-  width: 1.35rem;
-  height: 1.35rem;
-  border-color: rgba(201, 162, 39, 0.55);
+  width: 1.15rem;
+  height: 1.15rem;
+  border-color: rgba(201, 162, 39, 0.42);
   border-style: solid;
   border-width: 0;
   opacity: 0;
@@ -257,6 +276,11 @@ body.scene-ready #app {
   }
 }
 
+/* Soften brackets on finished-suit showcase so chrome stays quiet */
+body.systems-online .hud-frame.is-booted .hud-corner {
+  border-color: rgba(201, 162, 39, 0.28);
+}
+
 /* —— HUD —— */
 .hud {
   position: absolute;
@@ -290,6 +314,10 @@ body.scene-ready #app {
   gap: 0.75rem;
   padding-top: 0.9rem;
   padding-bottom: 0.9rem;
+  transition:
+    border-color 0.55s ease,
+    background 0.55s ease,
+    padding 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Staggered boot: children rise in after showHud */
@@ -422,31 +450,33 @@ body.scene-ready #app {
 /*
   JARVIS top-bar center brief
   ───────────────────────────
-  Replaces the old title / status / INT loading strip.
-  In-flow in #hud-center; only visible during assembly, then auto-dismisses.
+  In-flow in #hud-center during assembly; SYSTEMS ONLINE → complete pulse →
+  collapse leave (opacity + max-height together so no residual gold hairline).
 */
 .jarvis-panel {
   pointer-events: none;
   width: 100%;
   max-width: min(32rem, 100%);
   margin: 0 auto;
+  overflow: hidden;
+  max-height: 0;
   opacity: 0;
   visibility: hidden;
-  transform: translateY(-0.25rem);
+  transform: translateY(-0.35rem);
   font-family: var(--mono);
   transition:
-    opacity 0.35s ease,
-    transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
-    visibility 0.35s;
+    opacity 0.48s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.48s cubic-bezier(0.22, 1, 0.36, 1),
+    max-height 0.52s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0.48s,
+    margin 0.48s ease;
 }
 
 .jarvis-panel.is-hidden {
   opacity: 0;
   visibility: hidden;
-  transform: translateY(-0.25rem);
-  /* Collapse so top bar stays slim after dismiss */
+  transform: translateY(-0.35rem);
   max-height: 0;
-  overflow: hidden;
   margin: 0;
 }
 
@@ -455,24 +485,27 @@ body.scene-ready #app {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
-  max-height: 8rem;
+  max-height: 7.5rem;
 }
 
 .jarvis-panel.is-entering {
-  animation: jarvis-panel-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: jarvis-panel-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Collapse with the fade — never leave an empty progress-track line behind */
 .jarvis-panel.is-leaving {
   opacity: 0;
-  visibility: visible;
-  transform: translateY(-0.2rem);
-  max-height: 8rem;
+  visibility: hidden;
+  transform: translateY(-0.45rem) scale(0.985);
+  max-height: 0;
+  margin: 0;
+  transform-origin: top center;
 }
 
 @keyframes jarvis-panel-in {
   0% {
     opacity: 0;
-    transform: translateY(-0.4rem);
+    transform: translateY(-0.45rem);
   }
   100% {
     opacity: 1;
@@ -546,7 +579,53 @@ body.scene-ready #app {
 
 .jarvis-panel.is-complete .jarvis-int {
   color: var(--cyan-bright);
-  text-shadow: 0 0 8px rgba(126, 232, 255, 0.35);
+  text-shadow: 0 0 10px rgba(126, 232, 255, 0.4);
+  transition: color 0.35s ease, text-shadow 0.35s ease;
+}
+
+/* SYSTEMS ONLINE — soft cyan resolve before the panel collapses */
+.jarvis-panel.is-complete .jarvis-panel-inner {
+  animation: jarvis-complete-settle 0.75s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.jarvis-panel.is-complete .jarvis-mark {
+  color: var(--cyan-bright);
+  animation: none;
+  opacity: 1;
+  text-shadow: 0 0 12px rgba(126, 232, 255, 0.55);
+}
+
+.jarvis-panel.is-complete .jarvis-title {
+  color: var(--cyan-bright);
+  text-shadow: 0 0 14px rgba(126, 232, 255, 0.4);
+}
+
+.jarvis-panel.is-complete .jarvis-status {
+  color: var(--cyan-bright);
+  text-shadow: 0 0 16px rgba(126, 232, 255, 0.45);
+}
+
+.jarvis-panel.is-complete .jarvis-pipe-node {
+  color: rgba(126, 232, 255, 0.55);
+}
+
+.jarvis-panel.is-complete .jarvis-pipe-dot {
+  border-color: rgba(126, 232, 255, 0.55);
+  background: rgba(126, 232, 255, 0.55);
+  box-shadow: 0 0 6px rgba(126, 232, 255, 0.3);
+  animation: none;
+}
+
+@keyframes jarvis-complete-settle {
+  0% {
+    filter: brightness(1.15);
+  }
+  55% {
+    filter: brightness(1.08);
+  }
+  100% {
+    filter: brightness(1);
+  }
 }
 
 /* Primary status line (replaces old .status under title) */
@@ -580,6 +659,10 @@ body.scene-ready #app {
   background: rgba(201, 162, 39, 0.12);
   border: 1px solid rgba(201, 162, 39, 0.2);
   overflow: hidden;
+  transition:
+    border-color 0.4s ease,
+    background 0.4s ease,
+    box-shadow 0.4s ease;
 }
 
 .jarvis-progress-fill {
@@ -592,16 +675,20 @@ body.scene-ready #app {
     var(--gold-bright)
   );
   box-shadow: 0 0 8px rgba(232, 197, 71, 0.3);
-  /* No width ease — bar is wave-paced each frame; lag made it trail the dots */
-  transition: none;
+  /* Width is wave-paced each frame; color can ease into complete cyan */
+  transition: background 0.4s ease, box-shadow 0.4s ease;
   position: relative;
 }
 
-.jarvis-progress.is-complete {
-  border-color: rgba(126, 232, 255, 0.4);
+.jarvis-progress.is-complete,
+.jarvis-panel.is-complete .jarvis-progress {
+  border-color: rgba(126, 232, 255, 0.42);
+  background: rgba(126, 232, 255, 0.08);
+  box-shadow: 0 0 10px rgba(126, 232, 255, 0.12);
 }
 
-.jarvis-progress.is-complete .jarvis-progress-fill {
+.jarvis-progress.is-complete .jarvis-progress-fill,
+.jarvis-panel.is-complete .jarvis-progress-fill {
   background: linear-gradient(90deg, #3ad0ff, var(--cyan), var(--cyan-bright));
   box-shadow: 0 0 12px rgba(126, 232, 255, 0.4);
 }
@@ -690,21 +777,28 @@ body.scene-ready #app {
   }
 }
 
-/* One-shot corner flash when systems go online (not permanent) */
+/* One-shot corner flash when systems go online (not permanent).
+   Keep opacity/transform so this does not undo hud-corner-in. */
 .hud-frame.is-online-flash .hud-corner {
-  animation: jarvis-online-bloom 1.5s ease-out both;
+  animation: jarvis-online-bloom 1.35s ease-out both;
 }
 
 @keyframes jarvis-online-bloom {
   0% {
+    opacity: 1;
+    transform: scale(1);
     border-color: rgba(201, 162, 39, 0.55);
   }
-  35% {
-    border-color: rgba(126, 232, 255, 0.9);
-    box-shadow: 0 0 12px rgba(126, 232, 255, 0.35);
+  30% {
+    opacity: 1;
+    transform: scale(1);
+    border-color: rgba(126, 232, 255, 0.85);
+    box-shadow: 0 0 14px rgba(126, 232, 255, 0.35);
   }
   100% {
-    border-color: rgba(201, 162, 39, 0.55);
+    opacity: 1;
+    transform: scale(1);
+    border-color: rgba(201, 162, 39, 0.28);
     box-shadow: none;
   }
 }
@@ -715,8 +809,23 @@ body.director-mode .jarvis-pipe-label {
 
 /* Slimmer top bar when JARVIS is dismissed (showcase) */
 .hud-top:not(.is-jarvis-live) {
-  padding-top: 0.75rem;
-  padding-bottom: 0.75rem;
+  padding-top: 0.7rem;
+  padding-bottom: 0.7rem;
+  border-bottom-color: rgba(201, 162, 39, 0.1);
+  background: linear-gradient(to bottom, rgba(5, 5, 8, 0.58), transparent);
+}
+
+/*
+  After SYSTEMS ONLINE the center brief is gone — drop the full-width gold
+  hairline so the header does not read as an empty rule over the suit.
+*/
+body.systems-online .hud-top:not(.is-jarvis-live) {
+  border-bottom-color: transparent;
+  background: linear-gradient(to bottom, rgba(5, 5, 8, 0.42), transparent);
+}
+
+.hud-top.is-jarvis-live {
+  border-bottom-color: rgba(201, 162, 39, 0.2);
 }
 
 /* Keyboard-only affordance (Tab). Cleared after pointer via blurButtons. */
@@ -1798,8 +1907,20 @@ body.director-mode .audio-timeline:not(.hidden) {
     font-size: 0.55rem;
   }
 
+  /* Stacked header is taller — keep L-brackets below brand / clock */
   .hud-frame {
-    inset: 0.5rem;
+    top: 5.25rem;
+    right: 0.55rem;
+    bottom: 0.55rem;
+    left: 0.55rem;
+  }
+
+  body.systems-online .hud-frame {
+    top: 4.85rem;
+  }
+
+  body:has(#hud-top.is-jarvis-live) .hud-frame {
+    top: 8.75rem;
   }
 
   .hud-top {
@@ -1845,6 +1966,7 @@ body.director-mode .audio-timeline:not(.hidden) {
   body.director-mode .audio-timeline:not(.hidden),
   .jarvis-status.is-updating,
   .jarvis-panel.is-entering,
+  .jarvis-panel.is-complete .jarvis-panel-inner,
   .jarvis-pipe-node.is-active .jarvis-pipe-dot,
   .jarvis-mark,
   .hud-frame.is-online-flash .hud-corner {
@@ -1864,7 +1986,12 @@ body.director-mode .audio-timeline:not(.hidden) {
     opacity: 1;
     transform: translateY(0);
     visibility: visible;
-    max-height: 8rem;
+    max-height: 7.5rem;
+  }
+
+  .jarvis-panel.is-complete .jarvis-panel-inner {
+    animation: none !important;
+    filter: none;
   }
 
   #loading,
@@ -1887,6 +2014,7 @@ body.reduced-motion .jarvis-status.is-updating,
 body.reduced-motion.director-mode .reclass-panel:not(.hidden),
 body.reduced-motion.director-mode .audio-timeline:not(.hidden),
 body.reduced-motion .jarvis-panel.is-entering,
+body.reduced-motion .jarvis-panel.is-complete .jarvis-panel-inner,
 body.reduced-motion .jarvis-pipe-node.is-active .jarvis-pipe-dot,
 body.reduced-motion .jarvis-mark,
 body.reduced-motion .hud-frame.is-online-flash .hud-corner {
