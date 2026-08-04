@@ -592,7 +592,8 @@ body.scene-ready #app {
     var(--gold-bright)
   );
   box-shadow: 0 0 8px rgba(232, 197, 71, 0.3);
-  transition: width 0.12s linear;
+  /* No width ease — bar is wave-paced each frame; lag made it trail the dots */
+  transition: none;
   position: relative;
 }
 

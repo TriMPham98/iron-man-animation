@@ -162,12 +162,13 @@ export function createAssemblySession(
     if (dur > 0) audioTimeline.setAssemblyDuration(dur);
   };
 
-  const audioPlayFromProgress = (p: number) => {
+  const audioPlayFromTime = (gsapTime?: number) => {
     // Play in viewer and director — panel is authoring UI only.
     // Pass seed-clock seconds (may be negative during the hangar hold so
     // clip delays keep original absolute starts vs the cascade).
+    // Integrity progress is wave-paced — always drive SFX from raw GSAP time.
     if (!audioTimeline) return;
-    const gsapT = Math.max(0, Math.min(1, p)) * asmDuration();
+    const gsapT = gsapTime ?? assembly.getTime();
     audioTimeline.onTransportPlay(toAudioSec(gsapT));
   };
 
@@ -175,17 +176,12 @@ export function createAssemblySession(
     audioTimeline?.onTransportStop();
   };
 
-  const audioPlayhead = (p: number) => {
+  /** Sync playhead from live GSAP time (integrity % is wave-paced, not linear). */
+  const audioPlayheadFromTime = (gsapTime?: number) => {
     if (!audioTimeline) return;
-    const gsapT = Math.max(0, Math.min(1, p)) * asmDuration();
+    const gsapT = gsapTime ?? assembly.getTime();
     // Ruler playhead stays ≥ 0 (hold shows 0 until cascade clock starts).
     audioTimeline.setPlayhead(Math.max(0, toAudioSec(gsapT)));
-  };
-
-  /** Sync playhead from live GSAP time (more accurate than progress alone). */
-  const audioPlayheadFromTime = () => {
-    if (!audioTimeline) return;
-    audioTimeline.setPlayhead(Math.max(0, toAudioSec(assembly.getTime())));
   };
 
   const syncDebugPauseLabel = () => {
@@ -208,13 +204,13 @@ export function createAssemblySession(
 
   const getHudElapsed = (): number => {
     const dur = assembly.getDuration();
-    const p = assembly.getProgress();
-    if (assemblyComplete || p >= 0.999) {
+    // Clock uses raw GSAP time — integrity progress is wave-paced, not linear.
+    if (assemblyComplete || assembly.getProgress() >= 0.999) {
       const base = Math.max(dur, 0);
       const anchor = completeAnchor ?? clock.getElapsedTime();
       return base + Math.max(0, clock.getElapsedTime() - anchor);
     }
-    return Math.max(0, p * Math.max(dur, 0));
+    return Math.max(0, Math.min(assembly.getTime(), Math.max(dur, 0)));
   };
 
   const applyCompleteUi = (opts?: { preserveCamera?: boolean }) => {
@@ -242,7 +238,7 @@ export function createAssemblySession(
     ui.setDebugProgress(1);
     ui.setDebugActivePieces([]);
     audioStop();
-    audioPlayhead(1);
+    audioPlayheadFromTime(asmDuration());
     syncDebugPauseLabel();
     refreshHintCopy();
   };
@@ -334,8 +330,8 @@ export function createAssemblySession(
     syncAudioDuration();
     audioStop();
     assembly.play();
-    audioPlayFromProgress(0);
-    audioPlayhead(0);
+    audioPlayFromTime(0);
+    audioPlayheadFromTime(0);
     syncDebugPauseLabel();
     clockStart = clock.getElapsedTime();
   };
@@ -364,12 +360,12 @@ export function createAssemblySession(
       const preserveCamera = assembly.userOwnsCamera();
       applyAssemblyUi({ preserveTarget: preserveCamera });
       assembly.resume({ preserveCamera });
-      audioPlayFromProgress(assembly.getProgress());
+      audioPlayFromTime();
     }
     syncDebugPauseLabel();
   };
 
-  /** Seek visual assembly progress 0–1 (includes hangar hold in the span). */
+  /** Seek visual integrity progress 0–1 (wave-paced; includes hangar hold at 0%). */
   const seek = (p: number) => {
     // Scrub invalidates overlay parents / visibility — drop selection
     clearPick();
@@ -377,7 +373,7 @@ export function createAssemblySession(
     // the viewport (bindInput controls 'start') is what detaches free-look.
     audioStop();
     assembly.seek(p, { preserveCamera: false });
-    audioPlayhead(p);
+    audioPlayheadFromTime();
     syncDebugPauseLabel();
     if (p >= 0.999) {
       applyCompleteUi({ preserveCamera: false });
@@ -393,13 +389,25 @@ export function createAssemblySession(
 
   /**
    * Audio DAW scrub is 0–1 on the *seed* clock (no hangar hold).
-   * Convert to visual assembly progress before seeking.
+   * Seek by absolute GSAP time (integrity % is wave-paced, not linear time).
    */
   const seekFromAudioProgress = (audioProgress01: number) => {
     const audioT = Math.max(0, Math.min(1, audioProgress01)) * audioDuration();
     const gsapT = fromAudioSec(audioT);
-    const p = gsapT / asmDuration();
-    seek(Math.min(1, Math.max(0, p)));
+    clearPick();
+    audioStop();
+    assembly.seekTime(gsapT, { preserveCamera: false });
+    audioPlayheadFromTime();
+    syncDebugPauseLabel();
+    const p = assembly.getProgress();
+    if (p >= 0.999) {
+      applyCompleteUi({ preserveCamera: false });
+    } else {
+      applyAssemblyUi({ preserveTarget: false });
+      const pct = Math.round(p * 100);
+      ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
+      ui.setStatus('DEBUG SCRUB', false);
+    }
   };
 
   ui.onReplay(() => {
@@ -416,7 +424,7 @@ export function createAssemblySession(
       // Keep SFX transport running — director only toggles authoring chrome.
     } else {
       syncAudioDuration();
-      audioPlayhead(assembly.getProgress());
+      audioPlayheadFromTime();
     }
     audioTimeline?.setVisible(enabled);
     refreshHintCopy();

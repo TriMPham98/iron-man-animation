@@ -59,10 +59,16 @@ export interface AssemblyController {
   pause: () => void;
   resume: (opts?: CameraControlOptions) => void;
   /**
-   * Seek to normalized progress 0–1 (pauses). Scrubs plate/systems state.
-   * Re-applies the cinematic camera unless `preserveCamera` is set.
+   * Seek to normalized integrity progress 0–1 (pauses). Scrubs plate/systems
+   * state. Re-applies the cinematic camera unless `preserveCamera` is set.
+   * Progress is wave-paced (matches pipeline dots), not pure wall-clock.
    */
   seek: (progress01: number, opts?: CameraControlOptions) => void;
+  /**
+   * Seek to raw GSAP timeline seconds (pauses). Used by audio DAW scrub
+   * which owns a seed-clock ruler separate from integrity %.
+   */
+  seekTime: (timeSec: number, opts?: CameraControlOptions) => void;
   getProgress: () => number;
   getDuration: () => number;
   /** Raw GSAP playhead seconds (includes opening hold). */
@@ -91,6 +97,73 @@ export const AUDIO_SEED_ORIGIN = 0.2;
 /** Offset from GSAP time → seed/audio timeline seconds. */
 export function audioTimelineOffset(): number {
   return Math.max(0, OPENING_HOLD - AUDIO_SEED_ORIGIN);
+}
+
+/**
+ * Integrity bar 0–1 from timeline time, paced by pipeline wave starts so the
+ * orange fill tracks the dots (wave i active ≈ progress in [i/n, (i+1)/n]).
+ * Hits 1 at `assemblyEnd` (systems online), not the camera tail.
+ */
+export function integrityProgressAtTime(
+  timeSec: number,
+  waveStarts: readonly number[],
+  assemblyEnd: number,
+): number {
+  const end = Math.max(assemblyEnd, 1e-6);
+  const t = Math.max(0, timeSec);
+  if (t >= end - 1e-9) return 1;
+
+  const n = waveStarts.length;
+  if (n === 0) return THREE.MathUtils.clamp(t / end, 0, 1);
+
+  // Hangar hold before first plate wave — stay at 0% with the idle pipeline
+  if (t <= waveStarts[0]) return 0;
+
+  for (let i = 0; i < n - 1; i++) {
+    const t0 = waveStarts[i];
+    const t1 = waveStarts[i + 1];
+    if (t < t1 - 1e-12) {
+      const u = (t - t0) / Math.max(t1 - t0, 1e-6);
+      return (i + THREE.MathUtils.clamp(u, 0, 1)) / n;
+    }
+  }
+
+  // Last wave → systems online
+  const t0 = waveStarts[n - 1];
+  const u = (t - t0) / Math.max(end - t0, 1e-6);
+  return THREE.MathUtils.clamp((n - 1 + u) / n, 0, 1);
+}
+
+/**
+ * Inverse of {@link integrityProgressAtTime} — map integrity 0–1 → timeline sec.
+ */
+export function timeAtIntegrityProgress(
+  progress01: number,
+  waveStarts: readonly number[],
+  assemblyEnd: number,
+): number {
+  const end = Math.max(assemblyEnd, 1e-6);
+  const p = THREE.MathUtils.clamp(progress01, 0, 1);
+  if (p >= 0.999) return end;
+
+  const n = waveStarts.length;
+  if (n === 0) return p * end;
+  if (p <= 0) return 0;
+
+  // First wave starts at progress 0; segment i covers [i/n, (i+1)/n]
+  const idx = Math.min(n - 1, Math.floor(p * n - 1e-12));
+  const p0 = idx / n;
+  const p1 = (idx + 1) / n;
+  const u = (p - p0) / Math.max(p1 - p0, 1e-6);
+
+  if (idx < n - 1) {
+    const t0 = waveStarts[idx];
+    const t1 = waveStarts[idx + 1];
+    return t0 + u * (t1 - t0);
+  }
+
+  const t0 = waveStarts[n - 1];
+  return t0 + u * (end - t0);
 }
 
 /**
@@ -229,14 +302,17 @@ export function createAssemblyTimeline(
    * the integrity bar is normalized to this mark so it hits 100% with the suit.
    */
   let assemblyEndTime = 1;
+  /**
+   * Start times of each wave that fires `onWave` (pipeline dots), in order.
+   * Integrity bar is paced to these so it tracks the dots, not pure wall-clock.
+   */
+  let waveStartTimes: number[] = [];
   /** Launch→lock windows for every plate (rebuilt with the timeline). */
   let motionSpans: PieceMotionSpan[] = [];
 
   /** Integrity / UI progress 0–1 (hits 1 at systems online, not camera tail). */
-  const assemblyProgressAt = (timeSec: number): number => {
-    const end = Math.max(assemblyEndTime, 1e-6);
-    return THREE.MathUtils.clamp(timeSec / end, 0, 1);
-  };
+  const assemblyProgressAt = (timeSec: number): number =>
+    integrityProgressAtTime(timeSec, waveStartTimes, assemblyEndTime);
 
   const reportActivePieces = (timeSec: number) => {
     const active: ActivePieceInfo[] = [];
@@ -380,6 +456,7 @@ export function createAssemblyTimeline(
     shake.y = 0;
     shake.z = 0;
     motionSpans = [];
+    waveStartTimes = [];
 
     // Opening: wider hangar establish → slow push to ¾ hero, then plates.
     // t=0 must be a timeline.set so later FOV / look-target tweens cannot
@@ -499,6 +576,8 @@ export function createAssemblyTimeline(
       // Helmet chains off the previous wave’s last launch (no palm-ECU hold).
 
       waveStartAt[wave] = waveStart;
+      // Pipeline dots + integrity bar share this clock
+      waveStartTimes.push(waveStart);
       // Paired L/R launches: stagger between *pairs*, not individual plates
       const rawLaunchGroups = planSymmetricLaunchGroups(pieces, wave);
       // Mirror scatter starts so paths can be geometric L↔R reflections
@@ -1133,21 +1212,18 @@ export function createAssemblyTimeline(
     return tl;
   };
 
-  const syncAfterSeek = (progress01: number) => {
+  const syncAfterTime = (timeSec: number, forceComplete = false) => {
     const timeline = ensureTl();
-    const uiP = THREE.MathUtils.clamp(progress01, 0, 1);
     const fullDur = Math.max(timeline.duration(), 1e-6);
     const asmEnd = Math.max(assemblyEndTime, 1e-6);
-    // Scrub 0–1 maps onto the assembly window (systems online), not the
-    // trailing camera tail — same scale as getDuration / getProgress / HUD.
-    const t =
-      uiP >= 0.999
-        ? Math.min(fullDur, Math.max(asmEnd, finalSwapTime))
-        : uiP * asmEnd;
+    const t = forceComplete
+      ? Math.min(fullDur, Math.max(asmEnd, finalSwapTime, timeSec))
+      : THREE.MathUtils.clamp(timeSec, 0, fullDur);
     const p = THREE.MathUtils.clamp(t / fullDur, 0, 1);
+    const atEnd = forceComplete || t >= asmEnd - 1e-4;
 
     // Suppress call()/onComplete — we own final-mesh swap + status while scrubbing.
-    if (t >= finalSwapTime - 1e-4 || uiP >= 0.999) {
+    if (t >= finalSwapTime - 1e-4 || atEnd) {
       timeline.progress(p, true);
       applyCamera();
       syncSystems();
@@ -1173,6 +1249,17 @@ export function createAssemblyTimeline(
 
     callbacks.onProgress?.(assemblyProgressAt(timeline.time()));
     reportActivePieces(timeline.time());
+  };
+
+  const syncAfterSeek = (progress01: number) => {
+    const uiP = THREE.MathUtils.clamp(progress01, 0, 1);
+    const asmEnd = Math.max(assemblyEndTime, 1e-6);
+    // Scrub 0–1 is integrity progress (wave-paced), not pure wall-clock.
+    if (uiP >= 0.999) {
+      syncAfterTime(asmEnd, true);
+      return;
+    }
+    syncAfterTime(timeAtIntegrityProgress(uiP, waveStartTimes, asmEnd));
   };
 
   tl = build();
@@ -1221,9 +1308,16 @@ export function createAssemblyTimeline(
       // Scrub re-attaches to the cinematic path unless explicitly preserving
       // free-look. Orbit (bindInput) is what claims ownership again.
       userOwnsCamera = !!opts?.preserveCamera;
-      // Map scrub 0–1 onto the full GSAP timeline (includes camera tail) so
-      // director tools can still reach the final hero frame.
       syncAfterSeek(progress01);
+    },
+    seekTime: (timeSec: number, opts?: CameraControlOptions) => {
+      const timeline = ensureTl();
+      timeline.pause();
+      playing = false;
+      userOwnsCamera = !!opts?.preserveCamera;
+      const asmEnd = Math.max(assemblyEndTime, 1e-6);
+      const t = Math.max(0, timeSec);
+      syncAfterTime(t, t >= asmEnd - 1e-4);
     },
     getProgress: () => {
       if (!tl) return 0;
