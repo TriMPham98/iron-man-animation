@@ -86,10 +86,13 @@ export function createAssemblySession(
    * Once the camera has yawed a full turn, we restart the sequence so the
    * loop reads: assemble → spin showcase → assemble again.
    * Free-look (user drag) cancels auto-rotate and this auto-replay.
+   * Space pauses/resumes the spin without restarting (R still replays).
    */
   let completeSpinActive = false;
   let completeSpinAccum = 0;
   let completeSpinLastTheta: number | null = null;
+  /** True when Space froze showcase auto-rotate (not a free-look cancel). */
+  let showcaseSpinPaused = false;
   const _spinOffset = new THREE.Vector3();
   const _spinSpherical = new THREE.Spherical();
 
@@ -103,6 +106,7 @@ export function createAssemblySession(
     completeSpinActive = false;
     completeSpinAccum = 0;
     completeSpinLastTheta = null;
+    showcaseSpinPaused = false;
   };
 
   const startCompleteSpinTracking = () => {
@@ -113,6 +117,28 @@ export function createAssemblySession(
     }
     completeSpinActive = true;
     completeSpinAccum = 0;
+    completeSpinLastTheta = null;
+    showcaseSpinPaused = false;
+  };
+
+  /** Freeze finished-suit orbit in place (Space while complete). */
+  const pauseShowcaseSpin = () => {
+    controls.autoRotate = false;
+    showcaseSpinPaused = true;
+    // Keep completeSpinActive + accum so resume continues the same turn.
+    completeSpinLastTheta = null;
+  };
+
+  /** Resume finished-suit idle orbit after a Space pause. */
+  const resumeShowcaseSpin = () => {
+    if (reducedMotion || loopFullCycle) return;
+    controls.autoRotate = true;
+    showcaseSpinPaused = false;
+    if (!completeSpinActive) {
+      // Drag killed tracking earlier — start a fresh full-turn watch.
+      startCompleteSpinTracking();
+      return;
+    }
     completeSpinLastTheta = null;
   };
 
@@ -185,7 +211,10 @@ export function createAssemblySession(
   };
 
   const syncDebugPauseLabel = () => {
-    const paused = assembly.isPaused() || assemblyComplete;
+    // Complete showcase: "paused" when auto-rotate is off; assembly: GSAP pause.
+    const paused = assemblyComplete
+      ? !controls.autoRotate
+      : assembly.isPaused() || !assembly.isPlaying();
     ui.setDebugPaused(paused);
     audioTimeline?.setPaused(paused);
   };
@@ -353,8 +382,13 @@ export function createAssemblySession(
         preserveTarget: assembly.userOwnsCamera(),
       });
     } else if (assemblyComplete || assembly.getProgress() >= 0.999) {
-      startSequence();
-      return;
+      // Finished suit: Space freezes / resumes the showcase orbit.
+      // R still restarts the full assembly sequence.
+      if (controls.autoRotate) {
+        pauseShowcaseSpin();
+      } else {
+        resumeShowcaseSpin();
+      }
     } else {
       // Free-look only if the user claimed orbit; otherwise resume on path.
       const preserveCamera = assembly.userOwnsCamera();
@@ -460,8 +494,10 @@ export function createAssemblySession(
     if (loopFullCycle) return;
     if (!completeSpinActive || !assemblyComplete) return;
 
-    // User drag (or anything else) kills idle spin — stay on finished suit.
-    if (!controls.autoRotate) {
+    // Space pause: freeze accum mid-turn; do not treat as free-look cancel.
+    if (showcaseSpinPaused || !controls.autoRotate) {
+      if (showcaseSpinPaused) return;
+      // User drag (or anything else) kills idle spin — stay on finished suit.
       stopCompleteSpinTracking();
       return;
     }
