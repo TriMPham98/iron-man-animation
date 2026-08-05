@@ -99,6 +99,24 @@ export function audioTimelineOffset(): number {
   return Math.max(0, OPENING_HOLD - AUDIO_SEED_ORIGIN);
 }
 
+/** Base cinematic FOV (matches timeline path). */
+export const BASE_CAM_FOV = 34;
+
+/**
+ * Hangar establish framing at sequence t=0 (wider than hero).
+ * Used by the post-showcase soft restart handoff so the camera eases
+ * into the same pose the timeline opens on.
+ */
+export const OPEN_WIDE_CAM = {
+  x: 2.15,
+  y: 1.55,
+  z: 4.85,
+  lx: 0,
+  ly: 0.88,
+  lz: 0,
+  fov: BASE_CAM_FOV + 3.5,
+} as const;
+
 /**
  * Integrity bar 0–1 from timeline time, paced by pipeline wave starts so the
  * orange fill tracks the dots (wave i active ≈ progress in [i/n, (i+1)/n]).
@@ -355,8 +373,8 @@ export function createAssemblyTimeline(
     return Math.min(0.1, Math.max(0.022, 0.65 / count));
   };
 
-  /** Default cinematic FOV — matches createCamera. */
-  const BASE_FOV = 34;
+  /** Default cinematic FOV — matches createCamera / BASE_CAM_FOV. */
+  const BASE_FOV = BASE_CAM_FOV;
   /** Extreme faceplate ECU — compressed, mask-filling. */
   const FACEPLATE_FOV = 20;
 
@@ -461,15 +479,7 @@ export function createAssemblyTimeline(
     // Opening: wider hangar establish → slow push to ¾ hero, then plates.
     // t=0 must be a timeline.set so later FOV / look-target tweens cannot
     // poison playhead 0 on reverse scrub / replay.
-    const OPEN_WIDE = {
-      x: 2.15,
-      y: 1.55,
-      z: 4.85,
-      lx: 0,
-      ly: 0.88,
-      lz: 0,
-      fov: BASE_FOV + 3.5,
-    };
+    const OPEN_WIDE = { ...OPEN_WIDE_CAM };
     const OPEN_CAM = {
       x: 1.85,
       y: 1.35,

@@ -1,14 +1,21 @@
+import gsap from 'gsap';
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   audioTimelineOffset,
   createAssemblyTimeline,
+  OPEN_WIDE_CAM,
   type AssemblyController,
 } from '../animation/assemblyTimeline';
 import type { Suit } from '../suit/Suit';
 import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
 import { isPieceWave, isSystemsOnlineStatus } from '../ui/jarvisHud';
+
+/** Camera ease from finished-suit orbit → hangar open (seconds). */
+const SHOWCASE_HANDOFF_SEC = 1.05;
+/** When remaining yaw is under this, ease auto-rotate to a stop. */
+const SPIN_EASE_OUT_RAD = 0.55;
 
 const VIEWER_HINT =
   'Drag to orbit · R replay · Space pause · S skip · ←→ scrub';
@@ -93,6 +100,10 @@ export function createAssemblySession(
   let completeSpinLastTheta: number | null = null;
   /** True when Space froze showcase auto-rotate (not a free-look cancel). */
   let showcaseSpinPaused = false;
+  /** GSAP handoff: finished-suit orbit → hangar open before rebuild. */
+  let handoffTween: gsap.core.Tween | null = null;
+  /** Nominal auto-rotate speed (restored after spin ease-out). */
+  const AUTO_ROTATE_SPEED = controls.autoRotateSpeed || 1.0;
   const _spinOffset = new THREE.Vector3();
   const _spinSpherical = new THREE.Spherical();
 
@@ -102,11 +113,18 @@ export function createAssemblySession(
     return _spinSpherical.theta;
   };
 
+  const killHandoff = () => {
+    handoffTween?.kill();
+    handoffTween = null;
+    controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
+  };
+
   const stopCompleteSpinTracking = () => {
     completeSpinActive = false;
     completeSpinAccum = 0;
     completeSpinLastTheta = null;
     showcaseSpinPaused = false;
+    controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
   };
 
   const startCompleteSpinTracking = () => {
@@ -119,6 +137,7 @@ export function createAssemblySession(
     completeSpinAccum = 0;
     completeSpinLastTheta = null;
     showcaseSpinPaused = false;
+    controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
   };
 
   /** Freeze finished-suit orbit in place (Space while complete). */
@@ -333,6 +352,7 @@ export function createAssemblySession(
   };
 
   const finishInstantly = () => {
+    killHandoff();
     clearPick();
     clearCompleteClock();
     assembly.seek(1);
@@ -340,10 +360,14 @@ export function createAssemblySession(
     clockStart = clock.getElapsedTime();
   };
 
-  const startSequence = () => {
+  /**
+   * Core assembly boot: empty pad, rebuild timeline, play from hangar open.
+   * Caller owns camera framing (hard snap via rebuild, or already eased in).
+   */
+  const runAssemblySequence = (opts?: { softProgress?: boolean }) => {
     clearPick();
     clearCompleteClock();
-    ui.resetJarvisChrome();
+    ui.resetJarvisChrome({ softProgress: opts?.softProgress });
 
     if (reducedMotion) {
       finishInstantly();
@@ -366,8 +390,116 @@ export function createAssemblySession(
     clockStart = clock.getElapsedTime();
   };
 
+  /**
+   * After the finished-suit idle 360° (or R from complete): ease camera to
+   * hangar open while the seamless mesh holds, hide it mid-pull, drain the
+   * integrity bar, then start the next assembly without a hard cut.
+   */
+  const softRestartFromShowcase = () => {
+    killHandoff();
+    stopCompleteSpinTracking();
+    controls.autoRotate = false;
+    controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
+    clearPick();
+    // Keep assemblyComplete until handoff ends so Space doesn't re-engage spin
+    assemblyComplete = true;
+    assembly.setUserOwnsCamera(false);
+
+    // JARVIS re-entry + integrity drain while we still show the finished suit.
+    // Do not call setIntegrity/setDebugProgress here — they would cancel the drain.
+    ui.resetJarvisChrome({ softProgress: true });
+    ui.setStatus('STANDBY // HANGAR LOCK');
+    ui.setReplayEnabled(false);
+    ui.setSkipEnabled(true);
+    ui.setHintVisible(false);
+    ui.fadeTitle(false);
+    ui.setSystemsOnline(false);
+    ui.setActiveWave(null);
+    audioStop();
+    syncDebugPauseLabel();
+
+    const proxy = {
+      x: camera.position.x,
+      y: camera.position.y,
+      z: camera.position.z,
+      lx: lookTarget.x,
+      ly: lookTarget.y,
+      lz: lookTarget.z,
+      fov: camera.fov,
+    };
+
+    const applyHandoffCam = () => {
+      camera.position.set(proxy.x, proxy.y, proxy.z);
+      lookTarget.set(proxy.lx, proxy.ly, proxy.lz);
+      controls.target.copy(lookTarget);
+      camera.lookAt(lookTarget);
+      if (Math.abs(camera.fov - proxy.fov) > 1e-4) {
+        camera.fov = proxy.fov;
+        camera.updateProjectionMatrix();
+      }
+    };
+
+    // Orbit would fight the cinematic handoff
+    controls.enabled = false;
+
+    let clearedSuit = false;
+    handoffTween = gsap.to(proxy, {
+      x: OPEN_WIDE_CAM.x,
+      y: OPEN_WIDE_CAM.y,
+      z: OPEN_WIDE_CAM.z,
+      lx: OPEN_WIDE_CAM.lx,
+      ly: OPEN_WIDE_CAM.ly,
+      lz: OPEN_WIDE_CAM.lz,
+      fov: OPEN_WIDE_CAM.fov,
+      duration: SHOWCASE_HANDOFF_SEC,
+      ease: 'power2.inOut',
+      onUpdate: () => {
+        applyHandoffCam();
+        // Mid-pull: empty pad reads better than a pop at the cut
+        if (!clearedSuit && (handoffTween?.progress() ?? 0) >= 0.62) {
+          clearedSuit = true;
+          suit.showAssembly();
+        }
+      },
+      onComplete: () => {
+        handoffTween = null;
+        applyHandoffCam();
+        // Soft UI already applied — skip a second panel flash / drain
+        clearCompleteClock();
+        applyAssemblyUi({ preserveTarget: true });
+        ui.setStatus('STANDBY // HANGAR LOCK');
+        assembly.rebuild();
+        syncAudioDuration();
+        audioStop();
+        assembly.play();
+        audioPlayFromTime(0);
+        audioPlayheadFromTime(0);
+        syncDebugPauseLabel();
+        clockStart = clock.getElapsedTime();
+      },
+    });
+  };
+
+  const startSequence = () => {
+    killHandoff();
+
+    if (reducedMotion) {
+      runAssemblySequence();
+      return;
+    }
+
+    // Soft handoff only when leaving the finished-suit showcase (post-360 / R)
+    if (assemblyComplete) {
+      softRestartFromShowcase();
+      return;
+    }
+
+    runAssemblySequence();
+  };
+
   const skipToEnd = () => {
-    if (assemblyComplete) return;
+    if (assemblyComplete && !handoffTween) return;
+    killHandoff();
     clearPick();
     audioStop();
     assembly.seek(1);
@@ -375,6 +507,12 @@ export function createAssemblySession(
   };
 
   const togglePause = () => {
+    // Mid handoff: treat Space as cancel → stay on open pad and start assembly
+    if (handoffTween) {
+      killHandoff();
+      runAssemblySequence({ softProgress: false });
+      return;
+    }
     if (assembly.isPlaying()) {
       assembly.pause();
       audioStop();
@@ -408,6 +546,7 @@ export function createAssemblySession(
 
   /** Seek visual integrity progress 0–1 (wave-paced; includes hangar hold at 0%). */
   const seek = (p: number) => {
+    killHandoff();
     // Scrub invalidates overlay parents / visibility — drop selection
     clearPick();
     // Timeline scrub always re-attaches to the cinematic camera. Orbiting
@@ -433,6 +572,7 @@ export function createAssemblySession(
    * Seek by absolute GSAP time (integrity % is wave-paced, not linear time).
    */
   const seekFromAudioProgress = (audioProgress01: number) => {
+    killHandoff();
     const audioT = Math.max(0, Math.min(1, audioProgress01)) * audioDuration();
     const gsapT = fromAudioSec(audioT);
     clearPick();
@@ -494,11 +634,12 @@ export function createAssemblySession(
 
   /**
    * Call each frame after controls.update(). Accumulates yaw while the
-   * finished suit auto-rotates; after a full turn, replays the assembly.
+   * finished suit auto-rotates; after a full turn, soft-restarts assembly.
    * (Disabled while AUDIO LOOP is on — that path restarts on onComplete.)
    */
   const update = () => {
     if (loopFullCycle) return;
+    if (handoffTween) return;
     if (!completeSpinActive || !assemblyComplete) return;
 
     // Space pause: freeze accum mid-turn; do not treat as free-look cancel.
@@ -522,9 +663,20 @@ export function createAssemblySession(
     completeSpinLastTheta = theta;
     completeSpinAccum += Math.abs(dTheta);
 
+    // Ease auto-rotate down as the turn completes so the handoff doesn’t cut
+    const remaining = Math.PI * 2 - completeSpinAccum;
+    if (remaining < SPIN_EASE_OUT_RAD && remaining > 0) {
+      const t = remaining / SPIN_EASE_OUT_RAD;
+      // Smoothstep ease-out of spin rate
+      const ease = t * t * (3 - 2 * t);
+      controls.autoRotateSpeed = AUTO_ROTATE_SPEED * Math.max(0.12, ease);
+    } else {
+      controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
+    }
+
     if (completeSpinAccum >= Math.PI * 2 - 1e-3) {
       stopCompleteSpinTracking();
-      startSequence();
+      softRestartFromShowcase();
     }
   };
 

@@ -76,8 +76,9 @@ export interface OverlayHandles {
   /**
    * JARVIS: reset state and show the top-bar briefing for a new assembly run.
    * Replaces the old title/status/INT loading strip while visible.
+   * @param opts.softProgress Ease the integrity fill 100%→0% (post-showcase restart).
    */
-  resetJarvisChrome: () => void;
+  resetJarvisChrome: (opts?: { softProgress?: boolean }) => void;
 }
 
 export interface DebugPickedPiece {
@@ -232,20 +233,39 @@ export function createOverlay(): OverlayHandles {
     }
   };
 
-  const resetJarvisChrome = () => {
+  const resetJarvisChrome = (opts?: { softProgress?: boolean }) => {
     window.clearTimeout(dismissTimer);
+    const prevProgress = lastProgress;
+    const soft =
+      !!opts?.softProgress &&
+      prevProgress > 0.02 &&
+      !reducedMotion();
+
     activeWave = null;
     systemsOnline = false;
-    lastProgress = 0;
     lastStatus = '';
     document.body.classList.remove('systems-online');
     hudFrame.classList.remove('is-online-flash');
     status.textContent = 'STAND BY';
     status.classList.remove('online', 'is-updating');
+    // Drop cyan complete styling before the fill eases back to gold
+    progressBar.classList.remove('is-complete');
+    jarvisPanel?.classList.remove('is-complete');
     syncPipeline();
     applyLamps(0, false);
-    setProgressVisual(0);
-    showJarvisPanel();
+
+    // Show panel first so a soft drain is visible on re-entry
+    if (soft) {
+      progressFill.style.width = `${(prevProgress * 100).toFixed(3)}%`;
+      lastProgress = prevProgress;
+      if (jarvisInt) jarvisInt.textContent = `${Math.round(prevProgress * 100)}%`;
+      showJarvisPanel();
+      void progressFill.offsetWidth;
+      setProgressVisual(0, { drain: true });
+    } else {
+      setProgressVisual(0);
+      showJarvisPanel();
+    }
   };
 
   // ── Reclass panel state ────────────────────────────────────────
@@ -438,11 +458,34 @@ export function createOverlay(): OverlayHandles {
 
   applyDirectorChrome();
 
-  const setProgressVisual = (p: number) => {
+  let drainClearTimer = 0;
+
+  const clearProgressDrain = () => {
+    window.clearTimeout(drainClearTimer);
+    progressFill.classList.remove('is-draining');
+  };
+
+  /**
+   * @param p Integrity 0–1
+   * @param opts.drain Temporarily ease width (restart handoff only)
+   */
+  const setProgressVisual = (p: number, opts?: { drain?: boolean }) => {
     const clamped = Math.min(1, Math.max(0, p));
     const pct = Math.round(clamped * 100);
+    // Continuous width so wave-paced fills don’t stair-step on whole percents
+    const widthPct = `${(clamped * 100).toFixed(3)}%`;
+
+    if (opts?.drain && !reducedMotion()) {
+      progressFill.classList.add('is-draining');
+      window.clearTimeout(drainClearTimer);
+      drainClearTimer = window.setTimeout(clearProgressDrain, 900);
+    } else if (!opts?.drain) {
+      // Live assembly updates must not inherit the drain ease
+      clearProgressDrain();
+    }
+
     lastProgress = clamped;
-    progressFill.style.width = `${pct}%`;
+    progressFill.style.width = widthPct;
     progressBar.setAttribute('aria-valuenow', String(pct));
     progressBar.classList.toggle('is-complete', clamped >= 0.999);
     if (jarvisInt) jarvisInt.textContent = `${pct}%`;

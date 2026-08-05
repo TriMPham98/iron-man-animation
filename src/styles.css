@@ -675,9 +675,17 @@ body.systems-online .hud-frame.is-booted .hud-corner {
     var(--gold-bright)
   );
   box-shadow: 0 0 8px rgba(232, 197, 71, 0.3);
-  /* Width is wave-paced each frame; color can ease into complete cyan */
+  /* Live updates stay snappy (wave-paced); drain class eases 100%→0 on restart */
   transition: background 0.4s ease, box-shadow 0.4s ease;
   position: relative;
+}
+
+/* Soft integrity reset after showcase / replay — not used while assembly runs */
+.jarvis-progress-fill.is-draining {
+  transition:
+    width 0.85s cubic-bezier(0.4, 0, 0.2, 1),
+    background 0.55s ease,
+    box-shadow 0.55s ease;
 }
 
 .jarvis-progress.is-complete,
@@ -1997,7 +2005,9 @@ body.director-mode .audio-timeline:not(.hidden) {
   #loading,
   .reclass-panel,
   .audio-timeline,
-  .jarvis-panel {
+  .jarvis-panel,
+  .jarvis-progress-fill,
+  .jarvis-progress-fill.is-draining {
     transition: none !important;
   }
 }
