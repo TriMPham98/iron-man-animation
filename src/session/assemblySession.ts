@@ -12,10 +12,14 @@ import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
 import { isPieceWave, isSystemsOnlineStatus } from '../ui/jarvisHud';
 
-/** Camera ease from finished-suit orbit → hangar open (seconds). */
-const SHOWCASE_HANDOFF_SEC = 1.05;
 /** When remaining yaw is under this, ease auto-rotate to a stop. */
 const SPIN_EASE_OUT_RAD = 0.55;
+/** Plates burst outward (reverse cascade) duration. */
+const HANDOFF_EXPLODE_SEC = 0.78;
+/** Camera pull to hangar open (overlaps the explosion). */
+const HANDOFF_CAM_SEC = 0.95;
+/** Delay before the camera starts so the burst can read first. */
+const HANDOFF_CAM_DELAY = 0.18;
 
 const VIEWER_HINT =
   'Drag to orbit · R replay · Space pause · S skip · ←→ scrub';
@@ -100,8 +104,8 @@ export function createAssemblySession(
   let completeSpinLastTheta: number | null = null;
   /** True when Space froze showcase auto-rotate (not a free-look cancel). */
   let showcaseSpinPaused = false;
-  /** GSAP handoff: finished-suit orbit → hangar open before rebuild. */
-  let handoffTween: gsap.core.Tween | null = null;
+  /** GSAP handoff: dematerialize + hangar pull before rebuild. */
+  let handoffTween: gsap.core.Timeline | null = null;
   /** Nominal auto-rotate speed (restored after spin ease-out). */
   const AUTO_ROTATE_SPEED = controls.autoRotateSpeed || 1.0;
   const _spinOffset = new THREE.Vector3();
@@ -391,9 +395,10 @@ export function createAssemblySession(
   };
 
   /**
-   * After the finished-suit idle 360° (or R from complete): ease camera to
-   * hangar open while the seamless mesh holds, hide it mid-pull, drain the
-   * integrity bar, then start the next assembly without a hard cut.
+   * After the finished-suit idle 360° (or R from complete):
+   * 1) Plates explode outward (reverse cascade — helmet first)
+   * 2) Pull camera to hangar open over the empty pad
+   * 3) Drain integrity + restart assembly
    */
   const softRestartFromShowcase = () => {
     killHandoff();
@@ -405,7 +410,7 @@ export function createAssemblySession(
     assemblyComplete = true;
     assembly.setUserOwnsCamera(false);
 
-    // JARVIS re-entry + integrity drain while we still show the finished suit.
+    // JARVIS re-entry + integrity drain while plates are bursting clear.
     // Do not call setIntegrity/setDebugProgress here — they would cancel the drain.
     ui.resetJarvisChrome({ softProgress: true });
     ui.setStatus('STANDBY // HANGAR LOCK');
@@ -417,6 +422,9 @@ export function createAssemblySession(
     ui.setActiveWave(null);
     audioStop();
     syncDebugPauseLabel();
+
+    // Seamless → seated shards for the reverse burst
+    suit.armExplosionFromFinal();
 
     const proxy = {
       x: camera.position.x,
@@ -442,28 +450,12 @@ export function createAssemblySession(
     // Orbit would fight the cinematic handoff
     controls.enabled = false;
 
-    let clearedSuit = false;
-    handoffTween = gsap.to(proxy, {
-      x: OPEN_WIDE_CAM.x,
-      y: OPEN_WIDE_CAM.y,
-      z: OPEN_WIDE_CAM.z,
-      lx: OPEN_WIDE_CAM.lx,
-      ly: OPEN_WIDE_CAM.ly,
-      lz: OPEN_WIDE_CAM.lz,
-      fov: OPEN_WIDE_CAM.fov,
-      duration: SHOWCASE_HANDOFF_SEC,
-      ease: 'power2.inOut',
-      onUpdate: () => {
-        applyHandoffCam();
-        // Mid-pull: empty pad reads better than a pop at the cut
-        if (!clearedSuit && (handoffTween?.progress() ?? 0) >= 0.62) {
-          clearedSuit = true;
-          suit.showAssembly();
-        }
-      },
+    const explode = { t: 0 };
+    handoffTween = gsap.timeline({
       onComplete: () => {
         handoffTween = null;
         applyHandoffCam();
+        suit.showAssembly();
         // Soft UI already applied — skip a second panel flash / drain
         clearCompleteClock();
         applyAssemblyUi({ preserveTarget: true });
@@ -478,6 +470,38 @@ export function createAssemblySession(
         clockStart = clock.getElapsedTime();
       },
     });
+
+    // 1) Reverse cascade burst — plates fly past scatter starts + radial kick
+    handoffTween.to(
+      explode,
+      {
+        t: 1,
+        duration: HANDOFF_EXPLODE_SEC,
+        ease: 'power2.out',
+        onUpdate: () => {
+          suit.setExplosionProgress(explode.t);
+        },
+      },
+      0,
+    );
+
+    // 2) Hangar pull while debris clears — empty pad for the next suit-up
+    handoffTween.to(
+      proxy,
+      {
+        x: OPEN_WIDE_CAM.x,
+        y: OPEN_WIDE_CAM.y,
+        z: OPEN_WIDE_CAM.z,
+        lx: OPEN_WIDE_CAM.lx,
+        ly: OPEN_WIDE_CAM.ly,
+        lz: OPEN_WIDE_CAM.lz,
+        fov: OPEN_WIDE_CAM.fov,
+        duration: HANDOFF_CAM_SEC,
+        ease: 'power2.inOut',
+        onUpdate: applyHandoffCam,
+      },
+      HANDOFF_CAM_DELAY,
+    );
   };
 
   const startSequence = () => {
