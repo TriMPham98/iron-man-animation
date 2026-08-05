@@ -382,18 +382,24 @@ export function createAssemblySession(
       setOrbitMode('free', {
         preserveTarget: assembly.userOwnsCamera(),
       });
-    } else if (assemblyComplete || assembly.getProgress() >= 0.999) {
-      // Finished suit: Space freezes / resumes the showcase orbit.
-      // R still restarts the full assembly sequence.
+    } else if (assemblyComplete) {
+      // True complete only (after camera tail / skip). Integrity can hit 100%
+      // while the hero pullback still runs — that window must resume GSAP,
+      // not toggle showcase spin (Space would otherwise strand the timeline).
       if (controls.autoRotate) {
         pauseShowcaseSpin();
       } else {
         resumeShowcaseSpin();
       }
     } else {
-      // Free-look only if the user claimed orbit; otherwise resume on path.
+      // Mid-assembly or post-systems-online camera tail: resume the path.
+      // Free-look only if the user claimed orbit; otherwise re-attach.
       const preserveCamera = assembly.userOwnsCamera();
-      applyAssemblyUi({ preserveTarget: preserveCamera });
+      // Don't wipe complete chrome mid-tail — only re-apply free orbit mode
+      // when we are still in the active assembly UI state.
+      if (!assemblyComplete) {
+        setOrbitMode('free', { preserveTarget: preserveCamera });
+      }
       assembly.resume({ preserveCamera });
       audioPlayFromTime();
     }
