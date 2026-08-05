@@ -146,6 +146,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
   const LOOP_STORAGE_KEY = 'mark-suit-audio-loop';
   const SNAP_STORAGE_KEY = 'mark-suit-audio-snap';
+  const MUTE_STORAGE_KEY = 'mark-suit-audio-mute';
 
   const engine = createAudioEngine();
   /**
@@ -153,6 +154,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
    * - First visit: seed → write snapshot (including empty).
    * - Every edit (add / move / crop / delete / clear): full list rewrite.
    * - Refresh: load snapshot only — never re-seed over user deletes.
+   * - Loop / snap / mute toolbar toggles also persist across reloads.
    */
   let clips: TimelineClip[] = initTimelineClips(
     (choreSeed as { clips?: unknown }).clips,
@@ -167,6 +169,11 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   /** Dynamic row height — sized so ~VISIBLE_LANES fill the track pane. */
   let laneH = LANE_H_MIN;
   let muted = false;
+  try {
+    muted = window.localStorage.getItem(MUTE_STORAGE_KEY) === '1';
+  } catch {
+    muted = false;
+  }
   let loopEnabled = false;
   try {
     loopEnabled = window.localStorage.getItem(LOOP_STORAGE_KEY) === '1';
@@ -1207,12 +1214,25 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     loopChangeHandler?.(loopEnabled);
   });
 
-  btnMute.addEventListener('click', () => {
-    muted = !muted;
+  const applyMuteVisual = () => {
     engine.setMuted(muted);
     btnMute.classList.toggle('is-muted', muted);
     btnMute.textContent = muted ? 'UNMUTE' : 'MUTE';
     btnMute.setAttribute('aria-pressed', muted ? 'true' : 'false');
+    btnMute.title = muted
+      ? 'Muted — click to restore assembly SFX'
+      : 'Mute assembly SFX';
+  };
+  applyMuteVisual();
+
+  btnMute.addEventListener('click', () => {
+    muted = !muted;
+    try {
+      window.localStorage.setItem(MUTE_STORAGE_KEY, muted ? '1' : '0');
+    } catch {
+      /* private mode */
+    }
+    applyMuteVisual();
     // Muting stops every voice and the engine refuses to start new ones, so
     // unmuting has to rebuild the schedule — otherwise the transport stays
     // silent until the next seek or replay.
