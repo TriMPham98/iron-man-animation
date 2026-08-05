@@ -12,8 +12,8 @@ import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
 import { isPieceWave, isSystemsOnlineStatus } from '../ui/jarvisHud';
 
-/** When remaining yaw is under this, ease auto-rotate to a stop. */
-const SPIN_EASE_OUT_RAD = 0.55;
+/** When remaining yaw is under this, ease auto-rotate to a stop (≈ half prior). */
+const SPIN_EASE_OUT_RAD = 0.275;
 /** Plates burst outward (reverse cascade) — slow, linear flight (no ease-out coast). */
 const HANDOFF_EXPLODE_SEC = 3.12;
 /** Hangar pull (final ease) — snappy; ends with the last plates. */
