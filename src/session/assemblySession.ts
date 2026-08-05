@@ -14,12 +14,12 @@ import { isPieceWave, isSystemsOnlineStatus } from '../ui/jarvisHud';
 
 /** When remaining yaw is under this, ease auto-rotate to a stop. */
 const SPIN_EASE_OUT_RAD = 0.55;
-/** Plates burst outward (reverse cascade) duration. */
-const HANDOFF_EXPLODE_SEC = 0.78;
-/** Camera pull to hangar open (overlaps the explosion). */
-const HANDOFF_CAM_SEC = 0.95;
-/** Delay before the camera starts so the burst can read first. */
-const HANDOFF_CAM_DELAY = 0.18;
+/** Plates burst outward (reverse cascade) — slow, linear flight (no ease-out coast). */
+const HANDOFF_EXPLODE_SEC = 3.12;
+/** Hangar pull (final ease) — snappy; ends with the last plates. */
+const HANDOFF_CAM_SEC = 0.6;
+/** Pull while debris is still in flight so empty-pad time is near zero. */
+const HANDOFF_CAM_DELAY = HANDOFF_EXPLODE_SEC - HANDOFF_CAM_SEC;
 
 const VIEWER_HINT =
   'Drag to orbit · R replay · Space pause · S skip · ←→ scrub';
@@ -471,13 +471,14 @@ export function createAssemblySession(
       },
     });
 
-    // 1) Reverse cascade burst — plates fly past scatter starts + radial kick
+    // 1) Linear burst — ease-out used to empty the pad early, then sit dead
+    //    until t=end. Linear keeps plates in flight for the full duration.
     handoffTween.to(
       explode,
       {
         t: 1,
         duration: HANDOFF_EXPLODE_SEC,
-        ease: 'power2.out',
+        ease: 'none',
         onUpdate: () => {
           suit.setExplosionProgress(explode.t);
         },
@@ -485,7 +486,7 @@ export function createAssemblySession(
       0,
     );
 
-    // 2) Hangar pull while debris clears — empty pad for the next suit-up
+    // 2) Hangar pull ends with the last plates → next cycle starts immediately
     handoffTween.to(
       proxy,
       {

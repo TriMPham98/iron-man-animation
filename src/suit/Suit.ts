@@ -140,12 +140,12 @@ export class Suit {
       // Helmet / face peel first; boots last — reverse of suit-up cascade
       const waveRank =
         wi < 0 ? 0.5 : (waveCount - 1 - wi) / Math.max(1, waveCount - 1);
-      // Small per-plate jitter so it doesn't look like rigid shells
-      const delay = waveRank * 0.22 + seed * 0.08;
+      // Tight stagger — peel reads, but pad does not empty early mid-burst
+      const delay = waveRank * 0.12 + seed * 0.05;
       const span = Math.max(1e-3, 1 - delay);
       const local = THREE.MathUtils.clamp((u - delay) / span, 0, 1);
-      // Ease-out burst: fast leave, coast clear
-      const e = 1 - (1 - local) * (1 - local) * (1 - local);
+      // Mild ease-out only (heavy cubic + master ease-out cleared the pad early)
+      const e = 1 - (1 - local) * (1 - local);
 
       this.explodeTargetFor(p, seed, this._explodeEnd);
 
@@ -164,8 +164,8 @@ export class Suit {
         p.restRotation.z + spin * 0.7,
       );
 
-      // Hide when nearly gone so bloom doesn't keep ghosting dots
-      p.mesh.visible = local < 0.98;
+      // Stay visible until nearly at the end of travel
+      p.mesh.visible = e < 0.97;
     }
 
     // Systems blackout early in the burst
