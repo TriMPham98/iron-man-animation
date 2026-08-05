@@ -397,12 +397,6 @@ body.systems-online .hud-frame.is-booted .hud-corner {
 
 .hud-clock {
   font-variant-numeric: tabular-nums;
-  transition: color 0.25s ease, text-shadow 0.25s ease;
-}
-
-.hud-clock.is-tick {
-  color: var(--gold-bright);
-  text-shadow: 0 0 10px rgba(232, 197, 71, 0.4);
 }
 
 .director-btn {

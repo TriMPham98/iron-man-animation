@@ -128,8 +128,6 @@ export function createOverlay(): OverlayHandles {
   let directorMode = readDirectorPreference();
   let lastStatus = '';
   let statusFlashTimer = 0;
-  let clockTickTimer = 0;
-  let lastClockWhole = -1;
   let hudBooted = false;
 
   let activeWave: PieceWave | null = null;
@@ -567,16 +565,8 @@ export function createOverlay(): OverlayHandles {
       const s = elapsedSec % 60;
       const whole = Math.floor(s);
       const frac = Math.floor((s - whole) * 100);
+      // Steady readout — no per-second gold flash
       clock.textContent = `${String(m).padStart(2, '0')}:${String(whole).padStart(2, '0')}.${String(frac).padStart(2, '0')}`;
-      // Soft gold tick once per whole second
-      if (whole !== lastClockWhole) {
-        lastClockWhole = whole;
-        clock.classList.add('is-tick');
-        window.clearTimeout(clockTickTimer);
-        clockTickTimer = window.setTimeout(() => {
-          clock.classList.remove('is-tick');
-        }, 120);
-      }
     },
     fadeTitle: (_hide: boolean) => {
       /* Title removed — JARVIS owns the top-center assembly brief */

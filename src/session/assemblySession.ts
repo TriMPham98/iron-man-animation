@@ -86,11 +86,12 @@ export function createAssemblySession(
    */
   let loopFullCycle = false;
   /**
-   * Wall-clock time when we entered complete (progress ≥ 1).
-   * HUD shows assemblyDuration + (now − completeAnchor) so the timer
-   * keeps running through the finished-suit showcase.
+   * Wall-clock stamp when we enter true complete (camera tail done / skip).
+   * HUD continues from {@link completeBaseElapsed} through the showcase spin.
    */
   let completeAnchor: number | null = null;
+  /** GSAP time (sec) frozen at the moment we entered complete. */
+  let completeBaseElapsed = 0;
 
   /**
    * After assembly finishes, OrbitControls auto-rotates the finished suit.
@@ -247,22 +248,29 @@ export function createAssemblySession(
     // does not zero the post-duration counter.
     if (completeAnchor == null) {
       completeAnchor = clock.getElapsedTime();
+      // Prefer live GSAP time so the camera-tail seconds already counted
+      // are kept (do not snap back to integrity-only assemblyDuration).
+      completeBaseElapsed = Math.max(assembly.getTime(), assembly.getDuration());
     }
   };
 
   const clearCompleteClock = () => {
     completeAnchor = null;
+    completeBaseElapsed = 0;
   };
 
   const getHudElapsed = (): number => {
-    const dur = assembly.getDuration();
-    // Clock uses raw GSAP time — integrity progress is wave-paced, not linear.
-    if (assemblyComplete || assembly.getProgress() >= 0.999) {
-      const base = Math.max(dur, 0);
-      const anchor = completeAnchor ?? clock.getElapsedTime();
-      return base + Math.max(0, clock.getElapsedTime() - anchor);
+    // After true complete, keep counting on wall clock through the showcase.
+    if (assemblyComplete && completeAnchor != null) {
+      return (
+        completeBaseElapsed +
+        Math.max(0, clock.getElapsedTime() - completeAnchor)
+      );
     }
-    return Math.max(0, Math.min(assembly.getTime(), Math.max(dur, 0)));
+    // Live GSAP time through hangar hold, cascade, *and* post–systems-online
+    // camera tail. Do not freeze at integrity 100% / assemblyDuration — that
+    // used to stall the HUD for the whole hero pullback.
+    return Math.max(0, assembly.getTime());
   };
 
   const applyCompleteUi = (opts?: { preserveCamera?: boolean }) => {
