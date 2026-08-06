@@ -172,6 +172,11 @@ async function boot(): Promise<void> {
 
   // Hangar idle until the user initiates (JARVIS cyan CTA).
   // Space / Enter / R / click all fire once; later loops use auto-replay.
+  // Unlock audio in the gesture turn — assembly start is delayed for the
+  // orb exit, and browsers drop autoplay permission across setTimeout.
+  ui.onStartGesture(() => {
+    void audioTimeline.engine.unlock();
+  });
   ui.onStart(() => {
     session.setClockStart(clock.getElapsedTime());
     session.startSequence();

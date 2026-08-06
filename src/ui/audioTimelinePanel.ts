@@ -149,15 +149,21 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const MUTE_STORAGE_KEY = 'mark-suit-audio-mute';
 
   const engine = createAudioEngine();
+  const seedChoreVersion =
+    typeof (choreSeed as { choreVersion?: unknown }).choreVersion === 'number'
+      ? (choreSeed as { choreVersion: number }).choreVersion
+      : undefined;
+
   /**
-   * Persistence (localStorage):
-   * - First visit: seed → write snapshot (including empty).
-   * - Every edit (add / move / crop / delete / clear): full list rewrite.
-   * - Refresh: load snapshot only — never re-seed over user deletes.
+   * Persistence (localStorage), source of truth for transport:
+   * - Seed from repo is written on first visit / when choreVersion advances.
+   * - Director edits rewrite storage; Vercel ships the committed seed so
+   *   production matches the authoring mix once the seed is updated.
    * - Loop / snap / mute toolbar toggles also persist across reloads.
    */
   let clips: TimelineClip[] = initTimelineClips(
     (choreSeed as { clips?: unknown }).clips,
+    seedChoreVersion,
   );
 
   let selectedId: string | null = null;
@@ -1390,6 +1396,9 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     // so clip delays stay authored against original plate times.
     playingFrom = sec;
 
+    // Ensure autoplay is unlocked (INITIATE gesture may have already done this)
+    void engine.unlock();
+
     for (const c of clips) {
       const dur = clipDuration(c);
       const end = c.start + dur;
@@ -1440,6 +1449,14 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   renderRuler();
   renderClips();
   renderMeta();
+
+  // Preload cue files so cold Vercel deploys don't miss the first hits
+  const preloaded = new Set<string>();
+  for (const c of clips) {
+    if (preloaded.has(c.file)) continue;
+    preloaded.add(c.file);
+    engine.preload(c.file);
+  }
 
   return {
     setVisible: (v: boolean) => {

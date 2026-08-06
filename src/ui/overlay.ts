@@ -83,8 +83,16 @@ export interface OverlayHandles {
   showStartGate: () => void;
   hideStartGate: () => void;
   isStartGateVisible: () => boolean;
-  /** Fired once when the user initiates via button, Enter, Space, or R. */
+  /**
+   * Fired once when the user initiates via button, Enter, Space, or R.
+   * May run after a short exit-animation delay.
+   */
   onStart: (cb: () => void) => void;
+  /**
+   * Fired synchronously on the INITIATE gesture (before exit delay).
+   * Use for audio autoplay unlock — setTimeout loses user activation.
+   */
+  onStartGesture: (cb: () => void) => void;
 }
 
 export interface DebugPickedPiece {
@@ -141,6 +149,7 @@ export function createOverlay(): OverlayHandles {
   let lastProgressPct = -1;
   let startGateVisible = false;
   let startHandler: (() => void) | null = null;
+  let startGestureHandler: (() => void) | null = null;
   let startConsumed = false;
 
   let activeWave: PieceWave | null = null;
@@ -511,6 +520,9 @@ export function createOverlay(): OverlayHandles {
     startConsumed = true;
     startGateVisible = false;
 
+    // Must run in the gesture turn (autoplay unlock, etc.)
+    startGestureHandler?.();
+
     const runAssembly = () => {
       startHandler?.();
     };
@@ -530,7 +542,7 @@ export function createOverlay(): OverlayHandles {
     void startGate.offsetWidth;
     startGate.classList.add('is-exiting');
 
-    // Assembly + JARVIS panel enter while the orb is still flying up
+    // Assembly + JARVIS panel enter mid continuous shrink
     window.clearTimeout(startAssemblyTimer);
     startAssemblyTimer = window.setTimeout(runAssembly, START_ASSEMBLY_AT_MS);
 
@@ -737,6 +749,9 @@ export function createOverlay(): OverlayHandles {
     isStartGateVisible: () => startGateVisible,
     onStart: (cb: () => void) => {
       startHandler = cb;
+    },
+    onStartGesture: (cb: () => void) => {
+      startGestureHandler = cb;
     },
   };
 }

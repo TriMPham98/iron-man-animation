@@ -44,10 +44,26 @@ function resolveSrc(file: string): string {
     file.startsWith('data:') ||
     file.startsWith('/')
   ) {
+    // Root-relative paths still go through soundUrl when they are /sounds/…
+    // so BASE_URL deploys work. Absolute http(s)/blob/data stay as-is.
+    if (file.startsWith('/') && !file.startsWith('//')) {
+      const base =
+        typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL
+          ? String(import.meta.env.BASE_URL)
+          : '/';
+      if (base !== '/' && !file.startsWith(base)) {
+        const root = base.endsWith('/') ? base.slice(0, -1) : base;
+        return `${root}${file}`;
+      }
+    }
     return file;
   }
   return soundUrl(file);
 }
+
+/** Minimal silent WAV — used to unlock autoplay on a user gesture. */
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 
 type ActiveVoice = {
   id: string;
@@ -69,6 +85,8 @@ export function createAudioEngine() {
   const active = new Map<string, ActiveVoice>();
   let muted = false;
   let masterVolume = 1;
+  let unlocked = false;
+  let unlockInFlight: Promise<void> | null = null;
 
   const applyVoiceVolume = (voice: ActiveVoice) => {
     voice.audio.volume = Math.min(
@@ -99,6 +117,67 @@ export function createAudioEngine() {
     for (const v of [...active.values()]) stopVoice(v);
   };
 
+  /**
+   * Call from a user gesture (INITIATE click, keydown, pointerdown).
+   * Production browsers block HTMLAudioElement.play() until the origin
+   * has media engagement; delayed setTimeout starts lose the gesture
+   * unless we unlock first.
+   */
+  const unlock = (): Promise<void> => {
+    if (unlocked) return Promise.resolve();
+    if (unlockInFlight) return unlockInFlight;
+
+    unlockInFlight = (async () => {
+      try {
+        const a = new Audio(SILENT_WAV);
+        a.preload = 'auto';
+        a.volume = 0;
+        // play() must be invoked in the gesture turn; await can settle later
+        const p = a.play();
+        if (p) await p;
+        a.pause();
+        a.removeAttribute('src');
+        a.load();
+        unlocked = true;
+      } catch {
+        // Still mark unlocked so we don't spin forever; later plays may work
+        // after a second gesture.
+        unlocked = true;
+      } finally {
+        unlockInFlight = null;
+      }
+    })();
+
+    return unlockInFlight;
+  };
+
+  /** Best-effort warm so first cues aren't racing the network on cold deploys. */
+  const preload = (file: string): void => {
+    try {
+      const a = new Audio();
+      a.preload = 'auto';
+      a.src = resolveSrc(file);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // Capture any early interaction so late-scheduled SFX still play on Vercel.
+  if (typeof window !== 'undefined') {
+    const onGesture = () => {
+      void unlock();
+    };
+    window.addEventListener('pointerdown', onGesture, {
+      capture: true,
+      passive: true,
+      once: true,
+    });
+    window.addEventListener('keydown', onGesture, {
+      capture: true,
+      once: true,
+    });
+  }
+
   const play = (req: PlayRequest): void => {
     if (muted) return;
     // `duration` is media/source seconds to consume from offset
@@ -117,8 +196,9 @@ export function createAudioEngine() {
     // Wall-clock length of this voice (pitch speeds up / slows media time)
     const wallDur = mediaDur / pitch;
 
-    const audio = new Audio(resolveSrc(req.file));
+    const audio = new Audio();
     audio.preload = 'auto';
+    audio.src = resolveSrc(req.file);
     audio.playbackRate = pitch;
     // Keep pitch shift when browser would otherwise preserve pitch on rate change
     try {
@@ -173,34 +253,56 @@ export function createAudioEngine() {
 
     const startAt = Math.max(0, req.offset);
 
-    const begin = () => {
+    const applySeek = () => {
       try {
         audio.playbackRate = pitch;
         if (Number.isFinite(startAt) && startAt > 0) {
-          audio.currentTime = startAt;
+          const cap = Number.isFinite(audio.duration)
+            ? audio.duration
+            : Infinity;
+          if (startAt < cap) audio.currentTime = startAt;
         }
       } catch {
-        /* seek may fail until canplay; retry below */
-      }
-
-      const p = audio.play();
-      if (p) {
-        void p.catch(() => {
-          const v = active.get(req.id);
-          if (v) stopVoice(v);
-        });
+        /* seek may fail until canplay */
       }
     };
 
-    const onMeta = () => {
-      try {
-        audio.playbackRate = pitch;
-        if (startAt > 0 && startAt < (audio.duration || Infinity)) {
-          audio.currentTime = startAt;
+    const failVoice = () => {
+      const v = active.get(req.id);
+      if (v) stopVoice(v);
+    };
+
+    const tryPlay = (attempt: number) => {
+      if (!active.has(req.id)) return;
+      applySeek();
+      const p = audio.play();
+      if (!p) return;
+      void p.catch((err: unknown) => {
+        if (!active.has(req.id)) return;
+        const name =
+          err && typeof err === 'object' && 'name' in err
+            ? String((err as { name?: string }).name)
+            : '';
+        // Autoplay still blocked — one unlock retry (helps if gesture was late)
+        if (attempt < 1 && (name === 'NotAllowedError' || !unlocked)) {
+          void unlock().then(() => tryPlay(attempt + 1));
+          return;
         }
-      } catch {
-        /* ignore */
-      }
+        // Not ready yet — wait for data then retry once
+        if (attempt < 2 && audio.readyState < 2) {
+          audio.addEventListener(
+            'canplay',
+            () => tryPlay(attempt + 1),
+            { once: true },
+          );
+          return;
+        }
+        failVoice();
+      });
+    };
+
+    const onMeta = () => {
+      applySeek();
     };
 
     audio.addEventListener('loadedmetadata', onMeta, { once: true });
@@ -212,6 +314,13 @@ export function createAudioEngine() {
       },
       { once: true },
     );
+    audio.addEventListener(
+      'error',
+      () => {
+        failVoice();
+      },
+      { once: true },
+    );
 
     voice.stopTimer = window.setTimeout(() => {
       const v = active.get(req.id);
@@ -219,7 +328,23 @@ export function createAudioEngine() {
     }, wallDur * 1000 + 30);
 
     active.set(req.id, voice);
-    begin();
+
+    // Prefer canplay when seeking into the file so currentTime sticks
+    if (startAt > 0.01 && audio.readyState < 1) {
+      audio.addEventListener(
+        'loadedmetadata',
+        () => tryPlay(0),
+        { once: true },
+      );
+      // Also kick load explicitly for cold CDN hits
+      try {
+        audio.load();
+      } catch {
+        /* ignore */
+      }
+    } else {
+      tryPlay(0);
+    }
   };
 
   /** Probe source duration via a temporary Audio element. */
@@ -253,6 +378,9 @@ export function createAudioEngine() {
   return {
     play,
     stop,
+    unlock,
+    preload,
+    isUnlocked: () => unlocked,
     setMuted: (m: boolean) => {
       muted = m;
       if (m) stop();

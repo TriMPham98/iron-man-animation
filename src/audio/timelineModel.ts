@@ -43,6 +43,12 @@ export const PITCH_MAX = 2;
 export type TimelineSnapshot = {
   version: 1;
   clips: TimelineClip[];
+  /**
+   * Bundled seed generation this snapshot was based on.
+   * Bump `choreVersion` in choreTimeline.seed.json when promoting a new
+   * local mix so Vercel (and other origins) pick it up instead of stale saves.
+   */
+  choreVersion?: number;
   /** Wall-clock ms when this snapshot was written (debug / multi-tab). */
   updatedAt?: number;
 };
@@ -403,6 +409,13 @@ export function loadTimeline(): TimelineClip[] {
   }
 }
 
+/** Active seed generation stamped into saves (module-level, set by init). */
+let activeChoreVersion: number | undefined;
+
+export function getActiveChoreVersion(): number | undefined {
+  return activeChoreVersion;
+}
+
 /**
  * Persist the full clip list (adds, moves, crops, deletes, clear).
  * Empty arrays are saved intentionally so deletes survive reload.
@@ -422,6 +435,9 @@ export function saveTimeline(clips: TimelineClip[]): boolean {
     const snap: TimelineSnapshot = {
       version: 1,
       clips: persistable,
+      ...(activeChoreVersion != null
+        ? { choreVersion: activeChoreVersion }
+        : {}),
       updatedAt: Date.now(),
     };
     const payload = JSON.stringify(snap);
@@ -440,15 +456,8 @@ export function saveTimeline(clips: TimelineClip[]): boolean {
   }
 }
 
-/**
- * Load saved clips, or seed once when nothing has ever been stored.
- * After the first seed write, deletes/clears are permanent across refresh.
- */
-export function initTimelineClips(seedClips: unknown): TimelineClip[] {
-  if (hasSavedTimeline()) {
-    return loadTimeline();
-  }
-
+/** Normalize raw seed/export clip arrays into lane-assigned clips. */
+export function clipsFromSeed(seedClips: unknown): TimelineClip[] {
   const fromSeed: TimelineClip[] = [];
   if (Array.isArray(seedClips)) {
     for (const raw of seedClips) {
@@ -456,8 +465,53 @@ export function initTimelineClips(seedClips: unknown): TimelineClip[] {
       if (n) fromSeed.push(n);
     }
   }
-  const clips = assignLanes(fromSeed);
+  return assignLanes(fromSeed);
+}
+
+function readStoredChoreVersion(): number | null {
+  try {
+    const raw = readStorageRaw();
+    if (!raw) return null;
+    const data = JSON.parse(raw) as Partial<TimelineSnapshot>;
+    return typeof data.choreVersion === 'number' &&
+      Number.isFinite(data.choreVersion)
+      ? data.choreVersion
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Load saved clips, or seed when nothing is stored / seed generation changed.
+ * After a matching seed write, deletes/clears stay permanent across refresh
+ * until the bundled `choreVersion` advances.
+ *
+ * @param seedChoreVersion Bundled seed generation (from choreTimeline.seed.json)
+ */
+export function initTimelineClips(
+  seedClips: unknown,
+  seedChoreVersion?: number,
+): TimelineClip[] {
+  if (seedChoreVersion != null && Number.isFinite(seedChoreVersion)) {
+    activeChoreVersion = seedChoreVersion;
+  }
+
+  if (hasSavedTimeline()) {
+    const storedVer = readStoredChoreVersion();
+    // Re-seed when missing version (legacy) or seed file was bumped.
+    // Keeps localhost and Vercel on the same shipped mix after deploys.
+    const seedMatches =
+      seedChoreVersion == null ||
+      (storedVer != null && storedVer === seedChoreVersion);
+    if (seedMatches) {
+      return loadTimeline();
+    }
+  }
+
+  const clips = clipsFromSeed(seedClips);
   // Always write — including empty — so the next visit never re-seeds
+  // until choreVersion advances again.
   saveTimeline(clips);
   return clips;
 }

@@ -33,8 +33,19 @@ export const SOUNDS: SoundDef[] = [
   { id: 'steam-release', label: 'Steam Release', file: 'steam-release.mp3' },
 ];
 
+/**
+ * Resolve a catalog file to a public URL.
+ * Honors Vite `BASE_URL` so deploys under a subpath still find `/sounds/…`.
+ */
 export function soundUrl(file: string): string {
-  return `/sounds/${file}`;
+  const base =
+    typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL
+      ? String(import.meta.env.BASE_URL)
+      : '/';
+  const root = base.endsWith('/') ? base : `${base}/`;
+  // file may already be "foo.mp3" (catalog) — never double-prefix
+  const name = file.replace(/^\/+/, '').replace(/^sounds\//, '');
+  return `${root}sounds/${name}`;
 }
 
 export function findSound(id: string): SoundDef | undefined {

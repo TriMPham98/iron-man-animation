@@ -63,7 +63,7 @@ describe('audio timeline persistence', () => {
 
   it('seeds once on first visit and marks storage as saved', () => {
     const seed = [sampleClip('clip-a'), sampleClip('clip-b', 'impact')];
-    const clips = initTimelineClips(seed);
+    const clips = initTimelineClips(seed, 1);
     expect(clips.map((c) => c.id).sort()).toEqual(['clip-a', 'clip-b']);
     expect(hasSavedTimeline()).toBe(true);
     expect(loadTimeline().map((c) => c.id).sort()).toEqual(['clip-a', 'clip-b']);
@@ -71,26 +71,50 @@ describe('audio timeline persistence', () => {
 
   it('keeps a deleted clip deleted after reload (no re-seed)', () => {
     const seed = [sampleClip('clip-a'), sampleClip('clip-b', 'impact')];
-    let clips = initTimelineClips(seed);
+    let clips = initTimelineClips(seed, 1);
 
     // User deletes clip-a
     clips = clips.filter((c) => c.id !== 'clip-a');
     expect(saveTimeline(clips)).toBe(true);
 
     // Simulate page refresh: init again with the same seed available
-    const reloaded = initTimelineClips(seed);
+    const reloaded = initTimelineClips(seed, 1);
     expect(reloaded.map((c) => c.id)).toEqual(['clip-b']);
     expect(reloaded.some((c) => c.id === 'clip-a')).toBe(false);
   });
 
   it('persists an empty timeline after clear (does not restore seed)', () => {
     const seed = [sampleClip('clip-a'), sampleClip('clip-b', 'impact')];
-    initTimelineClips(seed);
+    initTimelineClips(seed, 1);
     expect(saveTimeline([])).toBe(true);
 
-    const reloaded = initTimelineClips(seed);
+    const reloaded = initTimelineClips(seed, 1);
     expect(reloaded).toEqual([]);
     expect(hasSavedTimeline()).toBe(true);
+  });
+
+  it('re-seeds when bundled choreVersion advances', () => {
+    const seedA = [sampleClip('clip-a')];
+    initTimelineClips(seedA, 1);
+    expect(saveTimeline([])).toBe(true); // user cleared
+
+    const seedB = [sampleClip('clip-b', 'impact')];
+    const reloaded = initTimelineClips(seedB, 2);
+    expect(reloaded.map((c) => c.id)).toEqual(['clip-b']);
+  });
+
+  it('re-seeds legacy localStorage that lacks choreVersion', () => {
+    const seed = [sampleClip('clip-a'), sampleClip('clip-b', 'impact')];
+    // Legacy write: no choreVersion field
+    window.localStorage.setItem(
+      TIMELINE_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        clips: [{ ...sampleClip('clip-old'), soundId: 'ratchet', file: 'ratchet.mp3' }],
+      }),
+    );
+    const reloaded = initTimelineClips(seed, 3);
+    expect(reloaded.map((c) => c.id).sort()).toEqual(['clip-a', 'clip-b']);
   });
 
   it('does not throw when a bad clip is mixed into a save', () => {
