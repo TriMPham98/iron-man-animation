@@ -10,7 +10,7 @@ import {
 import type { Suit } from '../suit/Suit';
 import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
-import { isPieceWave, isSystemsOnlineStatus } from '../ui/jarvisHud';
+import { isSystemsOnlineStatus } from '../ui/jarvisHud';
 
 /**
  * Wall-clock duration of the finished-suit showcase orbit (full 360°).
@@ -300,7 +300,6 @@ export function createAssemblySession(
     // Status may already be SYSTEMS ONLINE from assemblyEndTime — avoid a
     // second cyan flash; setSystemsOnline is edge-triggered either way.
     ui.setStatus('SYSTEMS ONLINE', true);
-    ui.setActiveWave(null);
     ui.setDebugProgress(1);
     audioStop();
     audioPlayheadFromTime(asmDuration());
@@ -326,11 +325,6 @@ export function createAssemblySession(
       // Only final SYSTEMS ONLINE dismisses the progress panel — not
       // intermediate * ONLINE beats (reactor, repulsors, J.A.R.V.I.S., etc.).
       ui.setStatus(text, isSystemsOnlineStatus(text));
-    },
-    onWave: (wave) => {
-      if (isPieceWave(wave)) {
-        ui.setActiveWave(wave);
-      }
     },
     onProgress: (t) => {
       // Single path into the integrity bar (setIntegrity also drives setProgressVisual).
@@ -427,7 +421,6 @@ export function createAssemblySession(
     ui.setHintVisible(false);
     ui.fadeTitle(false);
     ui.setSystemsOnline(false);
-    ui.setActiveWave(null);
     audioStop();
     syncDebugPauseLabel();
 

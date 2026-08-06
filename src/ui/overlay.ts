@@ -7,14 +7,7 @@ import {
   WAVE_ORDER,
   type ReclassEntry,
 } from './reclassCard';
-import {
-  applyPipelineStates,
-  JARVIS_DISMISS_MS,
-  JARVIS_LEAVE_MS,
-  lampsForProgress,
-  mountPipeline,
-  type SystemLamp,
-} from './jarvisHud';
+import { JARVIS_DISMISS_MS, JARVIS_LEAVE_MS } from './jarvisHud';
 import {
   readDirectorPreference,
   writeDirectorPreference,
@@ -68,10 +61,6 @@ export interface OverlayHandles {
   setReclassCollapsed: (collapsed: boolean) => void;
   toggleReclassCollapsed: () => void;
   isReclassCollapsed: () => boolean;
-  /** JARVIS: highlight active assembly wave in the pipeline. */
-  setActiveWave: (wave: PieceWave | null) => void;
-  /** @deprecated Log folded into setStatus; kept as no-op for callers. */
-  pushSystemLog: (line: string) => void;
   /** JARVIS: systems-online flourish, then auto-dismiss the panel. */
   setSystemsOnline: (online: boolean) => void;
   /**
@@ -141,13 +130,7 @@ export function createOverlay(): OverlayHandles {
 
   // JARVIS lives in the top-bar center (replaces old title/status/INT strip)
   const jarvisPanel = elOptional<HTMLDivElement>('jarvis-panel');
-  const hudPipeline = elOptional<HTMLOListElement>('hud-pipeline');
   const jarvisInt = elOptional<HTMLSpanElement>('jarvis-int');
-  const lampEls: Record<SystemLamp, HTMLElement | null> = {
-    arc: elOptional<HTMLElement>('lamp-arc'),
-    hud: elOptional<HTMLElement>('lamp-hud'),
-    rep: elOptional<HTMLElement>('lamp-rep'),
-  };
 
   let directorModeHandler: ((enabled: boolean) => void) | null = null;
   let directorMode = readDirectorPreference();
@@ -161,13 +144,9 @@ export function createOverlay(): OverlayHandles {
   let startGestureHandler: (() => void) | null = null;
   let startConsumed = false;
 
-  let activeWave: PieceWave | null = null;
   let systemsOnline = false;
   let dismissTimer = 0;
   let lastProgress = 0;
-  const pipelineNodes = hudPipeline
-    ? mountPipeline(hudPipeline)
-    : new Map<PieceWave, HTMLLIElement>();
 
   const reducedMotion = () =>
     document.body.classList.contains('reduced-motion') ||
@@ -214,22 +193,6 @@ export function createOverlay(): OverlayHandles {
     }, 450);
   };
 
-  const applyLamps = (p: number, online: boolean) => {
-    const lit = lampsForProgress(p, online);
-    (['arc', 'hud', 'rep'] as SystemLamp[]).forEach((k) => {
-      lampEls[k]?.classList.toggle('is-on', lit.has(k));
-    });
-  };
-
-  const syncPipeline = () => {
-    applyPipelineStates(pipelineNodes, activeWave, systemsOnline);
-  };
-
-  const setActiveWave = (wave: PieceWave | null) => {
-    activeWave = wave;
-    syncPipeline();
-  };
-
   const setSystemsOnline = (online: boolean) => {
     // Edge-trigger the cyan flourish — assembly end + camera-tail complete
     // both used to call this and fire a second flash.
@@ -245,9 +208,6 @@ export function createOverlay(): OverlayHandles {
     } else if (!online) {
       hudFrame.classList.remove('is-online-flash');
     }
-
-    syncPipeline();
-    applyLamps(lastProgress, online);
 
     if (becameOnline && jarvisPanel) {
       jarvisPanel.classList.add('is-complete');
@@ -270,7 +230,6 @@ export function createOverlay(): OverlayHandles {
       prevProgress > 0.02 &&
       !reducedMotion();
 
-    activeWave = null;
     systemsOnline = false;
     lastStatus = '';
     document.body.classList.remove('systems-online');
@@ -280,8 +239,6 @@ export function createOverlay(): OverlayHandles {
     // Drop cyan complete styling before the fill eases back to gold
     progressBar.classList.remove('is-complete');
     jarvisPanel?.classList.remove('is-complete');
-    syncPipeline();
-    applyLamps(0, false);
 
     // Show panel first so a soft drain is visible on re-entry
     if (soft) {
@@ -629,7 +586,7 @@ export function createOverlay(): OverlayHandles {
       clearProgressDrain();
     }
 
-    // Width still tracks smoothly every tick; aria / lamps only on whole-% change
+    // Width still tracks smoothly every tick; aria / % only on whole-% change
     lastProgress = clamped;
     progressFill.style.width = widthPct;
     if (pct !== lastProgressPct || opts?.drain) {
@@ -638,7 +595,6 @@ export function createOverlay(): OverlayHandles {
       progressBar.classList.toggle('is-complete', clamped >= 0.999);
       if (jarvisInt) jarvisInt.textContent = `${pct}%`;
       hudTop.classList.toggle('is-live', clamped > 0.001 && clamped < 0.999);
-      applyLamps(clamped, systemsOnline || clamped >= 0.999);
     }
   };
 
@@ -764,10 +720,6 @@ export function createOverlay(): OverlayHandles {
     setReclassCollapsed,
     toggleReclassCollapsed,
     isReclassCollapsed: () => reclassCollapsed,
-    setActiveWave,
-    pushSystemLog: (_line: string) => {
-      /* folded into setStatus */
-    },
     setSystemsOnline,
     resetJarvisChrome,
     showStartGate,
