@@ -27,6 +27,20 @@ export class Suit {
   private readonly _explodeEnd = new THREE.Vector3();
   private readonly _explodeDir = new THREE.Vector3();
   private readonly _explodeRadial = new THREE.Vector3();
+  /**
+   * Precomputed explode targets/seeds for the soft-restart burst.
+   * Built once in {@link armExplosionFromFinal} so the 3s handoff is not
+   * re-hashing ids and re-deriving endpoints every frame.
+   */
+  private explodeCache: Array<{
+    seed: number;
+    delay: number;
+    span: number;
+    end: THREE.Vector3;
+    spinSign: number;
+    spinY: number;
+    spinAmp: number;
+  }> | null = null;
 
   private constructor() {
     this.group.name = 'suit';
@@ -75,6 +89,7 @@ export class Suit {
   /** Fly-in shards visible; seamless mesh hidden. */
   showAssembly(): void {
     this.assemblyMode = true;
+    this.explodeCache = null;
     if (this.finalModel) this.finalModel.visible = false;
     for (const p of this.pieces) {
       p.mesh.visible = false;
@@ -93,6 +108,7 @@ export class Suit {
   /** Seamless full suit; hide grid shards so bloom can't square-blob them. */
   showFinal(): void {
     this.assemblyMode = false;
+    this.explodeCache = null;
     for (const p of this.pieces) {
       p.mesh.visible = false;
     }
@@ -114,11 +130,34 @@ export class Suit {
       this.finalModel.scale.set(1, 1, 1);
       this.finalModel.position.set(0, 0, 0);
     }
-    for (const p of this.pieces) {
+
+    const waveCount = WAVE_ORDER.length;
+    this.explodeCache = new Array(this.pieces.length);
+
+    for (let i = 0; i < this.pieces.length; i++) {
+      const p = this.pieces[i];
       p.mesh.visible = true;
       p.mesh.position.copy(p.restPosition);
       p.mesh.rotation.copy(p.restRotation);
       p.mesh.scale.copy(p.restScale);
+
+      const seed = hashSeed(p.id);
+      const wi = WAVE_ORDER.indexOf(p.wave);
+      // Helmet / face peel first; boots last — reverse of suit-up cascade
+      const waveRank =
+        wi < 0 ? 0.5 : (waveCount - 1 - wi) / Math.max(1, waveCount - 1);
+      const delay = waveRank * 0.12 + seed * 0.05;
+      const end = new THREE.Vector3();
+      this.explodeTargetFor(p, seed, end);
+      this.explodeCache[i] = {
+        seed,
+        delay,
+        span: Math.max(1e-3, 1 - delay),
+        end,
+        spinSign: seed > 0.5 ? 1 : -1,
+        spinY: 1.3 * (seed - 0.5),
+        spinAmp: 0.9 + seed * 1.4,
+      };
     }
     this.powers = { reactor: 1, eyes: 1, repulsors: 1 };
     this.applySystems();
@@ -126,45 +165,63 @@ export class Suit {
 
   /**
    * Drive the reverse-burst: 0 = fully assembled plates, 1 = blown clear.
-   * Flies each shard past its assembly scatter start with a radial kick;
-   * top waves leave a hair earlier so the peel reads as an explosion, not
-   * a reverse build.
+   * Uses {@link explodeCache} from {@link armExplosionFromFinal} when present.
    */
   setExplosionProgress(amount: number): void {
     const u = THREE.MathUtils.clamp(amount, 0, 1);
-    const waveCount = WAVE_ORDER.length;
+    const cache = this.explodeCache;
+    const n = this.pieces.length;
 
-    for (const p of this.pieces) {
-      const seed = hashSeed(p.id);
-      const wi = WAVE_ORDER.indexOf(p.wave);
-      // Helmet / face peel first; boots last — reverse of suit-up cascade
-      const waveRank =
-        wi < 0 ? 0.5 : (waveCount - 1 - wi) / Math.max(1, waveCount - 1);
-      // Tight stagger — peel reads, but pad does not empty early mid-burst
-      const delay = waveRank * 0.12 + seed * 0.05;
-      const span = Math.max(1e-3, 1 - delay);
+    for (let i = 0; i < n; i++) {
+      const p = this.pieces[i];
+      let delay: number;
+      let span: number;
+      let end: THREE.Vector3;
+      let spinSign: number;
+      let spinY: number;
+      let spinAmp: number;
+
+      if (cache && cache[i]) {
+        const c = cache[i];
+        delay = c.delay;
+        span = c.span;
+        end = c.end;
+        spinSign = c.spinSign;
+        spinY = c.spinY;
+        spinAmp = c.spinAmp;
+      } else {
+        // Fallback (shouldn't run on the soft-restart path)
+        const seed = hashSeed(p.id);
+        const wi = WAVE_ORDER.indexOf(p.wave);
+        const waveRank =
+          wi < 0 ? 0.5 : (WAVE_ORDER.length - 1 - wi) / Math.max(1, WAVE_ORDER.length - 1);
+        delay = waveRank * 0.12 + seed * 0.05;
+        span = Math.max(1e-3, 1 - delay);
+        this.explodeTargetFor(p, seed, this._explodeEnd);
+        end = this._explodeEnd;
+        spinSign = seed > 0.5 ? 1 : -1;
+        spinY = 1.3 * (seed - 0.5);
+        spinAmp = 0.9 + seed * 1.4;
+      }
+
       const local = THREE.MathUtils.clamp((u - delay) / span, 0, 1);
       // Mild ease-out only (heavy cubic + master ease-out cleared the pad early)
       const e = 1 - (1 - local) * (1 - local);
 
-      this.explodeTargetFor(p, seed, this._explodeEnd);
-
-      p.mesh.position.lerpVectors(p.restPosition, this._explodeEnd, e);
+      p.mesh.position.lerpVectors(p.restPosition, end, e);
 
       const sx = THREE.MathUtils.lerp(p.restScale.x, 0.04, e);
       const sy = THREE.MathUtils.lerp(p.restScale.y, 0.04, e);
       const sz = THREE.MathUtils.lerp(p.restScale.z, 0.04, e);
       p.mesh.scale.set(sx, sy, sz);
 
-      // Tumbling as plates leave
-      const spin = e * (0.9 + seed * 1.4);
+      const spin = e * spinAmp;
       p.mesh.rotation.set(
-        p.restRotation.x + spin * (seed > 0.5 ? 1 : -1),
-        p.restRotation.y + spin * 1.3 * (seed - 0.5),
+        p.restRotation.x + spin * spinSign,
+        p.restRotation.y + spin * spinY,
         p.restRotation.z + spin * 0.7,
       );
 
-      // Stay visible until nearly at the end of travel
       p.mesh.visible = e < 0.97;
     }
 

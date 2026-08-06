@@ -129,6 +129,8 @@ export function createOverlay(): OverlayHandles {
   let lastStatus = '';
   let statusFlashTimer = 0;
   let hudBooted = false;
+  let lastClockText = '';
+  let lastProgressPct = -1;
 
   let activeWave: PieceWave | null = null;
   let systemsOnline = false;
@@ -482,13 +484,17 @@ export function createOverlay(): OverlayHandles {
       clearProgressDrain();
     }
 
+    // Width still tracks smoothly every tick; aria / lamps only on whole-% change
     lastProgress = clamped;
     progressFill.style.width = widthPct;
-    progressBar.setAttribute('aria-valuenow', String(pct));
-    progressBar.classList.toggle('is-complete', clamped >= 0.999);
-    if (jarvisInt) jarvisInt.textContent = `${pct}%`;
-    hudTop.classList.toggle('is-live', clamped > 0.001 && clamped < 0.999);
-    applyLamps(clamped, systemsOnline || clamped >= 0.999);
+    if (pct !== lastProgressPct || opts?.drain) {
+      lastProgressPct = pct;
+      progressBar.setAttribute('aria-valuenow', String(pct));
+      progressBar.classList.toggle('is-complete', clamped >= 0.999);
+      if (jarvisInt) jarvisInt.textContent = `${pct}%`;
+      hudTop.classList.toggle('is-live', clamped > 0.001 && clamped < 0.999);
+      applyLamps(clamped, systemsOnline || clamped >= 0.999);
+    }
   };
 
   const flashStatus = () => {
@@ -565,8 +571,11 @@ export function createOverlay(): OverlayHandles {
       const s = elapsedSec % 60;
       const whole = Math.floor(s);
       const frac = Math.floor((s - whole) * 100);
-      // Steady readout — no per-second gold flash
-      clock.textContent = `${String(m).padStart(2, '0')}:${String(whole).padStart(2, '0')}.${String(frac).padStart(2, '0')}`;
+      const text = `${String(m).padStart(2, '0')}:${String(whole).padStart(2, '0')}.${String(frac).padStart(2, '0')}`;
+      // Hundredths often hold for multiple frames — skip identical writes
+      if (text === lastClockText) return;
+      lastClockText = text;
+      clock.textContent = text;
     },
     fadeTitle: (_hide: boolean) => {
       /* Title removed — JARVIS owns the top-center assembly brief */

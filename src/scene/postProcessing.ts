@@ -82,9 +82,9 @@ export function createPostProcessing(
   composer.addPass(renderPass);
 
   // Very restrained bloom — soft glint on powered systems only.
-  // halfResBloom: allocate bloom RTs at 0.5× so mips cost less.
+  // halfResBloom: mips at 0.5× drawing-buffer size (cheaper fullscreen passes).
   const bloom = new UnrealBloomPass(
-    new THREE.Vector2(size.x * bloomScale, size.y * bloomScale),
+    new THREE.Vector2(1, 1),
     0.12,
     0.4,
     0.94,
@@ -98,15 +98,24 @@ export function createPostProcessing(
   renderer.toneMapping = previousToneMapping;
   renderer.toneMappingExposure = Math.max(previousExposure, 1.7);
 
-  const syncBloomSize = (w: number, h: number) => {
-    const bw = Math.max(1, Math.round(w * bloomScale));
-    const bh = Math.max(1, Math.round(h * bloomScale));
-    // Prefer setSize so internal render targets actually resize
+  /**
+   * EffectComposer.addPass / setSize force every pass to full CSS×DPR.
+   * Re-apply bloom resolution afterward so halfResBloom actually sticks
+   * (constructor size alone is overwritten on the first addPass).
+   * @param cssW CSS pixel width (same units as composer.setSize)
+   * @param cssH CSS pixel height
+   */
+  const syncBloomSize = (cssW: number, cssH: number) => {
+    const dpr = renderer.getPixelRatio();
+    const bw = Math.max(1, Math.round(cssW * dpr * bloomScale));
+    const bh = Math.max(1, Math.round(cssH * dpr * bloomScale));
     if (typeof bloom.setSize === 'function') {
       bloom.setSize(bw, bh);
     }
     bloom.resolution.set(bw, bh);
   };
+  // Init: re-assert after addPass overwrote constructor sizing
+  syncBloomSize(size.x, size.y);
 
   return {
     composer,
@@ -115,6 +124,7 @@ export function createPostProcessing(
     resize: (w: number, h: number) => {
       composer.setSize(w, h);
       composer.setPixelRatio(renderer.getPixelRatio());
+      // Must run after setSize — composer resizes all passes to full res
       syncBloomSize(w, h);
     },
     render: () => {

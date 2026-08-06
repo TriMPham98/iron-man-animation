@@ -261,12 +261,39 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     renderClips();
   };
 
-  // Pre-warm catalog durations + waveform peaks (shared decode cache)
-  for (const s of SOUNDS) {
-    void getDuration(s.file);
-  }
-  prewarmWaveforms(SOUNDS.map((s) => s.file));
-  void refreshCatalogOrder();
+  /**
+   * Catalog durations + waveform peaks are only needed for director DAW chrome.
+   * Defer off the viewer boot path so first paint / SFX are not blocked by
+   * decoding all 23 samples. First director open (or idle) warms them.
+   */
+  let catalogWarmed = false;
+  const warmCatalogAssets = () => {
+    if (catalogWarmed) return;
+    catalogWarmed = true;
+    for (const s of SOUNDS) {
+      void getDuration(s.file);
+    }
+    prewarmWaveforms(SOUNDS.map((s) => s.file));
+    void refreshCatalogOrder();
+  };
+  // Idle after first paint when the browser is quiet (still warms before
+  // most directors open the panel). Falls back to first setVisible(true).
+  const scheduleCatalogWarm = () => {
+    const ric = (
+      window as Window & {
+        requestIdleCallback?: (
+          cb: () => void,
+          opts?: { timeout: number },
+        ) => number;
+      }
+    ).requestIdleCallback;
+    if (typeof ric === 'function') {
+      ric(() => warmCatalogAssets(), { timeout: 4000 });
+    } else {
+      window.setTimeout(warmCatalogAssets, 1500);
+    }
+  };
+  scheduleCatalogWarm();
 
   const persist = (): boolean => {
     // Always write full list (including empty after delete/clear)
@@ -375,8 +402,17 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const selected = (): TimelineClip | null =>
     clips.find((c) => c.id === selectedId) ?? null;
 
-  const labelRailW = () =>
-    labelsCol?.offsetWidth || labelCorner?.offsetWidth || 116;
+  /** Cached label rail width — invalidate on resize/layout (offsetWidth is layout-forcing). */
+  let cachedLabelRailW = 0;
+  const invalidateLabelRailW = () => {
+    cachedLabelRailW = 0;
+  };
+  const labelRailW = () => {
+    if (cachedLabelRailW > 0) return cachedLabelRailW;
+    cachedLabelRailW =
+      labelsCol?.offsetWidth || labelCorner?.offsetWidth || 116;
+    return cachedLabelRailW;
+  };
 
   /** Timeline column width (excludes sticky track labels). */
   const timelineViewportW = () => {
@@ -792,7 +828,9 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     // Playhead lives on track-inner (ruler + lanes). Offset past the label rail.
     // Hit target is 10px wide (margin-left -5); keep center in [0, assembly end].
     const t = Math.max(0, Math.min(playheadSec, assemblyDuration));
-    playheadEl.style.left = `${labelRailW() + t * pxPerSec}px`;
+    // Whole CSS pixels — subpixel thrash does not improve look
+    const x = Math.round(labelRailW() + t * pxPerSec);
+    playheadEl.style.left = `${x}px`;
     playheadEl.style.height = '';
   };
 
@@ -1280,6 +1318,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const relayoutFromSize = () => {
     // Debounce identity: same viewport + duration + zoom ⇒ skip full rebuild.
     // Without this, scrollbar show/hide can re-fire RO forever at t=end.
+    invalidateLabelRailW();
     const key = `${trackScroll.clientWidth}x${trackScroll.clientHeight}:${assemblyDuration}:${zoomMul}:${trackCount()}:${laneH}`;
     if (key === lastLayoutKey) {
       updatePlayheadDom();
@@ -1407,8 +1446,11 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       // Authoring chrome only — never stop transport when leaving director.
       root.classList.toggle('hidden', !v);
       if (v) {
+        warmCatalogAssets();
+        invalidateLabelRailW();
         // Layout after becoming visible (clientWidth was 0 while hidden)
         requestAnimationFrame(() => {
+          invalidateLabelRailW();
           renderRuler();
           renderClips();
         });
@@ -1416,6 +1458,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     },
     setAssemblyDuration: (sec: number) => {
       assemblyDuration = Math.max(1, sec);
+      invalidateLabelRailW();
       // Re-fit so the full cycle spans the track width
       renderRuler();
       renderClips();
@@ -1424,6 +1467,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       // Don't fight the user's drag
       if (scrubbing) return;
       playheadSec = Math.max(0, sec);
+      // Viewer path: panel is hidden — skip layout-touching style writes
+      if (root.classList.contains('hidden')) return;
       updatePlayheadDom();
     },
     onTransportPlay,

@@ -333,6 +333,8 @@ export function createAssemblyTimeline(
     integrityProgressAtTime(timeSec, waveStartTimes, assemblyEndTime);
 
   const reportActivePieces = (timeSec: number) => {
+    // Consumer is optional (viewer HUD no-ops it) — skip the O(N) scan + alloc.
+    if (!callbacks.onActivePieces) return;
     const active: ActivePieceInfo[] = [];
     for (const span of motionSpans) {
       if (timeSec + 1e-6 < span.start || timeSec > span.end + 1e-6) continue;
@@ -349,7 +351,7 @@ export function createAssemblyTimeline(
     }
     // Prefer pieces further along their flight (nearest to clamp) first
     active.sort((a, b) => b.localProgress - a.localProgress);
-    callbacks.onActivePieces?.(active);
+    callbacks.onActivePieces(active);
   };
 
   /**

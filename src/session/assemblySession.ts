@@ -297,7 +297,6 @@ export function createAssemblySession(
     ui.setStatus('SYSTEMS ONLINE', true);
     ui.setActiveWave(null);
     ui.setDebugProgress(1);
-    ui.setDebugActivePieces([]);
     audioStop();
     audioPlayheadFromTime(asmDuration());
     syncDebugPauseLabel();
@@ -329,8 +328,8 @@ export function createAssemblySession(
       }
     },
     onProgress: (t) => {
-      const pct = Math.round(t * 100);
-      ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
+      // Single path into the integrity bar (setIntegrity also drives setProgressVisual).
+      // Avoid dual string+regex + second setDebugProgress every GSAP tick.
       ui.setDebugProgress(t);
       // Seed clock from live GSAP time so hold doesn’t skew SFX vs plates
       audioPlayheadFromTime();
@@ -341,11 +340,8 @@ export function createAssemblySession(
         });
       }
     },
-    onActivePieces: (pieces) => {
-      ui.setDebugActivePieces(pieces);
-    },
+    // onActivePieces omitted — overlay setDebugActivePieces is a no-op; skip O(N)/frame
     onComplete: () => {
-      ui.setDebugActivePieces([]);
       if (loopFullCycle) {
         // Full assembly cycle only — restart immediately, no idle spin.
         startSequence();
