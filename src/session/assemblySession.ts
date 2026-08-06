@@ -33,9 +33,9 @@ const HANDOFF_CAM_SEC = 0.6;
 const HANDOFF_CAM_DELAY = HANDOFF_EXPLODE_SEC - HANDOFF_CAM_SEC;
 
 const VIEWER_HINT =
-  'Drag to orbit · R replay · Space pause · S skip · ←→ scrub';
+  'Drag to orbit · R replay · Space pause · S skip · M mute · ←→ scrub';
 const DIRECTOR_HINT =
-  'Drag to orbit · plate · RECLASS · AUDIO scrub · A add · [ ] wave · ←→ · R · Space · S';
+  'Drag to orbit · plate · RECLASS · AUDIO scrub · A add · [ ] wave · M mute · ←→ · R · Space · S';
 
 export interface AssemblySessionOptions {
   suit: Suit;

@@ -75,6 +75,10 @@ export type AudioTimelinePanel = {
   isLooping: () => boolean;
   /** True while the user is dragging the audio playhead. */
   isScrubbing: () => boolean;
+  /** Toggle assembly SFX mute (persisted). Returns the new muted state. */
+  toggleMute: () => boolean;
+  /** Current mute state (toolbar + engine + localStorage). */
+  isMuted: () => boolean;
   /** Preview single library pad (optional). */
   engine: AudioEngine;
   destroy: () => void;
@@ -1265,23 +1269,41 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     btnMute.textContent = muted ? 'UNMUTE' : 'MUTE';
     btnMute.setAttribute('aria-pressed', muted ? 'true' : 'false');
     btnMute.title = muted
-      ? 'Muted — click to restore assembly SFX'
-      : 'Mute assembly SFX';
+      ? 'Muted — click or press M to restore assembly SFX'
+      : 'Mute assembly SFX (M)';
   };
-  applyMuteVisual();
 
-  btnMute.addEventListener('click', () => {
-    muted = !muted;
+  /**
+   * Drop pending delayedCalls while muted (transport stays “live” via
+   * playingFrom). Assigned after the transport block initializes.
+   */
+  let silenceScheduledForMute: (() => void) | null = null;
+
+  const setMutedState = (next: boolean): boolean => {
+    muted = next;
     try {
       window.localStorage.setItem(MUTE_STORAGE_KEY, muted ? '1' : '0');
     } catch {
       /* private mode */
     }
+    if (muted) {
+      // Stop voices + kill pending cues; keep playingFrom so unmute re-arms.
+      silenceScheduledForMute?.();
+    }
     applyMuteVisual();
     // Muting stops every voice and the engine refuses to start new ones, so
-    // unmuting has to rebuild the schedule — otherwise the transport stays
-    // silent until the next seek or replay.
+    // unmuting has to rebuild the schedule from the live playhead — otherwise
+    // the transport stays silent until the next seek or replay.
     if (!muted) rescheduleIfPlaying();
+    return muted;
+  };
+
+  const toggleMute = (): boolean => setMutedState(!muted);
+
+  applyMuteVisual();
+
+  btnMute.addEventListener('click', () => {
+    toggleMute();
   });
 
   const applySnapVisual = () => {
@@ -1379,11 +1401,19 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   // instead of window.setTimeout — under main-thread load, setTimeout drifts
   // relative to GSAP and plate hits / SFX fall out of sync.
   let scheduled: gsap.core.Tween[] = [];
+  /**
+   * Non-null while assembly transport wants audio (play/resume), even if
+   * muted. Must survive a muted onTransportPlay so unmute can re-arm.
+   */
   let playingFrom: number | null = null;
 
-  const cancelSchedule = () => {
+  const killScheduled = () => {
     for (const tw of scheduled) tw.kill();
     scheduled = [];
+  };
+
+  const cancelSchedule = () => {
+    killScheduled();
     playingFrom = null;
   };
 
@@ -1393,12 +1423,14 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   };
 
   const onTransportPlay = (sec: number) => {
-    cancelSchedule();
+    killScheduled();
     engine.stop();
-    if (muted) return;
     // `sec` is the seed/cascade clock. May be negative during a hangar hold
     // so clip delays stay authored against original plate times.
+    // Keep this set even when muted — otherwise unmute cannot resume mid-run
+    // (cancelSchedule used to null it before the muted early-return).
     playingFrom = sec;
+    if (muted) return;
 
     // Ensure autoplay is unlocked (INITIATE gesture may have already done this)
     void engine.unlock();
@@ -1421,7 +1453,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
         // Negative playhead → longer delay (silent lead-in before cascade)
         const delaySec = Math.max(0, c.start - sec);
         const tw = gsap.delayedCall(delaySec, () => {
-          if (playingFrom == null) return;
+          if (playingFrom == null || muted) return;
           engine.play({
             id: c.id,
             file: c.file,
@@ -1448,6 +1480,12 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
         }
       }
     }
+  };
+
+  // Mute/unmute handlers are registered above (before this block) via closure;
+  // rebind the mute-side schedule kill now that killScheduled exists.
+  silenceScheduledForMute = () => {
+    killScheduled();
   };
 
   renderRuler();
@@ -1511,6 +1549,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     },
     isLooping: () => loopEnabled,
     isScrubbing: () => scrubbing,
+    toggleMute,
+    isMuted: () => muted,
     engine,
     destroy: () => {
       flushPersist();

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Suit } from '../suit/Suit';
 import type { ArmorPiece } from '../suit/waves';
+import type { AudioTimelinePanel } from './audioTimelinePanel';
 import type { OverlayHandles } from './overlay';
 
 export interface BindInputOptions {
@@ -25,6 +26,8 @@ export interface BindInputOptions {
       getProgress: () => number;
     };
   };
+  /** Assembly SFX mute (M hotkey). */
+  audioTimeline?: Pick<AudioTimelinePanel, 'toggleMute'> | null;
 }
 
 /** Progress step for ←/→ scrub. Shift = coarse. */
@@ -36,7 +39,8 @@ const SCRUB_STEP_COARSE = 0.01;
  * Ignores picks after drag so orbit does not select a plate.
  */
 export function bindInput(options: BindInputOptions): void {
-  const { canvas, camera, suit, ui, controls, pick, session } = options;
+  const { canvas, camera, suit, ui, controls, pick, session, audioTimeline } =
+    options;
 
   // Fast raycast → piece lookup (mesh.uuid → piece)
   const pieceByMeshUuid = new Map<string, ArmorPiece>();
@@ -53,12 +57,23 @@ export function bindInput(options: BindInputOptions): void {
   };
 
   window.addEventListener('keydown', (e) => {
+    // Browser / OS chords (⌘R refresh, ⌃S, ⌥←, etc.) must not steal hotkeys.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    // M — toggle assembly SFX (allowed before INITIATE so hangar can stay quiet)
+    if ((e.key === 'm' || e.key === 'M') && !e.repeat) {
+      if (isTypingTarget(e.target)) return;
+      if (!audioTimeline) return;
+      e.preventDefault();
+      const muted = audioTimeline.toggleMute();
+      ui.showToast(muted ? 'AUDIO MUTED' : 'AUDIO ON');
+      return;
+    }
+
     // Until INITIATE, ignore transport hotkeys. R during load used to call
     // startSequence() while the gate was still pending, so assembly ran with
     // the INITIATE orb still on screen.
     if (!ui.hasInitiated()) return;
-    // Browser / OS chords (⌘R refresh, ⌃S, ⌥←, etc.) must not steal hotkeys.
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
 
     // ← / → — scrub assembly progress (Shift = coarser steps).
     // Key-repeat is intentional so holding an arrow keeps scrubbing.
@@ -99,18 +114,13 @@ export function bindInput(options: BindInputOptions): void {
       return;
     }
 
-    // Director reclass: A add · M minimize · [ ] cycle target wave
+    // Director reclass: A add · [ ] cycle target wave
     if (!ui.isDirectorMode()) return;
     if (isTypingTarget(e.target)) return;
     if (e.repeat) return;
     if (e.key === 'a' || e.key === 'A') {
       e.preventDefault();
       ui.addReclassEntry();
-      return;
-    }
-    if (e.key === 'm' || e.key === 'M') {
-      e.preventDefault();
-      ui.toggleReclassCollapsed();
       return;
     }
     if (e.key === ']' || e.key === '[') {

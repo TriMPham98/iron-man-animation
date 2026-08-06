@@ -115,6 +115,16 @@
       <div id="vignette" aria-hidden="true"></div>
       <div id="scanlines" aria-hidden="true"></div>
 
+      <!-- Transient cyan HUD toast (e.g. M mute) -->
+      <div
+        id="hud-toast"
+        class="hud-toast"
+        role="status"
+        aria-live="polite"
+        aria-hidden="true"
+        hidden
+      ></div>
+
       <!-- First-play gate — cyan holographic ring CTA (hangar idle until click) -->
       <div
         id="start-gate"
@@ -214,7 +224,7 @@
             class="reclass-toggle"
             aria-expanded="false"
             aria-controls="reclass-body"
-            title="Expand reclass panel (M)"
+            title="Expand reclass panel"
           >
             <span class="reclass-title">RECLASS</span>
             <span id="reclass-count" class="reclass-count">0</span>
@@ -261,7 +271,7 @@
             </button>
           </div>
           <ol id="reclass-list" class="reclass-list" aria-live="polite"></ol>
-          <p class="reclass-hint">A add · M toggle · [ ] wave · COPY → chat</p>
+          <p class="reclass-hint">A add · [ ] wave · header toggle · COPY → chat</p>
         </div>
       </aside>
 

@@ -973,6 +973,56 @@ body.systems-online .hud-frame.is-booted .hud-corner {
   border-color: rgba(201, 162, 39, 0.28);
 }
 
+/* —— Transient cyan toast (M mute, etc.) —— */
+.hud-toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(1.75rem, env(safe-area-inset-bottom, 0px) + 1.25rem);
+  z-index: 50;
+  transform: translateX(-50%) translateY(0.35rem);
+  padding: 0.55rem 1.1rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--cyan-bright);
+  background: linear-gradient(
+    180deg,
+    rgba(8, 18, 28, 0.92) 0%,
+    rgba(4, 10, 18, 0.88) 100%
+  );
+  border: 1px solid rgba(126, 232, 255, 0.38);
+  border-radius: 2px;
+  box-shadow:
+    0 0 0 1px rgba(126, 232, 255, 0.08),
+    0 0 22px rgba(126, 232, 255, 0.18),
+    inset 0 1px 0 rgba(184, 244, 255, 0.12);
+  text-shadow: 0 0 12px rgba(126, 232, 255, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.28s ease,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.hud-toast.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.hud-toast.is-hiding {
+  opacity: 0;
+  transform: translateX(-50%) translateY(0.2rem);
+}
+
+body.reduced-motion .hud-toast,
+body.reduced-motion .hud-toast.is-visible,
+body.reduced-motion .hud-toast.is-hiding {
+  transition: opacity 0.12s ease;
+  transform: translateX(-50%);
+}
+
 /* —— HUD —— */
 .hud {
   position: absolute;

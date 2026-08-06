@@ -99,6 +99,7 @@ async function boot(): Promise<void> {
     controls,
     pick,
     session,
+    audioTimeline,
   });
 
   const onResize = () => {

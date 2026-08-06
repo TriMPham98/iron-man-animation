@@ -27,6 +27,7 @@ npm run preview  # serve dist locally
 | `R` or **REPLAY** | Restart the assembly sequence |
 | `S` or **SKIP** | Jump to finished suit / systems online |
 | Space | Pause / resume (or restart if finished) |
+| `M` | Mute / unmute assembly SFX (persisted; cyan toast) |
 | `←` / `→` | Scrub progress (−/+0.2%; Shift = 1%) |
 | **DIR** | Toggle director mode (scrubber + plate pick) |
 
@@ -53,12 +54,14 @@ In director mode you also get:
 ### Reclass card workflow
 
 1. Enable **DIR** mode — the **RECLASS** chip sits top-right (collapsed by default)
-2. Click the chip or press **M** to expand; picking a plate also expands it
+2. Click the chip (or header) to expand; picking a plate also expands it
 3. Choose **TO** wave (or `[` / `]` to cycle)
 4. Optional note → **ADD** (or `A`)
 5. Repeat for more plates → **COPY**
 6. Paste the card in chat so wave gates can be updated
-7. Press **M** again (or the header) to minimize back to a chip
+7. Click the header again to minimize back to a chip
+
+**M** mutes / unmutes assembly SFX (persisted; cyan toast confirms).
 
 ### JARVIS briefing (top-bar center)
 

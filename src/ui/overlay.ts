@@ -89,6 +89,11 @@ export interface OverlayHandles {
    * Use for audio autoplay unlock — setTimeout loses user activation.
    */
   onStartGesture: (cb: () => void) => void;
+  /**
+   * Cyan holographic toast near the bottom of the viewport.
+   * Auto-hides after a short hold; restarts the timer on repeat calls.
+   */
+  showToast: (message: string, holdMs?: number) => void;
 }
 
 export interface DebugPickedPiece {
@@ -147,10 +152,35 @@ export function createOverlay(): OverlayHandles {
   let systemsOnline = false;
   let dismissTimer = 0;
   let lastProgress = 0;
+  let toastTimer = 0;
+  let toastHideTimer = 0;
 
   const reducedMotion = () =>
     document.body.classList.contains('reduced-motion') ||
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const toastEl = elOptional<HTMLDivElement>('hud-toast');
+
+  const showToast = (message: string, holdMs = 1600) => {
+    if (!toastEl) return;
+    window.clearTimeout(toastTimer);
+    window.clearTimeout(toastHideTimer);
+    toastEl.textContent = message;
+    toastEl.classList.remove('is-hiding');
+    toastEl.classList.add('is-visible');
+    toastEl.removeAttribute('hidden');
+    toastEl.setAttribute('aria-hidden', 'false');
+    const hold = Math.max(400, holdMs);
+    toastTimer = window.setTimeout(() => {
+      toastEl.classList.add('is-hiding');
+      toastEl.classList.remove('is-visible');
+      toastHideTimer = window.setTimeout(() => {
+        toastEl.classList.remove('is-hiding');
+        toastEl.setAttribute('hidden', '');
+        toastEl.setAttribute('aria-hidden', 'true');
+      }, reducedMotion() ? 0 : 280);
+    }, hold);
+  };
 
   const hideJarvisPanel = (immediate = false) => {
     if (!jarvisPanel) return;
@@ -732,5 +762,6 @@ export function createOverlay(): OverlayHandles {
     onStartGesture: (cb: () => void) => {
       startGestureHandler = cb;
     },
+    showToast,
   };
 }
