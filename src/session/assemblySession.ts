@@ -12,7 +12,18 @@ import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
 import { isPieceWave, isSystemsOnlineStatus } from '../ui/jarvisHud';
 
-/** When remaining yaw is under this, ease auto-rotate to a stop (≈ half prior). */
+/**
+ * Wall-clock duration of the finished-suit showcase orbit (full 360°).
+ * Driven manually in {@link createAssemblySession}'s update — not via
+ * OrbitControls.autoRotate.
+ *
+ * Historical note: OrbitControls without deltaTime was *per frame*, so a
+ * 120Hz display at autoRotateSpeed=1 finished in ~30s while 60Hz took ~60s.
+ * Forcing wall-clock at 38–60s felt *slower* than the old high-refresh feel.
+ * ~28s matches “just under 40s” with headroom and the pre-tier snappy loop.
+ */
+const SHOWCASE_ORBIT_SEC = 28;
+/** When remaining yaw is under this, ease spin to a stop (≈ half prior). */
 const SPIN_EASE_OUT_RAD = 0.275;
 /** Plates burst outward (reverse cascade) — slow, linear flight (no ease-out coast). */
 const HANDOFF_EXPLODE_SEC = 3.12;
@@ -44,8 +55,14 @@ export interface AssemblySession {
   skipToEnd: () => void;
   togglePause: () => void;
   seek: (progress01: number) => void;
-  /** Per-frame: restarts assembly after the complete-mode idle spin finishes a full 360°. */
-  update: () => void;
+  /**
+   * Per-frame: advances the showcase orbit (wall-clock) and restarts assembly
+   * after a full 360°. Pass frame delta in seconds.
+   * @returns true when this frame drove the showcase orbit (skip OrbitControls.update).
+   */
+  update: (deltaSec: number) => boolean;
+  /** True while the post-assembly showcase orbit is running (not Space-paused). */
+  isShowcaseOrbiting: () => boolean;
   assembly: AssemblyController;
   isComplete: () => boolean;
   /**
@@ -94,42 +111,33 @@ export function createAssemblySession(
   let completeBaseElapsed = 0;
 
   /**
-   * After assembly finishes, OrbitControls auto-rotates the finished suit.
-   * Once the camera has yawed a full turn, we restart the sequence so the
-   * loop reads: assemble → spin showcase → assemble again.
-   * Free-look (user drag) cancels auto-rotate and this auto-replay.
+   * After assembly finishes we orbit the finished suit for
+   * {@link SHOWCASE_ORBIT_SEC}, then soft-restart.
+   * Spin is applied manually each frame (not OrbitControls.autoRotate) so
+   * the period is exact wall-clock and independent of damping / FPS.
+   * Free-look (user drag) cancels this auto-replay.
    * Space pauses/resumes the spin without restarting (R still replays).
    */
   let completeSpinActive = false;
   let completeSpinAccum = 0;
-  let completeSpinLastTheta: number | null = null;
-  /** True when Space froze showcase auto-rotate (not a free-look cancel). */
+  /** True when Space froze showcase spin (not a free-look cancel). */
   let showcaseSpinPaused = false;
   /** GSAP handoff: dematerialize + hangar pull before rebuild. */
   let handoffTween: gsap.core.Timeline | null = null;
-  /** Nominal auto-rotate speed (restored after spin ease-out). */
-  const AUTO_ROTATE_SPEED = controls.autoRotateSpeed || 1.0;
   const _spinOffset = new THREE.Vector3();
-  const _spinSpherical = new THREE.Spherical();
-
-  const cameraAzimuth = (): number => {
-    _spinOffset.copy(camera.position).sub(controls.target);
-    _spinSpherical.setFromVector3(_spinOffset);
-    return _spinSpherical.theta;
-  };
+  const _spinAxis = new THREE.Vector3(0, 1, 0);
 
   const killHandoff = () => {
     handoffTween?.kill();
     handoffTween = null;
-    controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
   };
 
   const stopCompleteSpinTracking = () => {
     completeSpinActive = false;
     completeSpinAccum = 0;
-    completeSpinLastTheta = null;
     showcaseSpinPaused = false;
-    controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
+    // Never leave OrbitControls auto-spin on — we own the showcase orbit.
+    controls.autoRotate = false;
   };
 
   const startCompleteSpinTracking = () => {
@@ -140,30 +148,26 @@ export function createAssemblySession(
     }
     completeSpinActive = true;
     completeSpinAccum = 0;
-    completeSpinLastTheta = null;
     showcaseSpinPaused = false;
-    controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
+    controls.autoRotate = false;
   };
 
   /** Freeze finished-suit orbit in place (Space while complete). */
   const pauseShowcaseSpin = () => {
-    controls.autoRotate = false;
     showcaseSpinPaused = true;
+    controls.autoRotate = false;
     // Keep completeSpinActive + accum so resume continues the same turn.
-    completeSpinLastTheta = null;
   };
 
   /** Resume finished-suit idle orbit after a Space pause. */
   const resumeShowcaseSpin = () => {
     if (reducedMotion || loopFullCycle) return;
-    controls.autoRotate = true;
     showcaseSpinPaused = false;
+    controls.autoRotate = false;
     if (!completeSpinActive) {
       // Drag killed tracking earlier — start a fresh full-turn watch.
       startCompleteSpinTracking();
-      return;
     }
-    completeSpinLastTheta = null;
   };
 
   const refreshHintCopy = () => {
@@ -181,14 +185,16 @@ export function createAssemblySession(
    * from the cinematic lookTarget.
    */
   const setOrbitMode = (
-    mode: 'free' | 'complete',
+    _mode: 'free' | 'complete',
     opts?: { preserveTarget?: boolean },
   ) => {
     if (!opts?.preserveTarget) {
       controls.target.copy(lookTarget);
     }
     controls.enabled = true;
-    controls.autoRotate = mode === 'complete';
+    // Showcase yaw is manual in update() — never use OrbitControls.autoRotate
+    // (enableDamping made autoRotateSpeed feel inert / FPS-coupled).
+    controls.autoRotate = false;
   };
 
   // Declared before callbacks so they can call into the controller once assigned.
@@ -235,9 +241,9 @@ export function createAssemblySession(
   };
 
   const syncDebugPauseLabel = () => {
-    // Complete showcase: "paused" when auto-rotate is off; assembly: GSAP pause.
+    // Complete showcase: Space freeze; assembly: GSAP pause.
     const paused = assemblyComplete
-      ? !controls.autoRotate
+      ? showcaseSpinPaused || !completeSpinActive
       : assembly.isPaused() || !assembly.isPlaying();
     ui.setDebugPaused(paused);
     audioTimeline?.setPaused(paused);
@@ -281,7 +287,6 @@ export function createAssemblySession(
     const preserve = opts?.preserveCamera || assembly.userOwnsCamera();
     if (preserve) {
       setOrbitMode('free', { preserveTarget: true });
-      controls.autoRotate = false;
       stopCompleteSpinTracking();
     } else {
       setOrbitMode('complete');
@@ -408,7 +413,6 @@ export function createAssemblySession(
     killHandoff();
     stopCompleteSpinTracking();
     controls.autoRotate = false;
-    controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
     clearPick();
     // Keep assemblyComplete until handoff ends so Space doesn't re-engage spin
     assemblyComplete = true;
@@ -553,7 +557,7 @@ export function createAssemblySession(
       // True complete only (after camera tail / skip). Integrity can hit 100%
       // while the hero pullback still runs — that window must resume GSAP,
       // not toggle showcase spin (Space would otherwise strand the timeline).
-      if (controls.autoRotate) {
+      if (completeSpinActive && !showcaseSpinPaused) {
         pauseShowcaseSpin();
       } else {
         resumeShowcaseSpin();
@@ -662,51 +666,57 @@ export function createAssemblySession(
   });
 
   /**
-   * Call each frame after controls.update(). Accumulates yaw while the
-   * finished suit auto-rotates; after a full turn, soft-restarts assembly.
-   * (Disabled while AUDIO LOOP is on — that path restarts on onComplete.)
+   * Manually yaws the camera around the suit for {@link SHOWCASE_ORBIT_SEC},
+   * then soft-restarts. (Disabled while AUDIO LOOP is on.)
+   * @returns true if this frame owned the camera (caller should skip controls.update).
    */
-  const update = () => {
-    if (loopFullCycle) return;
-    if (handoffTween) return;
-    if (!completeSpinActive || !assemblyComplete) return;
+  const update = (deltaSec: number): boolean => {
+    if (loopFullCycle) return false;
+    if (handoffTween) return false;
+    if (!completeSpinActive || !assemblyComplete) return false;
 
     // Space pause: freeze accum mid-turn; do not treat as free-look cancel.
-    if (showcaseSpinPaused || !controls.autoRotate) {
-      if (showcaseSpinPaused) return;
-      // User drag (or anything else) kills idle spin — stay on finished suit.
+    if (showcaseSpinPaused) return false;
+
+    // User drag claimed free-look — stay on finished suit, no auto-replay.
+    if (assembly.userOwnsCamera()) {
       stopCompleteSpinTracking();
-      return;
+      return false;
     }
 
-    const theta = cameraAzimuth();
-    if (completeSpinLastTheta === null) {
-      completeSpinLastTheta = theta;
-      return;
-    }
+    // Clamp tab-resume spikes so we don't skip most of the orbit in one frame
+    const dt = Math.min(0.05, Math.max(0, deltaSec));
+    if (dt <= 0) return true;
 
-    let dTheta = theta - completeSpinLastTheta;
-    // Unwrap so continuous spin does not flip sign at ±π
-    while (dTheta > Math.PI) dTheta -= Math.PI * 2;
-    while (dTheta < -Math.PI) dTheta += Math.PI * 2;
-    completeSpinLastTheta = theta;
-    completeSpinAccum += Math.abs(dTheta);
-
-    // Ease auto-rotate down as the turn completes so the handoff doesn’t cut
+    // Ease spin down as the turn completes so the handoff doesn’t cut hard
     const remaining = Math.PI * 2 - completeSpinAccum;
+    let speedMul = 1;
     if (remaining < SPIN_EASE_OUT_RAD && remaining > 0) {
       const t = remaining / SPIN_EASE_OUT_RAD;
-      // Smoothstep ease-out of spin rate
+      // Smoothstep ease-out
       const ease = t * t * (3 - 2 * t);
-      controls.autoRotateSpeed = AUTO_ROTATE_SPEED * Math.max(0.12, ease);
-    } else {
-      controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
+      speedMul = Math.max(0.12, ease);
     }
+
+    // Same sign as OrbitControls._rotateLeft (theta decreases → CW from above)
+    const angle = (-(Math.PI * 2) / SHOWCASE_ORBIT_SEC) * dt * speedMul;
+
+    // Orbit about the cinematic pivot; keep controls.target in sync
+    const pivot = lookTarget;
+    controls.target.copy(pivot);
+    _spinOffset.copy(camera.position).sub(pivot);
+    _spinOffset.applyAxisAngle(_spinAxis, angle);
+    camera.position.copy(pivot).add(_spinOffset);
+    camera.lookAt(pivot);
+
+    completeSpinAccum += Math.abs(angle);
 
     if (completeSpinAccum >= Math.PI * 2 - 1e-3) {
       stopCompleteSpinTracking();
       softRestartFromShowcase();
+      return false;
     }
+    return true;
   };
 
   return {
@@ -715,6 +725,11 @@ export function createAssemblySession(
     togglePause,
     seek,
     update,
+    isShowcaseOrbiting: () =>
+      completeSpinActive &&
+      assemblyComplete &&
+      !showcaseSpinPaused &&
+      !assembly.userOwnsCamera(),
     assembly,
     isComplete: () => assemblyComplete,
     getHudElapsed,

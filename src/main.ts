@@ -69,8 +69,8 @@ async function boot(): Promise<void> {
   controls.maxPolarAngle = Math.PI * 0.55;
   controls.target.copy(lookTarget);
   controls.enabled = false;
+  // Showcase orbit is driven in assemblySession.update (not OrbitControls.autoRotate).
   controls.autoRotate = false;
-  // 1.0 ≈ 60s per full orbit (Three.js: 2.0 ≈ 30s at 60fps)
   controls.autoRotateSpeed = 1.0;
 
   ui.setLoadingProgress(0.95);
@@ -128,6 +128,10 @@ async function boot(): Promise<void> {
 
     const delta = clock.getDelta();
 
+    // Showcase orbit owns the camera on those frames — skip OrbitControls
+    // so damping / spherical rebuild cannot fight or dilute the yaw.
+    const showcaseOrbiting = session.update(delta);
+
     // Camera ownership (scrub ↔ orbit):
     // - Path mode (!userOwnsCamera): cinematic lookTarget + FOV from the
     //   timeline; OrbitControls still runs so distance/angles keep the
@@ -135,20 +139,17 @@ async function boot(): Promise<void> {
     //   and changed framing).
     // - Free-look (userOwnsCamera): orbit owns target + position.
     // Scrub re-attaches to path; viewport drag detaches (bindInput).
-    if (controls.enabled) {
+    if (controls.enabled && !showcaseOrbiting) {
       const ownsCamera = session.assembly.userOwnsCamera();
       if (!ownsCamera) {
         // Pivot follows the path so composition tracks cinematic look-ats
         controls.target.copy(lookTarget);
       }
-      controls.update();
+      controls.update(delta);
       if (ownsCamera) {
         lookTarget.copy(controls.target);
       }
     }
-
-    // Finished suit: after a full idle 360°, restart the assembly sequence.
-    session.update();
 
     // Timeline-synced HUD clock (scrub-aware; keeps counting after complete).
     ui.updateClock(session.getHudElapsed());
