@@ -265,6 +265,15 @@ body.scene-ready #app {
   place-items: center;
   isolation: isolate;
   transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  /* Kill iOS/Android blue/gray tap flash and sticky selection chrome */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+  user-select: none;
+  outline: none;
+  -webkit-user-select: none;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .start-btn.jarvis-orb:hover {
@@ -275,10 +284,35 @@ body.scene-ready #app {
   transform: scale(0.985);
 }
 
+/* Keyboard only — never a persistent ring after touch / mouse */
+.start-btn.jarvis-orb:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.start-btn.jarvis-orb:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
 .start-btn.jarvis-orb:focus-visible {
   outline: 2px solid rgba(126, 232, 255, 0.75);
   outline-offset: 8px;
   border-radius: 50%;
+}
+
+/* Touch devices: no focus ring, no hover scale sticky state after tap */
+@media (hover: none), (pointer: coarse) {
+  .start-btn.jarvis-orb:hover,
+  .start-btn.jarvis-orb:active {
+    transform: none;
+  }
+
+  .start-btn.jarvis-orb:focus,
+  .start-btn.jarvis-orb:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
 }
 
 /* Soft cyan bloom behind the rings */
@@ -648,7 +682,7 @@ body.scene-ready #app {
 }
 
 /* —— HUD frame (corner brackets) ——
-   Top L-brackets sit above the top HUD chrome (not under MK III / JARVIS).
+   Top L-brackets sit above the top HUD chrome (not under brand / status).
    Sides + bottom frame the 3D view; header padding clears the top pair.
 */
 .hud-frame {
@@ -946,7 +980,7 @@ body.systems-online .hud-frame.is-booted .hud-corner {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
-  max-height: 4.25rem;
+  max-height: 3.25rem;
 }
 
 .jarvis-panel.is-entering {
@@ -975,36 +1009,21 @@ body.systems-online .hud-frame.is-booted .hud-corner {
 }
 
 .jarvis-panel-inner {
-  padding: 0.15rem 0.25rem 0.2rem;
+  padding: 0.1rem 0.25rem 0.15rem;
 }
 
-.jarvis-panel-head {
+/* Status + integrity % on one row (no J.A.R.V.I.S. chrome) */
+.jarvis-status-row {
   display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-bottom: 0.18rem;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.65rem;
+  margin-bottom: 0.22rem;
   min-width: 0;
 }
 
-.jarvis-mark {
-  color: var(--cyan);
-  font-size: 0.5rem;
-  line-height: 1;
-  text-shadow: 0 0 8px var(--holo-glow);
-  animation: jarvis-mark-pulse 2s ease-in-out infinite;
-}
-
-.jarvis-title {
-  font-size: 0.48rem;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  color: var(--cyan);
-  text-shadow: 0 0 10px rgba(126, 232, 255, 0.3);
-  flex-shrink: 0;
-}
-
 .jarvis-int {
-  margin-left: auto;
+  flex-shrink: 0;
   font-size: 0.42rem;
   letter-spacing: 0.1em;
   font-variant-numeric: tabular-nums;
@@ -1020,18 +1039,6 @@ body.systems-online .hud-frame.is-booted .hud-corner {
 /* SYSTEMS ONLINE — soft cyan resolve before the panel collapses */
 .jarvis-panel.is-complete .jarvis-panel-inner {
   animation: jarvis-complete-settle 0.75s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.jarvis-panel.is-complete .jarvis-mark {
-  color: var(--cyan-bright);
-  animation: none;
-  opacity: 1;
-  text-shadow: 0 0 12px rgba(126, 232, 255, 0.55);
-}
-
-.jarvis-panel.is-complete .jarvis-title {
-  color: var(--cyan-bright);
-  text-shadow: 0 0 14px rgba(126, 232, 255, 0.4);
 }
 
 .jarvis-panel.is-complete .jarvis-status {
@@ -1051,9 +1058,10 @@ body.systems-online .hud-frame.is-booted .hud-corner {
   }
 }
 
-/* Primary status line (replaces old .status under title) */
+/* Primary status line */
 .jarvis-status {
-  margin: 0 0 0.28rem;
+  margin: 0;
+  min-width: 0;
   font-size: clamp(0.52rem, 1vw, 0.6rem);
   letter-spacing: 0.14em;
   color: var(--muted);
@@ -1122,16 +1130,6 @@ body.systems-online .hud-frame.is-booted .hud-corner {
 .jarvis-panel.is-complete .jarvis-progress-fill {
   background: linear-gradient(90deg, #3ad0ff, var(--cyan), var(--cyan-bright));
   box-shadow: 0 0 12px rgba(126, 232, 255, 0.4);
-}
-
-@keyframes jarvis-mark-pulse {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-  50% {
-    opacity: 1;
-  }
 }
 
 /* One-shot corner flash when systems go online (not permanent).
@@ -2264,10 +2262,15 @@ body.director-mode .audio-timeline:not(.hidden) {
     left: 0.55rem;
   }
 
+  /* Brand + DIR/time share the top row; status/progress sits under full width */
   .hud-top {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    gap: 0.35rem;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'brand right'
+      'center center';
+    justify-items: stretch;
+    align-items: center;
+    gap: 0.35rem 0.5rem;
     padding-top: 2.15rem;
   }
 
@@ -2275,11 +2278,23 @@ body.director-mode .audio-timeline:not(.hidden) {
     padding-top: 2rem;
   }
 
-  .hud-brand-wrap,
+  .hud-brand-wrap {
+    grid-area: brand;
+    justify-self: start;
+    align-items: flex-start;
+    text-align: left;
+  }
+
   .hud-top-right {
-    justify-self: center;
+    grid-area: right;
+    justify-self: end;
     align-items: center;
-    text-align: center;
+  }
+
+  .hud-center {
+    grid-area: center;
+    width: 100%;
+    max-width: 100%;
   }
 
   .hud-brand-sub {
@@ -2309,7 +2324,6 @@ body.director-mode .audio-timeline:not(.hidden) {
   .jarvis-status.is-updating,
   .jarvis-panel.is-entering,
   .jarvis-panel.is-complete .jarvis-panel-inner,
-  .jarvis-mark,
   .jarvis-orb-glow,
   .jarvis-orb-ring-outer,
   .jarvis-orb-ring-mid,
@@ -2337,7 +2351,7 @@ body.director-mode .audio-timeline:not(.hidden) {
     opacity: 1;
     transform: translateY(0);
     visibility: visible;
-    max-height: 4.25rem;
+    max-height: 3.25rem;
   }
 
   .jarvis-panel.is-complete .jarvis-panel-inner {
@@ -2369,7 +2383,6 @@ body.reduced-motion.director-mode .reclass-panel:not(.hidden),
 body.reduced-motion.director-mode .audio-timeline:not(.hidden),
 body.reduced-motion .jarvis-panel.is-entering,
 body.reduced-motion .jarvis-panel.is-complete .jarvis-panel-inner,
-body.reduced-motion .jarvis-mark,
 body.reduced-motion .jarvis-orb-glow,
 body.reduced-motion .jarvis-orb-ring-outer,
 body.reduced-motion .jarvis-orb-ring-mid,
