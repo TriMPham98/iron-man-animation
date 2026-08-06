@@ -2272,6 +2272,15 @@ body.director-mode .audio-timeline:not(.hidden) {
     align-items: center;
     gap: 0.35rem 0.5rem;
     padding-top: 2.15rem;
+    /* No gold hairline under the header on small screens */
+    border-bottom: none;
+  }
+
+  .hud-top:not(.is-jarvis-live),
+  .hud-top.is-jarvis-live,
+  body.systems-online .hud-top:not(.is-jarvis-live) {
+    border-bottom: none;
+    border-bottom-color: transparent;
   }
 
   .hud-top:not(.is-jarvis-live) {
