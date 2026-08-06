@@ -569,6 +569,7 @@ export function createOverlay(): OverlayHandles {
   // Enter / Space / R while gated — same as clicking INITIATE
   window.addEventListener('keydown', (e) => {
     if (!startGateVisible || startConsumed) return;
+    if (e.repeat) return;
     if (isTypingTarget(e.target)) return;
     if (
       e.key === 'Enter' ||

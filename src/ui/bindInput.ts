@@ -58,6 +58,24 @@ export function bindInput(options: BindInputOptions): void {
     // the INITIATE orb still on screen.
     if (!ui.hasInitiated()) return;
 
+    // ← / → — scrub assembly progress (Shift = coarser steps).
+    // Key-repeat is intentional so holding an arrow keeps scrubbing.
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (isTypingTarget(e.target)) return;
+      e.preventDefault();
+      const cur = session.assembly?.getProgress() ?? 0;
+      const step = e.shiftKey ? SCRUB_STEP_COARSE : SCRUB_STEP;
+      const next =
+        e.key === 'ArrowLeft'
+          ? Math.max(0, cur - step)
+          : Math.min(1, cur + step);
+      session.seek(next);
+      return;
+    }
+
+    // Held keys re-fire keydown — would spam replay / pause / skip and wreck timing.
+    if (e.repeat) return;
+
     if (e.key === 'r' || e.key === 'R') {
       if (isTypingTarget(e.target)) return;
       session.startSequence();
@@ -78,23 +96,11 @@ export function bindInput(options: BindInputOptions): void {
       session.togglePause();
       return;
     }
-    // ← / → — scrub assembly progress (Shift = coarser steps)
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-      if (isTypingTarget(e.target)) return;
-      e.preventDefault();
-      const cur = session.assembly?.getProgress() ?? 0;
-      const step = e.shiftKey ? SCRUB_STEP_COARSE : SCRUB_STEP;
-      const next =
-        e.key === 'ArrowLeft'
-          ? Math.max(0, cur - step)
-          : Math.min(1, cur + step);
-      session.seek(next);
-      return;
-    }
 
     // Director reclass: A add · M minimize · [ ] cycle target wave
     if (!ui.isDirectorMode()) return;
     if (isTypingTarget(e.target)) return;
+    if (e.repeat) return;
     if (e.key === 'a' || e.key === 'A') {
       e.preventDefault();
       ui.addReclassEntry();
@@ -111,7 +117,25 @@ export function bindInput(options: BindInputOptions): void {
     }
   });
 
+  // Wheel dolly fires OrbitControls 'start' without a pointer-drag. Claiming
+  // free-look on zoom used to yank the cinematic camera (and cancel the
+  // showcase orbit) whenever the user scrolled.
+  let pointerOrbitIntent = false;
+  canvas.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (e.button === 0) pointerOrbitIntent = true;
+    },
+    true,
+  );
+  const clearPointerOrbitIntent = () => {
+    pointerOrbitIntent = false;
+  };
+  window.addEventListener('pointerup', clearPointerOrbitIntent, true);
+  window.addEventListener('pointercancel', clearPointerOrbitIntent, true);
+
   controls.addEventListener('start', () => {
+    if (!pointerOrbitIntent) return;
     // User take-over stops idle spin (complete mode); free-look while paused has no spin
     if (controls.autoRotate) controls.autoRotate = false;
     // Orbit detaches from the cinematic path. Scrubbing the audio timeline

@@ -1,3 +1,4 @@
+import gsap from 'gsap';
 import {
   type AudioEngine,
   createAudioEngine,
@@ -1374,11 +1375,14 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   window.addEventListener('keydown', onWindowKeydown, true);
 
   // ── Transport sync ──────────────────────────────────────────────
-  let scheduled: number[] = [];
+  // Use GSAP delayedCall (same ticker / lagSmoothing as the assembly timeline)
+  // instead of window.setTimeout — under main-thread load, setTimeout drifts
+  // relative to GSAP and plate hits / SFX fall out of sync.
+  let scheduled: gsap.core.Tween[] = [];
   let playingFrom: number | null = null;
 
   const cancelSchedule = () => {
-    for (const id of scheduled) window.clearTimeout(id);
+    for (const tw of scheduled) tw.kill();
     scheduled = [];
     playingFrom = null;
   };
@@ -1415,8 +1419,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
 
       if (c.start >= sec - 1e-4) {
         // Negative playhead → longer delay (silent lead-in before cascade)
-        const delay = (c.start - sec) * 1000;
-        const tid = window.setTimeout(() => {
+        const delaySec = Math.max(0, c.start - sec);
+        const tw = gsap.delayedCall(delaySec, () => {
           if (playingFrom == null) return;
           engine.play({
             id: c.id,
@@ -1426,8 +1430,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
             clipOffset: 0,
             ...gain,
           });
-        }, Math.max(0, delay));
-        scheduled.push(tid);
+        });
+        scheduled.push(tw);
       } else {
         // Mid-clip: start immediately at offset into crop (continue fade ramp)
         const into = sec - c.start;
