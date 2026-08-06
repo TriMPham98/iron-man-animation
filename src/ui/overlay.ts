@@ -472,18 +472,34 @@ export function createOverlay(): OverlayHandles {
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
   };
 
+  /**
+   * Exit handoff: orb flares → shrinks in place,
+   * assembly boots mid-shrink so the JARVIS panel enters as the CTA dissolves.
+   */
+  const START_EXIT_MS = 920;
+  /** When to kick assembly (after the bright pulse, mid continuous shrink). */
+  const START_ASSEMBLY_AT_MS = 320;
+
+  let startExitTimer = 0;
+  let startAssemblyTimer = 0;
+
   const hideStartGate = () => {
     startGateVisible = false;
+    window.clearTimeout(startExitTimer);
+    window.clearTimeout(startAssemblyTimer);
     if (!startGate) return;
+    startGate.classList.remove('is-exiting');
     startGate.classList.add('is-hidden');
     startGate.setAttribute('aria-hidden', 'true');
+    startBtn?.removeAttribute('disabled');
   };
 
   const showStartGate = () => {
     if (startConsumed || !startGate) return;
     startGateVisible = true;
-    startGate.classList.remove('is-hidden');
+    startGate.classList.remove('is-hidden', 'is-exiting');
     startGate.setAttribute('aria-hidden', 'false');
+    startBtn?.removeAttribute('disabled');
     // Focus after HUD boot so Tab/Enter land on the CTA
     window.requestAnimationFrame(() => {
       if (startGateVisible) startBtn?.focus({ preventScroll: true });
@@ -493,8 +509,36 @@ export function createOverlay(): OverlayHandles {
   const fireStart = () => {
     if (startConsumed || !startGateVisible) return;
     startConsumed = true;
-    hideStartGate();
-    startHandler?.();
+    startGateVisible = false;
+
+    const runAssembly = () => {
+      startHandler?.();
+    };
+
+    // Reduced motion / missing markup: hard cut into assembly
+    if (!startGate || reducedMotion()) {
+      hideStartGate();
+      runAssembly();
+      return;
+    }
+
+    startBtn?.blur();
+    startBtn?.setAttribute('disabled', '');
+    startGate.setAttribute('aria-hidden', 'true');
+    // Retrigger exit animation cleanly if class was stuck
+    startGate.classList.remove('is-exiting', 'is-hidden');
+    void startGate.offsetWidth;
+    startGate.classList.add('is-exiting');
+
+    // Assembly + JARVIS panel enter while the orb is still flying up
+    window.clearTimeout(startAssemblyTimer);
+    startAssemblyTimer = window.setTimeout(runAssembly, START_ASSEMBLY_AT_MS);
+
+    window.clearTimeout(startExitTimer);
+    startExitTimer = window.setTimeout(() => {
+      startGate.classList.add('is-hidden');
+      startGate.classList.remove('is-exiting');
+    }, START_EXIT_MS);
   };
 
   startBtn?.addEventListener('click', (e) => {

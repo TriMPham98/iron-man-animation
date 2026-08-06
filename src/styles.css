@@ -201,6 +201,54 @@ body.scene-ready #app {
   pointer-events: none;
 }
 
+/* Exit: vignette clears; orb pulses then shrinks in place */
+.start-gate.is-exiting {
+  pointer-events: none;
+  animation: start-gate-vignette-out 0.92s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.start-gate.is-exiting .start-btn.jarvis-orb {
+  pointer-events: none;
+  cursor: default;
+  transition: none;
+  /* linear here — per-keyframe easing owns the pulse + continuous shrink */
+  animation: jarvis-orb-exit 0.9s linear forwards;
+  transform-origin: center center;
+  will-change: transform, opacity, filter;
+}
+
+.start-gate.is-exiting .start-btn.jarvis-orb:hover,
+.start-gate.is-exiting .start-btn.jarvis-orb:active {
+  transform: none;
+}
+
+.start-gate.is-exiting .jarvis-orb-glow {
+  animation: jarvis-orb-glow-flare 0.9s linear forwards;
+}
+
+.start-gate.is-exiting .jarvis-orb-label {
+  animation: jarvis-orb-label-out 0.28s ease-out forwards;
+}
+
+.start-gate.is-exiting .jarvis-orb-core {
+  animation: jarvis-orb-core-out 0.9s linear forwards;
+}
+
+/* Spin-up as the sequence engages */
+.start-gate.is-exiting .jarvis-orb-ring-outer,
+.start-gate.is-exiting .jarvis-orb-ticks {
+  animation: jarvis-orb-spin-fast 0.55s linear infinite;
+}
+
+.start-gate.is-exiting .jarvis-orb-ring-mid,
+.start-gate.is-exiting .jarvis-orb-accent {
+  animation: jarvis-orb-spin-rev-fast 0.4s linear infinite;
+}
+
+.start-gate.is-exiting .jarvis-orb-ring-outer {
+  filter: drop-shadow(0 0 18px rgba(140, 235, 255, 0.9));
+}
+
 .start-btn.jarvis-orb {
   --orb-size: min(17.5rem, 62vw, 58vh);
   pointer-events: auto;
@@ -478,6 +526,18 @@ body.scene-ready #app {
   }
 }
 
+@keyframes jarvis-orb-spin-fast {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes jarvis-orb-spin-rev-fast {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
 @keyframes jarvis-orb-breathe {
   0%,
   100% {
@@ -487,6 +547,99 @@ body.scene-ready #app {
   50% {
     opacity: 1;
     transform: scale(1.04);
+  }
+}
+
+/*
+  Pulse, then one continuous shrink (no mid-scale plateaus).
+  Per-keyframe timing-function eases the long 1.1 → 0.04 segment smoothly.
+*/
+@keyframes jarvis-orb-exit {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+    filter: brightness(1) blur(0);
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.35, 1);
+  }
+  12% {
+    transform: scale(1.1);
+    opacity: 1;
+    filter: brightness(1.55) blur(0);
+    /* accelerate into nothing — continuous, not stepped */
+    animation-timing-function: cubic-bezier(0.55, 0.05, 0.25, 1);
+  }
+  100% {
+    transform: scale(0.04);
+    opacity: 0;
+    filter: brightness(2.2) blur(2.5px);
+  }
+}
+
+@keyframes start-gate-vignette-out {
+  0% {
+    opacity: 1;
+    background: radial-gradient(
+      circle at center,
+      rgba(4, 12, 22, 0.55) 0%,
+      rgba(4, 10, 18, 0.28) 42%,
+      transparent 68%
+    );
+  }
+  45% {
+    opacity: 1;
+    background: radial-gradient(
+      circle at center,
+      rgba(4, 12, 22, 0.28) 0%,
+      rgba(4, 10, 18, 0.12) 42%,
+      transparent 68%
+    );
+  }
+  100% {
+    opacity: 0;
+    background: transparent;
+  }
+}
+
+@keyframes jarvis-orb-label-out {
+  0% {
+    opacity: 1;
+    letter-spacing: 0.2em;
+    filter: brightness(1);
+  }
+  100% {
+    opacity: 0;
+    letter-spacing: 0.42em;
+    filter: brightness(1.8);
+    transform: scale(1.15);
+  }
+}
+
+@keyframes jarvis-orb-glow-flare {
+  0% {
+    opacity: 0.9;
+    transform: scale(1);
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.35, 1);
+  }
+  12% {
+    opacity: 1;
+    transform: scale(1.15);
+    animation-timing-function: cubic-bezier(0.55, 0.05, 0.25, 1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+
+@keyframes jarvis-orb-core-out {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    animation-timing-function: cubic-bezier(0.55, 0.05, 0.25, 1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.35);
   }
 }
 
@@ -2296,6 +2449,11 @@ body.director-mode .audio-timeline:not(.hidden) {
   .jarvis-orb-ring-mid,
   .jarvis-orb-ticks,
   .jarvis-orb-accent,
+  .start-gate.is-exiting,
+  .start-gate.is-exiting .start-btn.jarvis-orb,
+  .start-gate.is-exiting .jarvis-orb-glow,
+  .start-gate.is-exiting .jarvis-orb-label,
+  .start-gate.is-exiting .jarvis-orb-core,
   .hud-frame.is-online-flash .hud-corner {
     animation: none !important;
   }
@@ -2352,6 +2510,11 @@ body.reduced-motion .jarvis-orb-ring-outer,
 body.reduced-motion .jarvis-orb-ring-mid,
 body.reduced-motion .jarvis-orb-ticks,
 body.reduced-motion .jarvis-orb-accent,
+body.reduced-motion .start-gate.is-exiting,
+body.reduced-motion .start-gate.is-exiting .start-btn.jarvis-orb,
+body.reduced-motion .start-gate.is-exiting .jarvis-orb-glow,
+body.reduced-motion .start-gate.is-exiting .jarvis-orb-label,
+body.reduced-motion .start-gate.is-exiting .jarvis-orb-core,
 body.reduced-motion .hud-frame.is-online-flash .hud-corner {
   animation: none !important;
 }
