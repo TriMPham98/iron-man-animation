@@ -648,32 +648,20 @@ body.scene-ready #app {
 }
 
 /* —— HUD frame (corner brackets) ——
-   Top inset clears MK III / DIR / clock so L-brackets never overlap chrome.
-   Sides + bottom frame the 3D view only.
+   Top L-brackets sit above the top HUD chrome (not under MK III / JARVIS).
+   Sides + bottom frame the 3D view; header padding clears the top pair.
 */
 .hud-frame {
   pointer-events: none;
   position: absolute;
-  /* Default: clear slim top bar (brand + pad) */
-  top: 3.5rem;
+  /* Near the viewport edge so TL/TR read above the header text */
+  top: 0.55rem;
   right: 0.95rem;
   bottom: 0.95rem;
   left: 0.95rem;
-  z-index: 9;
+  z-index: 11;
   opacity: 1;
-  transition:
-    opacity 0.5s ease,
-    top 0.5s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-/* Finished suit: slightly closer under the slim showcase header */
-body.systems-online .hud-frame {
-  top: 3.15rem;
-}
-
-/* Live JARVIS brief (title + status + bar) — keep brackets below the panel */
-body:has(#hud-top.is-jarvis-live) .hud-frame {
-  top: 4.75rem;
+  transition: opacity 0.5s ease;
 }
 
 .hud-frame.hidden {
@@ -787,7 +775,11 @@ body.systems-online .hud-frame.is-booted .hud-corner {
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
   align-items: center;
   gap: 0.75rem;
-  padding-top: 0.9rem;
+  /*
+    Clear the top L-brackets (frame top 0.55rem + corner 1.15rem ≈ 1.7rem)
+    plus margin so MK III / JARVIS / DIR never crowd the gold accents.
+  */
+  padding-top: 2.35rem;
   padding-bottom: 0.9rem;
   transition:
     border-color 0.55s ease,
@@ -1168,9 +1160,9 @@ body.systems-online .hud-frame.is-booted .hud-corner {
   }
 }
 
-/* Slimmer top bar when JARVIS is dismissed (showcase) */
+/* Slimmer bottom pad when JARVIS is dismissed (showcase) — keep top clear of L's */
 .hud-top:not(.is-jarvis-live) {
-  padding-top: 0.7rem;
+  padding-top: 2.15rem;
   padding-bottom: 0.7rem;
   border-bottom-color: rgba(201, 162, 39, 0.1);
   background: linear-gradient(to bottom, rgba(5, 5, 8, 0.58), transparent);
@@ -2264,26 +2256,23 @@ body.director-mode .audio-timeline:not(.hidden) {
     font-size: 0.55rem;
   }
 
-  /* Stacked header is taller — keep L-brackets below brand / clock */
+  /* Top L's stay above chrome; tighten side/bottom insets only */
   .hud-frame {
-    top: 5.25rem;
+    top: 0.45rem;
     right: 0.55rem;
     bottom: 0.55rem;
     left: 0.55rem;
-  }
-
-  body.systems-online .hud-frame {
-    top: 4.85rem;
-  }
-
-  body:has(#hud-top.is-jarvis-live) .hud-frame {
-    top: 7rem;
   }
 
   .hud-top {
     grid-template-columns: 1fr;
     justify-items: center;
     gap: 0.35rem;
+    padding-top: 2.15rem;
+  }
+
+  .hud-top:not(.is-jarvis-live) {
+    padding-top: 2rem;
   }
 
   .hud-brand-wrap,
