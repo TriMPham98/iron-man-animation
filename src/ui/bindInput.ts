@@ -57,6 +57,8 @@ export function bindInput(options: BindInputOptions): void {
     // startSequence() while the gate was still pending, so assembly ran with
     // the INITIATE orb still on screen.
     if (!ui.hasInitiated()) return;
+    // Browser / OS chords (⌘R refresh, ⌃S, ⌥←, etc.) must not steal hotkeys.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
 
     // ← / → — scrub assembly progress (Shift = coarser steps).
     // Key-repeat is intentional so holding an arrow keeps scrubbing.

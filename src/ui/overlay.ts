@@ -570,6 +570,8 @@ export function createOverlay(): OverlayHandles {
   window.addEventListener('keydown', (e) => {
     if (!startGateVisible || startConsumed) return;
     if (e.repeat) return;
+    // ⌘R / ⌃R must refresh the page, not fire INITIATE (capture phase).
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (isTypingTarget(e.target)) return;
     if (
       e.key === 'Enter' ||
