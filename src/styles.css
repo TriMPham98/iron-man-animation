@@ -173,8 +173,8 @@ body.scene-ready #app {
 }
 
 /*
-  Start gate — circular J.A.R.V.I.S. holographic orb (reference: classic HUD ring).
-  Center CTA only; hangar stays visible behind.
+  Start gate — cyan holographic ring CTA only (no chip/readout chrome).
+  Hangar stays visible behind a soft vignette.
 */
 .start-gate {
   position: absolute;
@@ -185,12 +185,11 @@ body.scene-ready #app {
   justify-content: center;
   pointer-events: none;
   opacity: 1;
-  /* Soft vignette so the orb reads over the hangar without a solid panel */
   background: radial-gradient(
     circle at center,
-    rgba(4, 12, 22, 0.55) 0%,
-    rgba(4, 10, 18, 0.28) 42%,
-    transparent 68%
+    rgba(4, 14, 26, 0.58) 0%,
+    rgba(4, 10, 18, 0.3) 40%,
+    transparent 70%
   );
   transition: opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -211,7 +210,6 @@ body.scene-ready #app {
   pointer-events: none;
   cursor: default;
   transition: none;
-  /* linear here — per-keyframe easing owns the pulse + continuous shrink */
   animation: jarvis-orb-exit 0.9s linear forwards;
   transform-origin: center center;
   will-change: transform, opacity, filter;
@@ -222,8 +220,14 @@ body.scene-ready #app {
   transform: none;
 }
 
-.start-gate.is-exiting .jarvis-orb-glow {
+.start-gate.is-exiting .jarvis-orb-glow,
+.start-gate.is-exiting .jarvis-orb-halo {
   animation: jarvis-orb-glow-flare 0.9s linear forwards;
+}
+
+.start-gate.is-exiting .jarvis-orb-pulse {
+  animation: none;
+  opacity: 0;
 }
 
 .start-gate.is-exiting .jarvis-orb-label {
@@ -236,21 +240,30 @@ body.scene-ready #app {
 
 /* Spin-up as the sequence engages */
 .start-gate.is-exiting .jarvis-orb-ring-outer,
-.start-gate.is-exiting .jarvis-orb-ticks {
-  animation: jarvis-orb-spin-fast 0.55s linear infinite;
+.start-gate.is-exiting .jarvis-orb-ticks,
+.start-gate.is-exiting .jarvis-orb-ticks-fine,
+.start-gate.is-exiting .jarvis-orb-sweep {
+  animation: jarvis-orb-spin-fast 0.45s linear infinite;
 }
 
 .start-gate.is-exiting .jarvis-orb-ring-mid,
-.start-gate.is-exiting .jarvis-orb-accent {
-  animation: jarvis-orb-spin-rev-fast 0.4s linear infinite;
+.start-gate.is-exiting .jarvis-orb-accent,
+.start-gate.is-exiting .jarvis-orb-accent-cyan {
+  animation: jarvis-orb-spin-rev-fast 0.35s linear infinite;
 }
 
 .start-gate.is-exiting .jarvis-orb-ring-outer {
-  filter: drop-shadow(0 0 18px rgba(140, 235, 255, 0.9));
+  filter:
+    drop-shadow(0 0 10px rgba(160, 240, 255, 1))
+    drop-shadow(0 0 28px rgba(80, 210, 255, 0.95));
 }
 
 .start-btn.jarvis-orb {
-  --orb-size: min(17.5rem, 62vw, 58vh);
+  --orb-size: min(19rem, 68vw, 62vh);
+  --orb-cyan: rgba(130, 236, 255, 0.98);
+  --orb-cyan-mid: rgba(90, 210, 255, 0.82);
+  --orb-cyan-dim: rgba(70, 180, 230, 0.55);
+  --orb-glow: rgba(100, 220, 255, 0.7);
   pointer-events: auto;
   position: relative;
   width: var(--orb-size);
@@ -264,8 +277,7 @@ body.scene-ready #app {
   display: grid;
   place-items: center;
   isolation: isolate;
-  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
-  /* Kill iOS/Android blue/gray tap flash and sticky selection chrome */
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
   touch-action: manipulation;
@@ -277,14 +289,13 @@ body.scene-ready #app {
 }
 
 .start-btn.jarvis-orb:hover {
-  transform: scale(1.03);
+  transform: scale(1.045);
 }
 
 .start-btn.jarvis-orb:active {
-  transform: scale(0.985);
+  transform: scale(0.98);
 }
 
-/* Keyboard only — never a persistent ring after touch / mouse */
 .start-btn.jarvis-orb:focus {
   outline: none;
   box-shadow: none;
@@ -297,11 +308,10 @@ body.scene-ready #app {
 
 .start-btn.jarvis-orb:focus-visible {
   outline: 2px solid rgba(126, 232, 255, 0.75);
-  outline-offset: 8px;
+  outline-offset: 10px;
   border-radius: 50%;
 }
 
-/* Touch devices: no focus ring, no hover scale sticky state after tap */
 @media (hover: none), (pointer: coarse) {
   .start-btn.jarvis-orb:hover,
   .start-btn.jarvis-orb:active {
@@ -315,241 +325,388 @@ body.scene-ready #app {
   }
 }
 
-/* Soft cyan bloom behind the rings */
-.jarvis-orb-glow {
-  position: absolute;
-  inset: 8%;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(80, 200, 255, 0.22) 0%,
-    rgba(40, 140, 200, 0.1) 38%,
-    transparent 68%
-  );
-  box-shadow:
-    0 0 48px rgba(80, 210, 255, 0.28),
-    0 0 96px rgba(40, 160, 220, 0.18);
-  animation: jarvis-orb-breathe 3.2s ease-in-out infinite;
-  z-index: 0;
-  pointer-events: none;
-}
-
-.jarvis-orb-ring {
+/* Shared ring positioning */
+.jarvis-orb-ring,
+.jarvis-orb-halo,
+.jarvis-orb-pulse,
+.jarvis-orb-ticks,
+.jarvis-orb-ticks-fine,
+.jarvis-orb-accent,
+.jarvis-orb-accent-cyan,
+.jarvis-orb-sweep,
+.jarvis-orb-glow,
+.jarvis-orb-core {
   position: absolute;
   border-radius: 50%;
   pointer-events: none;
   box-sizing: border-box;
 }
 
+/* Deep cyan bloom */
+.jarvis-orb-glow {
+  inset: 4%;
+  background: radial-gradient(
+    circle,
+    rgba(90, 210, 255, 0.28) 0%,
+    rgba(40, 150, 210, 0.14) 32%,
+    rgba(20, 80, 140, 0.06) 52%,
+    transparent 72%
+  );
+  box-shadow:
+    0 0 40px rgba(80, 210, 255, 0.35),
+    0 0 90px rgba(40, 160, 220, 0.22),
+    0 0 140px rgba(30, 120, 200, 0.12);
+  animation: jarvis-orb-breathe 3.4s ease-in-out infinite;
+  z-index: 0;
+}
+
+/* Soft outer halo ring */
+.jarvis-orb-halo {
+  inset: -4%;
+  border: 1px solid rgba(100, 210, 255, 0.18);
+  box-shadow:
+    0 0 24px rgba(80, 200, 255, 0.12),
+    inset 0 0 30px rgba(60, 180, 240, 0.06);
+  animation: jarvis-orb-halo-pulse 4s ease-in-out infinite;
+  z-index: 1;
+}
+
+/* Expanding sonar pulses */
+.jarvis-orb-pulse {
+  inset: 2%;
+  border: 1.5px solid rgba(120, 230, 255, 0.55);
+  opacity: 0;
+  z-index: 1;
+}
+
+.jarvis-orb-pulse-a {
+  animation: jarvis-orb-sonar 3.6s cubic-bezier(0.15, 0.7, 0.25, 1) infinite;
+}
+
+.jarvis-orb-pulse-b {
+  animation: jarvis-orb-sonar 3.6s cubic-bezier(0.15, 0.7, 0.25, 1) 1.2s infinite;
+}
+
 /* Outermost segmented ring — thick cyan band with gaps */
 .jarvis-orb-ring-outer {
   inset: 0;
   background: conic-gradient(
-    from -35deg,
-    rgba(120, 230, 255, 0.98) 0deg 48deg,
-    transparent 48deg 62deg,
-    rgba(90, 205, 255, 0.78) 62deg 110deg,
-    transparent 110deg 124deg,
-    rgba(130, 235, 255, 0.95) 124deg 188deg,
-    transparent 188deg 202deg,
-    rgba(95, 210, 255, 0.72) 202deg 258deg,
-    transparent 258deg 274deg,
-    rgba(125, 232, 255, 0.98) 274deg 360deg
+    from -28deg,
+    var(--orb-cyan) 0deg 42deg,
+    transparent 42deg 54deg,
+    var(--orb-cyan-mid) 54deg 98deg,
+    transparent 98deg 112deg,
+    rgba(150, 240, 255, 0.95) 112deg 168deg,
+    transparent 168deg 180deg,
+    var(--orb-cyan-mid) 180deg 228deg,
+    transparent 228deg 244deg,
+    var(--orb-cyan) 244deg 300deg,
+    transparent 300deg 316deg,
+    rgba(110, 220, 255, 0.88) 316deg 360deg
   );
   -webkit-mask: radial-gradient(
     farthest-side,
-    transparent calc(100% - 11px),
-    #fff calc(100% - 10px)
+    transparent calc(100% - 12px),
+    #fff calc(100% - 11px)
   );
   mask: radial-gradient(
     farthest-side,
-    transparent calc(100% - 11px),
-    #fff calc(100% - 10px)
+    transparent calc(100% - 12px),
+    #fff calc(100% - 11px)
   );
-  filter: drop-shadow(0 0 12px rgba(100, 220, 255, 0.65));
-  animation: jarvis-orb-spin 28s linear infinite;
-  z-index: 2;
+  filter:
+    drop-shadow(0 0 6px rgba(140, 235, 255, 0.85))
+    drop-shadow(0 0 18px rgba(80, 210, 255, 0.55));
+  animation: jarvis-orb-spin 22s linear infinite;
+  z-index: 3;
 }
 
-/* Mid ring — thinner dashed track */
+/* Mid ring — dashed track + hairline */
 .jarvis-orb-ring-mid {
-  inset: 9%;
-  border: 1.5px solid rgba(100, 210, 255, 0.35);
+  inset: 8.5%;
+  border: 1px solid rgba(100, 210, 255, 0.28);
   box-shadow:
-    0 0 12px rgba(80, 200, 255, 0.25) inset,
-    0 0 14px rgba(80, 200, 255, 0.2);
+    0 0 14px rgba(80, 200, 255, 0.2) inset,
+    0 0 16px rgba(80, 200, 255, 0.18);
   background: conic-gradient(
-    from 20deg,
-    transparent 0deg 8deg,
-    rgba(120, 230, 255, 0.55) 8deg 14deg,
-    transparent 14deg 28deg,
-    rgba(100, 210, 255, 0.4) 28deg 32deg,
-    transparent 32deg 48deg,
-    rgba(120, 230, 255, 0.5) 48deg 54deg,
-    transparent 54deg 72deg,
-    rgba(100, 210, 255, 0.35) 72deg 76deg,
-    transparent 76deg 100deg,
-    rgba(120, 230, 255, 0.55) 100deg 108deg,
-    transparent 108deg 140deg,
-    rgba(100, 210, 255, 0.4) 140deg 146deg,
-    transparent 146deg 175deg,
-    rgba(120, 230, 255, 0.5) 175deg 182deg,
-    transparent 182deg 210deg,
-    rgba(100, 210, 255, 0.35) 210deg 216deg,
-    transparent 216deg 250deg,
-    rgba(120, 230, 255, 0.55) 250deg 258deg,
-    transparent 258deg 290deg,
-    rgba(100, 210, 255, 0.4) 290deg 296deg,
-    transparent 296deg 330deg,
-    rgba(120, 230, 255, 0.5) 330deg 338deg,
-    transparent 338deg 360deg
+    from 15deg,
+    transparent 0deg 6deg,
+    rgba(140, 235, 255, 0.7) 6deg 11deg,
+    transparent 11deg 22deg,
+    rgba(100, 215, 255, 0.45) 22deg 25deg,
+    transparent 25deg 38deg,
+    rgba(140, 235, 255, 0.65) 38deg 44deg,
+    transparent 44deg 58deg,
+    rgba(100, 215, 255, 0.4) 58deg 61deg,
+    transparent 61deg 78deg,
+    rgba(140, 235, 255, 0.7) 78deg 86deg,
+    transparent 86deg 110deg,
+    rgba(100, 215, 255, 0.5) 110deg 116deg,
+    transparent 116deg 140deg,
+    rgba(140, 235, 255, 0.65) 140deg 148deg,
+    transparent 148deg 170deg,
+    rgba(100, 215, 255, 0.4) 170deg 174deg,
+    transparent 174deg 200deg,
+    rgba(140, 235, 255, 0.7) 200deg 208deg,
+    transparent 208deg 235deg,
+    rgba(100, 215, 255, 0.45) 235deg 240deg,
+    transparent 240deg 265deg,
+    rgba(140, 235, 255, 0.65) 265deg 274deg,
+    transparent 274deg 300deg,
+    rgba(100, 215, 255, 0.5) 300deg 306deg,
+    transparent 306deg 332deg,
+    rgba(140, 235, 255, 0.7) 332deg 340deg,
+    transparent 340deg 360deg
   );
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #fff calc(100% - 2px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #fff calc(100% - 2px));
-  animation: jarvis-orb-spin-rev 18s linear infinite;
-  z-index: 3;
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 3.5px),
+    #fff calc(100% - 2.5px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 3.5px),
+    #fff calc(100% - 2.5px)
+  );
+  /* Slow drift — dashes should feel like a HUD track, not a spinner */
+  animation: jarvis-orb-spin-rev 36s linear infinite;
+  z-index: 4;
 }
 
 /* Inner solid ring */
 .jarvis-orb-ring-inner {
-  inset: 18%;
-  border: 2px solid rgba(110, 220, 255, 0.75);
+  inset: 17%;
+  border: 1.5px solid rgba(130, 230, 255, 0.82);
   box-shadow:
-    0 0 16px rgba(80, 200, 255, 0.35),
-    0 0 8px rgba(80, 200, 255, 0.25) inset;
+    0 0 18px rgba(80, 200, 255, 0.4),
+    0 0 10px rgba(80, 200, 255, 0.28) inset,
+    0 0 1px rgba(200, 245, 255, 0.5);
   background: radial-gradient(
     circle,
-    rgba(6, 18, 30, 0.15) 55%,
-    rgba(40, 120, 180, 0.12) 100%
+    rgba(6, 18, 30, 0.12) 50%,
+    rgba(40, 130, 190, 0.16) 100%
   );
-  z-index: 4;
+  animation: jarvis-orb-inner-glow 2.8s ease-in-out infinite;
+  z-index: 5;
 }
 
-/* Tick marks around the mid band */
+/* Coarse tick marks */
 .jarvis-orb-ticks {
-  position: absolute;
-  inset: 11%;
-  border-radius: 50%;
-  pointer-events: none;
-  z-index: 5;
+  inset: 10%;
+  z-index: 6;
   background: repeating-conic-gradient(
     from 0deg,
-    rgba(140, 235, 255, 0.75) 0deg 0.6deg,
-    transparent 0.6deg 7.5deg
+    rgba(160, 240, 255, 0.85) 0deg 0.55deg,
+    transparent 0.55deg 6deg
   );
   -webkit-mask: radial-gradient(
     farthest-side,
-    transparent calc(100% - 10px),
-    #fff calc(100% - 9px),
+    transparent calc(100% - 11px),
+    #fff calc(100% - 10px),
     #fff calc(100% - 2px),
     transparent calc(100% - 1px)
   );
   mask: radial-gradient(
     farthest-side,
-    transparent calc(100% - 10px),
-    #fff calc(100% - 9px),
+    transparent calc(100% - 11px),
+    #fff calc(100% - 10px),
     #fff calc(100% - 2px),
     transparent calc(100% - 1px)
   );
-  animation: jarvis-orb-spin 40s linear infinite;
-  filter: drop-shadow(0 0 3px rgba(100, 220, 255, 0.5));
+  animation: jarvis-orb-spin 32s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(100, 220, 255, 0.55));
 }
 
-/* Gold accent arc (reference image detail) */
-.jarvis-orb-accent {
-  position: absolute;
-  inset: 7%;
-  border-radius: 50%;
-  pointer-events: none;
+/* Fine micro-ticks (counter-rotate) */
+.jarvis-orb-ticks-fine {
+  inset: 13.5%;
   z-index: 6;
+  background: repeating-conic-gradient(
+    from 1.5deg,
+    rgba(140, 230, 255, 0.45) 0deg 0.28deg,
+    transparent 0.28deg 3deg
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 6px),
+    #fff calc(100% - 5px),
+    #fff calc(100% - 1.5px),
+    transparent calc(100% - 0.5px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 6px),
+    #fff calc(100% - 5px),
+    #fff calc(100% - 1.5px),
+    transparent calc(100% - 0.5px)
+  );
+  animation: jarvis-orb-spin-rev 48s linear infinite;
+  opacity: 0.85;
+}
+
+/* Gold accent arc */
+.jarvis-orb-accent {
+  inset: 6%;
+  z-index: 7;
   background: conic-gradient(
-    from 200deg,
-    transparent 0deg 8deg,
-    rgba(232, 180, 40, 0.95) 8deg 28deg,
+    from 198deg,
+    transparent 0deg 6deg,
+    rgba(232, 180, 40, 0.2) 6deg 10deg,
+    rgba(255, 210, 80, 0.95) 10deg 26deg,
+    rgba(232, 180, 40, 0.2) 26deg 32deg,
+    transparent 32deg 360deg
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 8px),
+    #fff calc(100% - 7px),
+    #fff calc(100% - 2px),
+    transparent calc(100% - 1px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 8px),
+    #fff calc(100% - 7px),
+    #fff calc(100% - 2px),
+    transparent calc(100% - 1px)
+  );
+  filter: drop-shadow(0 0 8px rgba(232, 180, 40, 0.7));
+  animation: jarvis-orb-spin-rev 18s linear infinite;
+}
+
+/* Cyan accent arc (opposite the gold) */
+.jarvis-orb-accent-cyan {
+  inset: 5.5%;
+  z-index: 7;
+  background: conic-gradient(
+    from 18deg,
+    transparent 0deg 4deg,
+    rgba(100, 220, 255, 0.15) 4deg 8deg,
+    rgba(180, 245, 255, 0.9) 8deg 22deg,
+    rgba(100, 220, 255, 0.15) 22deg 28deg,
     transparent 28deg 360deg
   );
   -webkit-mask: radial-gradient(
     farthest-side,
     transparent calc(100% - 7px),
     #fff calc(100% - 6px),
-    #fff calc(100% - 2px),
-    transparent calc(100% - 1px)
+    #fff calc(100% - 1.5px),
+    transparent calc(100% - 0.5px)
   );
   mask: radial-gradient(
     farthest-side,
     transparent calc(100% - 7px),
     #fff calc(100% - 6px),
-    #fff calc(100% - 2px),
-    transparent calc(100% - 1px)
+    #fff calc(100% - 1.5px),
+    transparent calc(100% - 0.5px)
   );
-  filter: drop-shadow(0 0 6px rgba(232, 180, 40, 0.65));
-  animation: jarvis-orb-spin-rev 22s linear infinite;
+  filter: drop-shadow(0 0 10px rgba(120, 230, 255, 0.75));
+  animation: jarvis-orb-spin 26s linear infinite;
 }
 
-/* Dark center disc so text pops */
-.jarvis-orb-core {
-  position: absolute;
-  inset: 26%;
-  border-radius: 50%;
-  pointer-events: none;
-  z-index: 7;
-  background: radial-gradient(
-    circle at 40% 35%,
-    rgba(18, 40, 58, 0.55) 0%,
-    rgba(4, 10, 18, 0.72) 55%,
-    rgba(2, 6, 12, 0.85) 100%
+/* Radar sweep wedge — slow “submarine” crawl */
+.jarvis-orb-sweep {
+  inset: 8%;
+  z-index: 8;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 300deg,
+    rgba(120, 230, 255, 0) 300deg,
+    rgba(140, 235, 255, 0.06) 330deg,
+    rgba(180, 245, 255, 0.28) 352deg,
+    rgba(220, 250, 255, 0.45) 360deg
   );
-  border: 1px solid rgba(100, 210, 255, 0.22);
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent 42%,
+    #fff 43%,
+    #fff 98%,
+    transparent 99%
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent 42%,
+    #fff 43%,
+    #fff 98%,
+    transparent 99%
+  );
+  animation: jarvis-orb-spin 16s linear infinite;
+  mix-blend-mode: screen;
+  opacity: 0.75;
+}
+
+/* Dark center disc so INITIATE reads */
+.jarvis-orb-core {
+  inset: 25%;
+  z-index: 9;
+  background: radial-gradient(
+    circle at 38% 32%,
+    rgba(22, 48, 68, 0.58) 0%,
+    rgba(4, 12, 20, 0.78) 52%,
+    rgba(2, 6, 12, 0.9) 100%
+  );
+  border: 1px solid rgba(110, 220, 255, 0.28);
   box-shadow:
-    0 0 24px rgba(40, 140, 200, 0.2) inset,
-    0 0 20px rgba(0, 0, 0, 0.4);
+    0 0 28px rgba(40, 140, 200, 0.22) inset,
+    0 0 24px rgba(0, 0, 0, 0.45),
+    0 0 40px rgba(60, 180, 240, 0.08);
 }
 
 .jarvis-orb-label {
   position: relative;
-  z-index: 8;
+  z-index: 10;
   font-family: var(--mono);
-  font-size: clamp(0.95rem, 2.6vw, 1.28rem);
+  font-size: clamp(0.95rem, 2.6vw, 1.3rem);
   font-weight: 600;
-  letter-spacing: 0.2em;
-  text-indent: 0.2em;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
   text-transform: uppercase;
-  /* Tabular width so scramble frames don’t jitter the orb label */
   font-variant-numeric: tabular-nums;
   min-width: 9ch;
   text-align: center;
-  color: #e8f7ff;
+  color: #eaf8ff;
   text-shadow:
-    0 0 12px rgba(160, 230, 255, 0.85),
-    0 0 28px rgba(80, 200, 255, 0.55),
-    0 1px 2px rgba(0, 0, 0, 0.6);
+    0 0 14px rgba(160, 230, 255, 0.9),
+    0 0 32px rgba(80, 200, 255, 0.55),
+    0 1px 2px rgba(0, 0, 0, 0.65);
   pointer-events: none;
   user-select: none;
   white-space: nowrap;
 }
 
+/* Hover: light lift only — do not retune ring speeds (that felt too jumpy) */
 .start-btn.jarvis-orb:hover .jarvis-orb-glow {
   background: radial-gradient(
     circle,
-    rgba(100, 220, 255, 0.32) 0%,
-    rgba(50, 160, 220, 0.14) 38%,
-    transparent 68%
+    rgba(105, 225, 255, 0.32) 0%,
+    rgba(50, 165, 220, 0.15) 34%,
+    transparent 70%
   );
   box-shadow:
-    0 0 56px rgba(100, 220, 255, 0.4),
-    0 0 110px rgba(50, 180, 240, 0.25);
+    0 0 48px rgba(100, 220, 255, 0.4),
+    0 0 100px rgba(50, 180, 240, 0.22);
+}
+
+.start-btn.jarvis-orb:hover .jarvis-orb-halo {
+  border-color: rgba(130, 230, 255, 0.28);
+  box-shadow:
+    0 0 28px rgba(100, 220, 255, 0.16),
+    inset 0 0 30px rgba(80, 200, 255, 0.08);
 }
 
 .start-btn.jarvis-orb:hover .jarvis-orb-label {
   color: #f2fbff;
   text-shadow:
     0 0 16px rgba(180, 240, 255, 0.95),
-    0 0 36px rgba(100, 220, 255, 0.7),
+    0 0 36px rgba(100, 220, 255, 0.65),
     0 1px 2px rgba(0, 0, 0, 0.55);
 }
 
 .start-btn.jarvis-orb:hover .jarvis-orb-ring-outer {
-  filter: drop-shadow(0 0 14px rgba(120, 230, 255, 0.75));
+  filter:
+    drop-shadow(0 0 7px rgba(150, 238, 255, 0.95))
+    drop-shadow(0 0 18px rgba(100, 220, 255, 0.65));
 }
 
 @keyframes jarvis-orb-spin {
@@ -579,19 +736,58 @@ body.scene-ready #app {
 @keyframes jarvis-orb-breathe {
   0%,
   100% {
-    opacity: 0.85;
+    opacity: 0.82;
     transform: scale(1);
   }
   50% {
     opacity: 1;
-    transform: scale(1.04);
+    transform: scale(1.055);
   }
 }
 
-/*
-  Pulse, then one continuous shrink (no mid-scale plateaus).
-  Per-keyframe timing-function eases the long 1.1 → 0.04 segment smoothly.
-*/
+@keyframes jarvis-orb-halo-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.02);
+  }
+}
+
+@keyframes jarvis-orb-sonar {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.28);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.28);
+  }
+}
+
+@keyframes jarvis-orb-inner-glow {
+  0%,
+  100% {
+    border-color: rgba(120, 220, 255, 0.72);
+    box-shadow:
+      0 0 16px rgba(80, 200, 255, 0.32),
+      0 0 8px rgba(80, 200, 255, 0.22) inset;
+  }
+  50% {
+    border-color: rgba(180, 245, 255, 0.95);
+    box-shadow:
+      0 0 24px rgba(100, 220, 255, 0.55),
+      0 0 14px rgba(100, 220, 255, 0.35) inset;
+  }
+}
+
 @keyframes jarvis-orb-exit {
   0% {
     transform: scale(1);
@@ -600,16 +796,15 @@ body.scene-ready #app {
     animation-timing-function: cubic-bezier(0.2, 0.8, 0.35, 1);
   }
   12% {
-    transform: scale(1.1);
+    transform: scale(1.12);
     opacity: 1;
-    filter: brightness(1.55) blur(0);
-    /* accelerate into nothing — continuous, not stepped */
+    filter: brightness(1.65) blur(0);
     animation-timing-function: cubic-bezier(0.55, 0.05, 0.25, 1);
   }
   100% {
     transform: scale(0.04);
     opacity: 0;
-    filter: brightness(2.2) blur(2.5px);
+    filter: brightness(2.4) blur(2.5px);
   }
 }
 
@@ -618,9 +813,9 @@ body.scene-ready #app {
     opacity: 1;
     background: radial-gradient(
       circle at center,
-      rgba(4, 12, 22, 0.55) 0%,
-      rgba(4, 10, 18, 0.28) 42%,
-      transparent 68%
+      rgba(4, 14, 26, 0.58) 0%,
+      rgba(4, 10, 18, 0.3) 40%,
+      transparent 70%
     );
   }
   45% {
@@ -641,13 +836,13 @@ body.scene-ready #app {
 @keyframes jarvis-orb-label-out {
   0% {
     opacity: 1;
-    letter-spacing: 0.2em;
+    letter-spacing: 0.22em;
     filter: brightness(1);
   }
   100% {
     opacity: 0;
-    letter-spacing: 0.42em;
-    filter: brightness(1.8);
+    letter-spacing: 0.45em;
+    filter: brightness(1.9);
     transform: scale(1.15);
   }
 }
@@ -660,7 +855,7 @@ body.scene-ready #app {
   }
   12% {
     opacity: 1;
-    transform: scale(1.15);
+    transform: scale(1.18);
     animation-timing-function: cubic-bezier(0.55, 0.05, 0.25, 1);
   }
   100% {
@@ -2334,13 +2529,20 @@ body.director-mode .audio-timeline:not(.hidden) {
   .jarvis-panel.is-entering,
   .jarvis-panel.is-complete .jarvis-panel-inner,
   .jarvis-orb-glow,
+  .jarvis-orb-halo,
+  .jarvis-orb-pulse,
   .jarvis-orb-ring-outer,
   .jarvis-orb-ring-mid,
+  .jarvis-orb-ring-inner,
   .jarvis-orb-ticks,
+  .jarvis-orb-ticks-fine,
   .jarvis-orb-accent,
+  .jarvis-orb-accent-cyan,
+  .jarvis-orb-sweep,
   .start-gate.is-exiting,
   .start-gate.is-exiting .start-btn.jarvis-orb,
   .start-gate.is-exiting .jarvis-orb-glow,
+  .start-gate.is-exiting .jarvis-orb-halo,
   .start-gate.is-exiting .jarvis-orb-label,
   .start-gate.is-exiting .jarvis-orb-core,
   .hud-frame.is-online-flash .hud-corner {
@@ -2393,13 +2595,20 @@ body.reduced-motion.director-mode .audio-timeline:not(.hidden),
 body.reduced-motion .jarvis-panel.is-entering,
 body.reduced-motion .jarvis-panel.is-complete .jarvis-panel-inner,
 body.reduced-motion .jarvis-orb-glow,
+body.reduced-motion .jarvis-orb-halo,
+body.reduced-motion .jarvis-orb-pulse,
 body.reduced-motion .jarvis-orb-ring-outer,
 body.reduced-motion .jarvis-orb-ring-mid,
+body.reduced-motion .jarvis-orb-ring-inner,
 body.reduced-motion .jarvis-orb-ticks,
+body.reduced-motion .jarvis-orb-ticks-fine,
 body.reduced-motion .jarvis-orb-accent,
+body.reduced-motion .jarvis-orb-accent-cyan,
+body.reduced-motion .jarvis-orb-sweep,
 body.reduced-motion .start-gate.is-exiting,
 body.reduced-motion .start-gate.is-exiting .start-btn.jarvis-orb,
 body.reduced-motion .start-gate.is-exiting .jarvis-orb-glow,
+body.reduced-motion .start-gate.is-exiting .jarvis-orb-halo,
 body.reduced-motion .start-gate.is-exiting .jarvis-orb-label,
 body.reduced-motion .start-gate.is-exiting .jarvis-orb-core,
 body.reduced-motion .hud-frame.is-online-flash .hud-corner {
