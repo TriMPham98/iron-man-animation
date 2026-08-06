@@ -997,7 +997,6 @@ body.systems-online .hud-frame.is-booted .hud-corner {
 
 .hud-top {
   top: 0;
-  border-bottom: 1px solid rgba(201, 162, 39, 0.18);
   background: linear-gradient(to bottom, rgba(5, 5, 8, 0.72), transparent);
   /* 3-column: brand | status | clock — status never over the suit */
   display: grid;
@@ -1011,7 +1010,6 @@ body.systems-online .hud-frame.is-booted .hud-corner {
   padding-top: 2.35rem;
   padding-bottom: 0.9rem;
   transition:
-    border-color 0.55s ease,
     background 0.55s ease,
     padding 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -1357,21 +1355,12 @@ body.systems-online .hud-frame.is-booted .hud-corner {
 .hud-top:not(.is-jarvis-live) {
   padding-top: 2.15rem;
   padding-bottom: 0.7rem;
-  border-bottom-color: rgba(201, 162, 39, 0.1);
   background: linear-gradient(to bottom, rgba(5, 5, 8, 0.58), transparent);
 }
 
-/*
-  After SYSTEMS ONLINE the center brief is gone — drop the full-width gold
-  hairline so the header does not read as an empty rule over the suit.
-*/
+/* After SYSTEMS ONLINE the center brief is gone — lighten the header wash. */
 body.systems-online .hud-top:not(.is-jarvis-live) {
-  border-bottom-color: transparent;
   background: linear-gradient(to bottom, rgba(5, 5, 8, 0.42), transparent);
-}
-
-.hud-top.is-jarvis-live {
-  border-bottom-color: rgba(201, 162, 39, 0.2);
 }
 
 /* Keyboard-only affordance (Tab). Cleared after pointer via blurButtons. */
@@ -2467,15 +2456,6 @@ body.director-mode .audio-timeline:not(.hidden) {
     align-items: center;
     gap: 0.35rem 0.5rem;
     padding-top: 2.15rem;
-    /* No gold hairline under the header on small screens */
-    border-bottom: none;
-  }
-
-  .hud-top:not(.is-jarvis-live),
-  .hud-top.is-jarvis-live,
-  body.systems-online .hud-top:not(.is-jarvis-live) {
-    border-bottom: none;
-    border-bottom-color: transparent;
   }
 
   .hud-top:not(.is-jarvis-live) {
