@@ -77,7 +77,7 @@ export function approachDepthSign(rest: THREE.Vector3): 1 | -1 {
  * (camera); force −Z so it seats from behind the waist without clipping
  * through the front of the suit.
  *
- * Match by rest pose (not shard index) so quality tiers stay stable.
+ * Match by rest pose (not shard index) so plate identity stays stable.
  * Measured high-tier rest ≈ (−0.014, 0.917, 0.001).
  */
 export function isHipsPelvisGirdleRest(rest: THREE.Vector3): boolean {

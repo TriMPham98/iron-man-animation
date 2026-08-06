@@ -2,10 +2,6 @@ import * as THREE from 'three';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import {
-  shardGridForTier,
-  type QualityTier,
-} from '../scene/quality';
 import { scatterRotation, scatterStart } from '../utils/easeHelpers';
 import { classifyWave } from './classifyWave';
 import {
@@ -37,7 +33,7 @@ export type { GlowMaterial } from './systemsGlow';
  * leaving #400 as a thin floating fragment on its own beat. Merging
  * them into one plate reads as a single clean mask surface.
  *
- * Match by rest pose (not shard index) so quality tiers stay stable.
+ * Match by rest pose (not shard index) so plate identity stays stable.
  */
 export function isUpperFaceplateShellRest(rest: THREE.Vector3): boolean {
   return (
@@ -171,7 +167,7 @@ export function mergeUpperFaceplateShells(
  * read as two thin plates. Fusing them into one plate seats the inner
  * chest as a single clamp before outer reactor housing.
  *
- * Match by rest pose (not shard index) so quality tiers stay stable.
+ * Match by rest pose (not shard index) so plate identity stays stable.
  */
 export function isTorsoUnder235Rest(rest: THREE.Vector3): boolean {
   // Measured high-tier torso#235
@@ -242,7 +238,7 @@ function pieceVertCount(p: ArmorPiece): number {
 /**
  * Tiny mid-face / crown scraps that fly as separate fragments after the
  * helmet floater peel (high-tier helmet#318 / #353 / #364 / #378 and mirrors).
- * Match by rest pose + vert count so quality tiers stay stable.
+ * Match by rest pose + vert count so plate identity stays stable.
  */
 export function isHelmetFaceFloater(
   rest: THREE.Vector3,
@@ -512,16 +508,16 @@ export interface LoadedSuitModel {
   glowMaterials: GlowMaterial[];
 }
 
+/** Spatial shard density for fly-in plates (full-fidelity grid). */
+const SHARD_GRID = { x: 3, y: 7, z: 3 } as const;
+
 export async function loadSuitModel(
   onProgress?: (ratio: number) => void,
-  quality: QualityTier = 'high',
 ): Promise<LoadedSuitModel> {
   const loader = new GLTFLoader();
   const draco = new DRACOLoader();
   draco.setDecoderPath(DRACO_DECODER_PATH);
   loader.setDRACOLoader(draco);
-
-  const shardGrid = shardGridForTier(quality);
 
   const gltf = await new Promise<Awaited<ReturnType<typeof loader.loadAsync>>>(
     (resolve, reject) => {
@@ -567,14 +563,11 @@ export async function loadSuitModel(
   // as soon as each body region locks (not only after showFinal).
   let allShards: MeshShard[] = [];
   for (const mesh of sourceMeshes) {
-    const shards = splitMeshIntoShards(mesh, shardGrid);
+    const shards = splitMeshIntoShards(mesh, SHARD_GRID);
     allShards.push(...shards);
   }
-  // Hands start as one blob — light subdivide (≈ half prior density)
-  // low tier: skip refine; medium/high: coarse 2×2×2 only
-  if (quality !== 'low') {
-    allShards = refineHandShards(allShards, { x: 2, y: 2, z: 2 });
-  }
+  // Hands start as one blob — light subdivide for finger-scale plates
+  allShards = refineHandShards(allShards, { x: 2, y: 2, z: 2 });
 
   let minY = Infinity;
   let maxY = -Infinity;

@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { COLORS } from '../utils/colors';
-import type { QualityTier } from './quality';
 
 export interface EnvironmentHandles {
   group: THREE.Group;
@@ -9,11 +8,9 @@ export interface EnvironmentHandles {
 
 /**
  * Hangar pad only: detailed metal disc + rings in a cool void.
+ * Full-fidelity textures and geometry (no quality tiers).
  */
-export function createEnvironment(
-  scene: THREE.Scene,
-  quality: QualityTier = 'high',
-): EnvironmentHandles {
+export function createEnvironment(scene: THREE.Scene): EnvironmentHandles {
   const voidColor = COLORS.bg;
   scene.background = new THREE.Color(voidColor);
   scene.fog = new THREE.FogExp2(voidColor, 0.014);
@@ -21,13 +18,11 @@ export function createEnvironment(
   const group = new THREE.Group();
   group.name = 'environment';
 
-  const padDetail = quality === 'high' ? 1024 : quality === 'medium' ? 768 : 512;
+  const padDetail = 1024;
   const { colorMap, roughnessMap, alphaMap, emissiveMap } =
     buildPadTextures(padDetail);
 
-  const padRadius = quality === 'low' ? 4.8 : 5.6;
-  const padSegs = quality === 'low' ? 48 : 96;
-  const groundGeo = new THREE.CircleGeometry(padRadius, padSegs);
+  const groundGeo = new THREE.CircleGeometry(5.6, 96);
   const groundMat = new THREE.MeshStandardMaterial({
     map: colorMap,
     roughnessMap,
@@ -48,15 +43,15 @@ export function createEnvironment(
   ground.name = 'ground';
   group.add(ground);
 
-  addPadRings(group, quality);
+  addPadRings(group);
 
   scene.add(group);
 
   return { group, ground };
 }
 
-function addPadRings(group: THREE.Group, quality: QualityTier): void {
-  const segs = quality === 'low' ? 48 : 80;
+function addPadRings(group: THREE.Group): void {
+  const segs = 80;
 
   const inner = ringMesh(1.12, 1.22, segs, 0x5ec8ff, 0.32, 0.01);
   inner.name = 'pad-ring-inner';
@@ -70,11 +65,9 @@ function addPadRings(group: THREE.Group, quality: QualityTier): void {
   outer.name = 'pad-ring-outer';
   group.add(outer);
 
-  if (quality !== 'low') {
-    const safety = ringMesh(3.35, 3.4, segs, 0xc9a227, 0.06, 0.013);
-    safety.name = 'pad-ring-safety';
-    group.add(safety);
-  }
+  const safety = ringMesh(3.35, 3.4, segs, 0xc9a227, 0.06, 0.013);
+  safety.name = 'pad-ring-safety';
+  group.add(safety);
 }
 
 function ringMesh(

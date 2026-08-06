@@ -16,10 +16,7 @@ export interface PostStack {
 export interface CreatePostProcessingOptions {
   /** Prefer enabling bloom (still disabled on software GL). Default true. */
   preferBloom?: boolean;
-  /**
-   * Run UnrealBloom at half resolution (cheaper mips). Used on medium tier.
-   * High stays full-res so look is identical to today.
-   */
+  /** Run UnrealBloom at half resolution (cheaper mips). Default false (full-res). */
   halfResBloom?: boolean;
 }
 

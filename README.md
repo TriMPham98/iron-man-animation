@@ -39,7 +39,6 @@ Author tools are **off by default** for a clean portfolio surface.
 | HUD | Click **DIR** in the top-right (preference saved in `localStorage`) |
 | URL | `?debug=1` or `?director=1` |
 | Force viewer | `?debug=0` |
-| Quality | `?quality=high` · `medium` · `low` (auto-detects by default) |
 
 In director mode you also get:
 
@@ -92,7 +91,7 @@ public/draco/             # local Draco wasm/js decoders for GLTFLoader
 src/
   main.ts                 # bootstrap + render loop
   session/                # assembly session state machine
-  scene/                  # renderer, camera, lights, env, post-FX, quality
+  scene/                  # renderer, camera, lights, env, post-FX
   suit/                   # glTF load, spatial mesh split, assembly pieces
     waves.ts              # PieceWave types + WAVE_ORDER / WAVE_STATUS
     classifyWave.ts       # pure body-region classification (unit tested)
@@ -107,21 +106,14 @@ public/sounds/            # assembly SFX library (.mp3)
 npm test                 # unit tests (assembly order, classifyWave, seeds)
 ```
 
-## Performance / quality
+## Performance
 
-Quality is auto-detected (GPU software → low; mobile / low cores / low memory → medium or low; else high). Override with `?quality=high|medium|low`.
-
-| Tier | Shard grid | Max DPR | Bloom |
-|------|------------|---------|-------|
-| high | 3×7×3 | 1.75 | full-res |
-| medium | 2×5×2 | 1.5 | half-res |
-| low | 2×4×2 | 1.25 | off |
+Single full-fidelity path: shard grid 3×7×3, max DPR 1.75, full-res bloom. Bloom is still disabled automatically on software renderers (SwiftShader / llvmpipe).
 
 Draco mesh decoders are served locally from `public/draco/` (no gstatic CDN).
 
 ## Notes
 
 - The suit mesh is a **free fan-art GLB** loaded at runtime, then split into spatial shards for the fly-in assembly sequence.
-- Bloom is disabled automatically on software renderers and on the low quality tier.
-- Pixel ratio is clamped for performance on high-DPI displays (tier-dependent).
+- Pixel ratio is clamped to 1.75 on high-DPI displays.
 - See `public/models/ATTRIBUTION.md` for model credit and IP notes.

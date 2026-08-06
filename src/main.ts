@@ -7,12 +7,6 @@ import { createLights } from './scene/createLights';
 import { createPostProcessing } from './scene/postProcessing';
 import { createRenderer } from './scene/createRenderer';
 import { applyStudioEnvironment } from './scene/createStudioEnv';
-import {
-  halfResBloomForTier,
-  maxPixelRatioForTier,
-  preferBloomForTier,
-  resolveQualityTier,
-} from './scene/quality';
 import { createAssemblySession } from './session/assemblySession';
 import { Suit } from './suit/Suit';
 import { bindInput } from './ui/bindInput';
@@ -28,9 +22,6 @@ async function boot(): Promise<void> {
 
   // Don't leave buttons focused after a tap (Space would re-trigger them).
   installButtonFocusRelease();
-
-  const quality = resolveQualityTier();
-  console.log(`[quality] tier=${quality}`);
 
   const ui = createOverlay();
   ui.setLoadingProgress(0.05);
@@ -48,18 +39,17 @@ async function boot(): Promise<void> {
   ui.setLoadingProgress(0.1);
   const suit = await Suit.create((r) => {
     ui.setLoadingProgress(0.1 + r * 0.7);
-  }, quality);
+  });
   ui.setLoadingProgress(0.85);
 
   // ── Phase 2: build scene off-screen (#app still hidden) ──────────
-  const renderer = createRenderer(canvas, {
-    maxPixelRatio: maxPixelRatioForTier(quality),
-  });
+  // Full fidelity: max DPR 1.75, full-res bloom (software GL still skips bloom).
+  const renderer = createRenderer(canvas, { maxPixelRatio: 1.75 });
   const scene = new THREE.Scene();
   const camera = createCamera();
   const lookTarget = new THREE.Vector3(0, 0.95, 0);
 
-  createEnvironment(scene, quality);
+  createEnvironment(scene);
   const lights = createLights();
   scene.add(lights.group);
   applyStudioEnvironment(renderer, scene);
@@ -67,10 +57,7 @@ async function boot(): Promise<void> {
 
   const pick = createPickHighlight(scene);
 
-  const post = createPostProcessing(renderer, scene, camera, {
-    preferBloom: preferBloomForTier(quality),
-    halfResBloom: halfResBloomForTier(quality),
-  });
+  const post = createPostProcessing(renderer, scene, camera);
 
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;

@@ -4,7 +4,6 @@ import {
   selectFoundation,
   type WaveOrderResult,
 } from './assemblyOrder';
-import type { QualityTier } from '../scene/quality';
 import { WAVE_ORDER, type ArmorPiece, type PieceWave } from './waves';
 import { loadSuitModel, type GlowMaterial } from './loadSuitModel';
 import {
@@ -46,12 +45,9 @@ export class Suit {
     this.group.name = 'suit';
   }
 
-  static async create(
-    onProgress?: (r: number) => void,
-    quality: QualityTier = 'high',
-  ): Promise<Suit> {
+  static async create(onProgress?: (r: number) => void): Promise<Suit> {
     const suit = new Suit();
-    const loaded = await loadSuitModel(onProgress, quality);
+    const loaded = await loadSuitModel(onProgress);
     suit.group.add(loaded.group);
     suit.pieces = loaded.pieces;
     suit.finalModel = loaded.finalModel;
