@@ -480,6 +480,10 @@ body.scene-ready #app {
   letter-spacing: 0.2em;
   text-indent: 0.2em;
   text-transform: uppercase;
+  /* Tabular width so scramble frames don’t jitter the orb label */
+  font-variant-numeric: tabular-nums;
+  min-width: 9ch;
+  text-align: center;
   color: #e8f7ff;
   text-shadow:
     0 0 12px rgba(160, 230, 255, 0.85),

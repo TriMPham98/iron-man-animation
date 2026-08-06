@@ -19,6 +19,7 @@ import {
   readDirectorPreference,
   writeDirectorPreference,
 } from './viewerMode';
+import { playHackerText } from './hackerText';
 
 export interface DebugActivePiece {
   id: string;
@@ -135,6 +136,8 @@ export function createOverlay(): OverlayHandles {
   const progressFill = el<HTMLDivElement>('hud-progress-fill');
   const startGate = elOptional<HTMLDivElement>('start-gate');
   const startBtn = elOptional<HTMLButtonElement>('start-btn');
+  const startLabel =
+    startBtn?.querySelector<HTMLElement>('.jarvis-orb-label') ?? null;
 
   // JARVIS lives in the top-bar center (replaces old title/status/INT strip)
   const jarvisPanel = elOptional<HTMLDivElement>('jarvis-panel');
@@ -509,6 +512,9 @@ export function createOverlay(): OverlayHandles {
     startBtn?.removeAttribute('disabled');
   };
 
+  /** Cancels in-flight decode scramble (one-shot on gate reveal). */
+  let cancelHackerText: (() => void) | null = null;
+
   const showStartGate = () => {
     // Never re-open after initiate (e.g. R started assembly during load)
     if (startConsumed || !startGate) return;
@@ -516,6 +522,11 @@ export function createOverlay(): OverlayHandles {
     startGate.classList.remove('is-hidden', 'is-exiting');
     startGate.setAttribute('aria-hidden', 'false');
     startBtn?.removeAttribute('disabled');
+
+    // One-shot decode when load finishes and INITIATE appears (not on hover)
+    cancelHackerText?.();
+    cancelHackerText = startLabel ? playHackerText(startLabel) : null;
+
     // Focus after HUD boot so Tab/Enter land on the CTA
     window.requestAnimationFrame(() => {
       if (startGateVisible) startBtn?.focus({ preventScroll: true });
@@ -527,6 +538,10 @@ export function createOverlay(): OverlayHandles {
     if (startConsumed || !startGateVisible) return;
     startConsumed = true;
     startGateVisible = false;
+
+    // Snap label to final text if scramble is still running
+    cancelHackerText?.();
+    cancelHackerText = null;
 
     // Must run in the gesture turn (autoplay unlock, etc.)
     startGestureHandler?.();
