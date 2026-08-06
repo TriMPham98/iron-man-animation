@@ -53,6 +53,11 @@ export function bindInput(options: BindInputOptions): void {
   };
 
   window.addEventListener('keydown', (e) => {
+    // Until INITIATE, ignore transport hotkeys. R during load used to call
+    // startSequence() while the gate was still pending, so assembly ran with
+    // the INITIATE orb still on screen.
+    if (!ui.hasInitiated()) return;
+
     if (e.key === 'r' || e.key === 'R') {
       if (isTypingTarget(e.target)) return;
       session.startSequence();

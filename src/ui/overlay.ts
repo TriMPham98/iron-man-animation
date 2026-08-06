@@ -84,6 +84,12 @@ export interface OverlayHandles {
   hideStartGate: () => void;
   isStartGateVisible: () => boolean;
   /**
+   * True after INITIATE (click / Enter / Space / R) has been accepted.
+   * Transport hotkeys (R replay, S skip, scrub) must stay off until then
+   * so they cannot start assembly while the gate is still pending/loading.
+   */
+  hasInitiated: () => boolean;
+  /**
    * Fired once when the user initiates via button, Enter, Space, or R.
    * May run after a short exit-animation delay.
    */
@@ -504,6 +510,7 @@ export function createOverlay(): OverlayHandles {
   };
 
   const showStartGate = () => {
+    // Never re-open after initiate (e.g. R started assembly during load)
     if (startConsumed || !startGate) return;
     startGateVisible = true;
     startGate.classList.remove('is-hidden', 'is-exiting');
@@ -516,6 +523,7 @@ export function createOverlay(): OverlayHandles {
   };
 
   const fireStart = () => {
+    // Allow initiate only while the gate is the active CTA (not during load)
     if (startConsumed || !startGateVisible) return;
     startConsumed = true;
     startGateVisible = false;
@@ -747,6 +755,7 @@ export function createOverlay(): OverlayHandles {
     showStartGate,
     hideStartGate,
     isStartGateVisible: () => startGateVisible,
+    hasInitiated: () => startConsumed,
     onStart: (cb: () => void) => {
       startHandler = cb;
     },
