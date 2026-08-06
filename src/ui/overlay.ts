@@ -12,7 +12,11 @@ import {
   readDirectorPreference,
   writeDirectorPreference,
 } from './viewerMode';
-import { playHackerText } from './hackerText';
+import {
+  ensureJarvisFont,
+  fitHackerLabel,
+  playHackerText,
+} from './hackerText';
 
 export interface DebugActivePiece {
   id: string;
@@ -502,6 +506,18 @@ export function createOverlay(): OverlayHandles {
   /** Cancels in-flight decode scramble (one-shot on gate reveal). */
   let cancelHackerText: (() => void) | null = null;
 
+  const refitStartLabel = () => {
+    if (!startLabel || !startGateVisible) return;
+    // Gate must be visible so clientWidth reflects the nucleus box.
+    fitHackerLabel(startLabel);
+  };
+
+  // Keep INITIATE maxed inside the nucleus across orientation / resize.
+  window.addEventListener('resize', () => {
+    if (!startGateVisible || !startLabel) return;
+    refitStartLabel();
+  });
+
   const showStartGate = () => {
     // Never re-open after initiate (e.g. R started assembly during load)
     if (startConsumed || !startGate) return;
@@ -510,9 +526,21 @@ export function createOverlay(): OverlayHandles {
     startGate.setAttribute('aria-hidden', 'false');
     startBtn?.removeAttribute('disabled');
 
-    // One-shot decode when load finishes and INITIATE appears (not on hover)
+    // One-shot decode when load finishes and INITIATE appears (not on hover).
+    // Wait for Michroma so fit measures the real HUD face, not a fallback.
     cancelHackerText?.();
-    cancelHackerText = startLabel ? playHackerText(startLabel) : null;
+    cancelHackerText = null;
+    void ensureJarvisFont().then(() => {
+      if (!startGateVisible || !startLabel || startConsumed) return;
+      // Double rAF: wait until the un-hidden gate has a real nucleus box.
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          if (!startGateVisible || !startLabel || startConsumed) return;
+          cancelHackerText?.();
+          cancelHackerText = playHackerText(startLabel);
+        });
+      });
+    });
 
     // Focus after HUD boot so Tab/Enter land on the CTA
     window.requestAnimationFrame(() => {

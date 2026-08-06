@@ -14,6 +14,11 @@
   --text: #e8e4d9;
   --muted: rgba(232, 228, 217, 0.55);
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /*
+    JARVIS / Iron HUD display face — MCU screens use Eurostile Extended
+    (Microgramma family). Michroma is the free Google Fonts reworking.
+  */
+  --jarvis: 'Michroma', 'Eurostile', 'Microgramma', var(--mono);
   /* JARVIS holographic accents */
   --cyan: #7ee8ff;
   --cyan-bright: #b8f4ff;
@@ -653,18 +658,38 @@ body.scene-ready #app {
     0 0 40px rgba(60, 180, 240, 0.08);
 }
 
+/*
+  Label is locked to the nucleus (same inset as .jarvis-orb-core).
+  overflow + circular clip are a safety net; JS fitHackerLabel binary-searches
+  the largest font-size that keeps scramble-wide glyphs inside the disc.
+*/
 .jarvis-orb-label {
-  position: relative;
+  position: absolute;
+  inset: 25%;
   z-index: 10;
-  font-family: var(--mono);
-  font-size: clamp(0.95rem, 2.6vw, 1.3rem);
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  text-indent: 0.22em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: 50%;
+  /* Thin symmetric pad so glyphs clear the core rim at max size */
+  padding: 0 4%;
+  /* Eurostile Extended–style HUD face (Michroma stand-in for film JARVIS) */
+  font-family: var(--jarvis);
+  /* Fallback only — playHackerText / fitHackerLabel set an inline px size */
+  font-size: calc(var(--orb-size) * 0.085);
+  font-weight: 400;
+  /* Keep in sync with LABEL_LETTER_SPACING_EM in hackerText.ts */
+  letter-spacing: 0.12em;
+  text-indent: 0;
   text-transform: uppercase;
   font-variant-numeric: tabular-nums;
-  min-width: 9ch;
+  min-width: 0;
+  max-width: none;
+  width: auto;
   text-align: center;
+  line-height: 1;
   color: #eaf8ff;
   text-shadow:
     0 0 14px rgba(160, 230, 255, 0.9),
@@ -673,6 +698,8 @@ body.scene-ready #app {
   pointer-events: none;
   user-select: none;
   white-space: nowrap;
+  /* Contain text-shadow / paint inside the nucleus circle */
+  contain: paint;
 }
 
 /* Hover: light lift only — do not retune ring speeds (that felt too jumpy) */
@@ -836,14 +863,15 @@ body.scene-ready #app {
 @keyframes jarvis-orb-label-out {
   0% {
     opacity: 1;
-    letter-spacing: 0.22em;
+    letter-spacing: 0.12em;
     filter: brightness(1);
   }
   100% {
     opacity: 0;
-    letter-spacing: 0.45em;
+    letter-spacing: 0.2em;
     filter: brightness(1.9);
-    transform: scale(1.15);
+    /* Fade in place — circular clip already owns the nucleus bounds */
+    transform: scale(1.04);
   }
 }
 
