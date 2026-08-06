@@ -183,8 +183,13 @@ async function boot(): Promise<void> {
 
   await new Promise((r) => setTimeout(r, reducedMotion ? 80 : 200));
 
-  session.setClockStart(clock.getElapsedTime());
-  session.startSequence();
+  // Hangar idle until the user initiates (JARVIS cyan CTA).
+  // Space / Enter / R / click all fire once; later loops use auto-replay.
+  ui.onStart(() => {
+    session.setClockStart(clock.getElapsedTime());
+    session.startSequence();
+  });
+  ui.showStartGate();
   loop();
 }
 

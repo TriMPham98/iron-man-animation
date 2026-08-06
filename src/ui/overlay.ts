@@ -79,6 +79,12 @@ export interface OverlayHandles {
    * @param opts.softProgress Ease the integrity fill 100%→0% (post-showcase restart).
    */
   resetJarvisChrome: (opts?: { softProgress?: boolean }) => void;
+  /** First-play hangar gate (INITIATE CTA). Hidden after the user starts. */
+  showStartGate: () => void;
+  hideStartGate: () => void;
+  isStartGateVisible: () => boolean;
+  /** Fired once when the user initiates via button, Enter, Space, or R. */
+  onStart: (cb: () => void) => void;
 }
 
 export interface DebugPickedPiece {
@@ -113,6 +119,8 @@ export function createOverlay(): OverlayHandles {
   const clock = el<HTMLSpanElement>('hud-clock');
   const progressBar = el<HTMLDivElement>('hud-progress');
   const progressFill = el<HTMLDivElement>('hud-progress-fill');
+  const startGate = elOptional<HTMLDivElement>('start-gate');
+  const startBtn = elOptional<HTMLButtonElement>('start-btn');
 
   // JARVIS lives in the top-bar center (replaces old title/status/INT strip)
   const jarvisPanel = elOptional<HTMLDivElement>('jarvis-panel');
@@ -131,6 +139,9 @@ export function createOverlay(): OverlayHandles {
   let hudBooted = false;
   let lastClockText = '';
   let lastProgressPct = -1;
+  let startGateVisible = false;
+  let startHandler: (() => void) | null = null;
+  let startConsumed = false;
 
   let activeWave: PieceWave | null = null;
   let systemsOnline = false;
@@ -456,6 +467,58 @@ export function createOverlay(): OverlayHandles {
     directorModeHandler?.(directorMode);
   });
 
+  const isTypingTarget = (target: EventTarget | null): boolean => {
+    const tag = (target as HTMLElement | null)?.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  };
+
+  const hideStartGate = () => {
+    startGateVisible = false;
+    if (!startGate) return;
+    startGate.classList.add('is-hidden');
+    startGate.setAttribute('aria-hidden', 'true');
+  };
+
+  const showStartGate = () => {
+    if (startConsumed || !startGate) return;
+    startGateVisible = true;
+    startGate.classList.remove('is-hidden');
+    startGate.setAttribute('aria-hidden', 'false');
+    // Focus after HUD boot so Tab/Enter land on the CTA
+    window.requestAnimationFrame(() => {
+      if (startGateVisible) startBtn?.focus({ preventScroll: true });
+    });
+  };
+
+  const fireStart = () => {
+    if (startConsumed || !startGateVisible) return;
+    startConsumed = true;
+    hideStartGate();
+    startHandler?.();
+  };
+
+  startBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    fireStart();
+  });
+
+  // Enter / Space / R while gated — same as clicking INITIATE
+  window.addEventListener('keydown', (e) => {
+    if (!startGateVisible || startConsumed) return;
+    if (isTypingTarget(e.target)) return;
+    if (
+      e.key === 'Enter' ||
+      e.code === 'Space' ||
+      e.key === ' ' ||
+      e.key === 'r' ||
+      e.key === 'R'
+    ) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      fireStart();
+    }
+  }, true);
+
   applyDirectorChrome();
 
   let drainClearTimer = 0;
@@ -625,5 +688,11 @@ export function createOverlay(): OverlayHandles {
     },
     setSystemsOnline,
     resetJarvisChrome,
+    showStartGate,
+    hideStartGate,
+    isStartGateVisible: () => startGateVisible,
+    onStart: (cb: () => void) => {
+      startHandler = cb;
+    },
   };
 }
