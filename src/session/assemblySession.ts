@@ -216,9 +216,8 @@ export function createAssemblySession(
    */
   const sfxOffset = () => audioTimelineOffset();
   /**
-   * Audio ruler length: full GSAP cycle on the seed clock (cascade + camera
-   * tail). Was previously integrity-only (~14s) and cut off the ~3–4s hero
-   * pullback so directors could not place SFX through the end (~18s).
+   * Audio ruler length on the seed clock (cascade + camera tail + pad).
+   * Targets {@link SEQUENCE_SEED_DURATION} (18.5s) via getFullDuration padding.
    */
   const audioDuration = () => Math.max(fullDuration() - sfxOffset(), 1e-6);
   const toAudioSec = (gsapTime: number) => gsapTime - sfxOffset();

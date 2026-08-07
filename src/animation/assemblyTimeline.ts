@@ -108,8 +108,35 @@ export function audioTimelineOffset(): number {
   return Math.max(0, OPENING_HOLD - AUDIO_SEED_ORIGIN);
 }
 
+/**
+ * Director-facing full sequence length (seed clock = HUD timer + audio ruler).
+ * GSAP wall-clock end is this plus {@link audioTimelineOffset} (hangar hold).
+ * Natural plate/camera work is padded with a hero hold so the tail always
+ * lands here — never shortened if the cascade runs longer.
+ */
+export const SEQUENCE_SEED_DURATION = 18.5;
+
+/** GSAP end time that maps to {@link SEQUENCE_SEED_DURATION} on the seed clock. */
+export function sequenceGsapDuration(): number {
+  return SEQUENCE_SEED_DURATION + audioTimelineOffset();
+}
+
 /** Base cinematic FOV (matches timeline path). */
 export const BASE_CAM_FOV = 34;
+
+/**
+ * Final hero framing after the faceplate pullback (and hold through the tail).
+ * Shared by the pullback tween and the duration pad so scrub stays locked on.
+ */
+export const HERO_END_CAM = {
+  x: 1.15,
+  y: 1.2,
+  z: 3.35,
+  lx: 0,
+  ly: 0.95,
+  lz: 0,
+  fov: BASE_CAM_FOV,
+} as const;
 
 /**
  * Hangar establish framing at sequence t=0 (wider than hero).
@@ -1213,19 +1240,31 @@ export function createAssemblyTimeline(
     timeline.to(
       cameraProxy,
       {
-        x: 1.15,
-        y: 1.2,
-        z: 3.35,
-        lx: 0,
-        ly: 0.95,
-        lz: 0,
-        fov: BASE_FOV,
+        ...HERO_END_CAM,
         duration: 3.4,
         ease: 'power3.inOut',
         onUpdate: applyCamera,
       },
       eyesT + 1.85,
     );
+
+    // Pad the tail so seed/HUD/audio always span SEQUENCE_SEED_DURATION (18.5s).
+    // GSAP clock = seed + hangar offset; hold final hero framing for the rest.
+    const targetGsap = sequenceGsapDuration();
+    const naturalEnd = timeline.duration();
+    const tailPad = targetGsap - naturalEnd;
+    if (tailPad > 1e-4) {
+      timeline.to(
+        cameraProxy,
+        {
+          ...HERO_END_CAM,
+          duration: tailPad,
+          ease: 'none',
+          onUpdate: applyCamera,
+        },
+        naturalEnd,
+      );
+    }
 
     return timeline;
   };
@@ -1356,9 +1395,14 @@ export function createAssemblyTimeline(
     },
     getFullDuration: () => {
       if (!tl) return 0;
-      // GSAP total (plates + systems + hero pullback). Never shorter than
-      // systems-online so a mid-build timeline still has a sane audio span.
-      return Math.max(tl.duration(), assemblyEndTime, 1e-6);
+      // GSAP total: cascade + pullback + pad to SEQUENCE_SEED_DURATION on seed clock.
+      // Floor at the authored target so audio/HUD/scrub share one end mark.
+      return Math.max(
+        tl.duration(),
+        assemblyEndTime,
+        sequenceGsapDuration(),
+        1e-6,
+      );
     },
     getTime: () => {
       if (!tl) return 0;

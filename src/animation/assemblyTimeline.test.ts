@@ -10,6 +10,8 @@ import {
   OPENING_HOLD,
   orderHelmetLaunchGroups,
   palmBeatEndFromHandsLock,
+  SEQUENCE_SEED_DURATION,
+  sequenceGsapDuration,
   timeAtIntegrityProgress,
 } from './assemblyTimeline';
 
@@ -99,6 +101,16 @@ describe('OPENING_HOLD + audioTimelineOffset', () => {
       5,
     );
     expect(audioTimelineOffset()).toBeGreaterThan(0);
+  });
+});
+
+describe('SEQUENCE_SEED_DURATION (18.5s director span)', () => {
+  it('maps seed end to GSAP end via the hangar offset', () => {
+    expect(SEQUENCE_SEED_DURATION).toBe(18.5);
+    expect(sequenceGsapDuration()).toBeCloseTo(
+      SEQUENCE_SEED_DURATION + audioTimelineOffset(),
+      5,
+    );
   });
 });
 
