@@ -21,9 +21,18 @@ describe('BINARY_INTERFACE_CLIP (seed v5)', () => {
 
 describe('BINARY_INTERFACE_CUES', () => {
   it('sits mid-density (between full onset spam and one-per-phrase)', () => {
-    // Original was ~28; sparse was 6 — target a readable middle.
+    // Includes a 7-blip 1:1 stretch (~14.9–15.8s seed); still far below onset spam.
     expect(BINARY_INTERFACE_CUES.length).toBeGreaterThanOrEqual(12);
-    expect(BINARY_INTERFACE_CUES.length).toBeLessThanOrEqual(18);
+    expect(BINARY_INTERFACE_CUES.length).toBeLessThanOrEqual(24);
+  });
+
+  it('maps seven lines to the 14.93–15.82s blip train', () => {
+    const seed0 = BINARY_INTERFACE_CLIP.seedStart;
+    const inBand = BINARY_INTERFACE_CUES.filter((c) => {
+      const seed = seed0 + c.t;
+      return seed >= 14.93 - 0.02 && seed <= 15.82 + 0.02;
+    });
+    expect(inBand).toHaveLength(7);
   });
 
   it('is sorted by crop time and stays inside the crop', () => {

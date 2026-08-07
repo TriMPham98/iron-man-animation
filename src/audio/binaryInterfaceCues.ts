@@ -87,55 +87,82 @@ export const BINARY_INTERFACE_CUES: readonly BinaryInterfaceCue[] = [
     line: 'CALIBRATING VIRTUAL ENVIRONMENT',
   },
 
-  // P3 — spark open + dense data chirps + close beep
+  // Pre-blip cluster
   {
-    t: 1.834,
+    t: 1.76,
     kind: 'spark',
     intensity: 'med',
     line: 'TELEMETRY BURST…',
   },
   {
-    t: 2.223,
+    t: 2.14,
     kind: 'chirp',
     intensity: 'soft',
     line: 'ROUTING POWER BUS…',
   },
   {
-    t: 2.473,
+    t: 2.38,
     kind: 'beep',
     intensity: 'med',
     line: 'ACK // PACKET 0x2F',
   },
 
-  // P4 — mid-tail cal chatter
+  /**
+   * Seven audio blips seed 14.93–15.82 (crop 2.855–3.745).
+   * Onsets from spectral-flux peaks on the BCI crop — one line per blip.
+   */
   {
-    t: 2.879,
+    t: 2.867,
     kind: 'chirp',
-    intensity: 'soft',
+    intensity: 'med',
     line: 'SENSOR MESH SCAN…',
   },
   {
-    t: 3.164,
-    kind: 'beep',
-    intensity: 'soft',
-    line: 'GYRO CALIBRATING…',
-  },
-  {
-    t: 3.518,
+    t: 2.919,
     kind: 'chirp',
     intensity: 'soft',
+    line: 'GYRO AXIS LOCK…',
+  },
+  {
+    t: 3.015,
+    kind: 'beep',
+    intensity: 'med',
+    line: 'INERTIAL REF — OK',
+  },
+  {
+    t: 3.171,
+    kind: 'chirp',
+    intensity: 'med',
     line: 'HUD LAYERS COMPILED',
+  },
+  {
+    t: 3.276,
+    kind: 'chirp',
+    intensity: 'med',
+    line: 'OPTICS ALIGN…',
+  },
+  {
+    t: 3.494,
+    kind: 'beep',
+    intensity: 'soft',
+    line: 'TARGETING SUITE…',
+  },
+  {
+    t: 3.627,
+    kind: 'chirp',
+    intensity: 'soft',
+    line: 'SERVO MAP SYNC…',
   },
 
   // P5 — checksum beep cluster
   {
-    t: 4.22,
+    t: 4.1,
     kind: 'beep',
     intensity: 'soft',
     line: 'FINAL CHECKSUM…',
   },
   {
-    t: 4.423,
+    t: 4.3,
     kind: 'beep',
     intensity: 'soft',
     line: 'CHECKSUM — MATCH',
@@ -143,19 +170,19 @@ export const BINARY_INTERFACE_CUES: readonly BinaryInterfaceCue[] = [
 
   // P6 — close-out; final film line holds through sequence end
   {
-    t: 5.027,
+    t: 4.92,
     kind: 'spark',
     intensity: 'soft',
     line: 'ALL CHANNELS GREEN',
   },
   {
-    t: 5.277,
+    t: 5.16,
     kind: 'chirp',
     intensity: 'med',
     line: 'LINK STABLE',
   },
   {
-    t: 5.445,
+    t: 5.35,
     kind: 'chirp',
     intensity: 'soft',
     line: 'AT YOUR SERVICE, SIR',
