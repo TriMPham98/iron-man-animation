@@ -53,18 +53,12 @@ export const BINARY_INTERFACE_FINAL_HOLD_PAD = 1.5;
  *   “At your service, sir.” as the hold-to-end closer
  */
 export const BINARY_INTERFACE_CUES: readonly BinaryInterfaceCue[] = [
-  // P1 — opening beep triad
+  // P1 — opening beep
   {
     t: 0.099,
     kind: 'beep',
     intensity: 'med',
     line: 'UPLINK ESTABLISHED…',
-  },
-  {
-    t: 0.255,
-    kind: 'beep',
-    intensity: 'soft',
-    line: 'HANDSHAKE // 3-PULSE',
   },
 
   // P2 — chirp ladder → ack beep
@@ -92,19 +86,7 @@ export const BINARY_INTERFACE_CUES: readonly BinaryInterfaceCue[] = [
     t: 1.76,
     kind: 'spark',
     intensity: 'med',
-    line: 'TELEMETRY BURST…',
-  },
-  {
-    t: 2.14,
-    kind: 'chirp',
-    intensity: 'soft',
-    line: 'ROUTING POWER BUS…',
-  },
-  {
-    t: 2.38,
-    kind: 'beep',
-    intensity: 'med',
-    line: 'ACK // PACKET 0x2F',
+    line: 'IMPORTING USER PREFERENCES.',
   },
 
   /**
