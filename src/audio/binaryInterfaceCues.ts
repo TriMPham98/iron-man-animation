@@ -4,9 +4,9 @@
  * Crop window matches director seed v5 (`choreTimeline.seed.json`):
  *   start 12.075s on seed clock · cropIn 0 · cropOut 5.925
  *
- * Density sits between full onset spam and one-line-per-phrase: a couple
- * of beats per sonic cluster (beep / chirp / spark). Final line holds
- * through {@link SEQUENCE_SEED_DURATION}.
+ * Lines are Iron Man (2008) J.A.R.V.I.S. dialogue from the suit HUD /
+ * power-up sequence (Paul Bettany), timed to mid-density chirp/beep
+ * phrases. Final line holds through {@link SEQUENCE_SEED_DURATION}.
  */
 
 import { SEQUENCE_SEED_DURATION } from '../animation/assemblyTimeline';
@@ -40,8 +40,17 @@ export const BINARY_INTERFACE_DURATION =
   BINARY_INTERFACE_CLIP.cropOut - BINARY_INTERFACE_CLIP.cropIn;
 
 /**
- * Mid-density phrase cues — ~2 lines per major beep/chirp/spark cluster.
- * Soft micro-ticks inside a run are skipped so text can land.
+ * How long past {@link SEQUENCE_SEED_DURATION} to keep the final
+ * “AT YOUR SERVICE, SIR” line (covers hero pad + soft ticker hide so the
+ * bottom HUD never shows the J.A.R.V.I.S. tag with an empty line).
+ */
+export const BINARY_INTERFACE_FINAL_HOLD_PAD = 1.5;
+
+/**
+ * Mid-density phrase cues — technical HUD copy on chirp/beep onsets,
+ * with two Iron Man (2008) J.A.R.V.I.S. anchors:
+ *   “Importing preferences…” mid-stream
+ *   “At your service, sir.” as the hold-to-end closer
  */
 export const BINARY_INTERFACE_CUES: readonly BinaryInterfaceCue[] = [
   // P1 — opening beep triad
@@ -69,13 +78,13 @@ export const BINARY_INTERFACE_CUES: readonly BinaryInterfaceCue[] = [
     t: 0.917,
     kind: 'chirp',
     intensity: 'med',
-    line: 'BINARY STREAM ACTIVE',
+    line: 'IMPORTING PREFERENCES…',
   },
   {
     t: 1.074,
     kind: 'beep',
     intensity: 'med',
-    line: 'HANDSHAKE ACK — OK',
+    line: 'CALIBRATING VIRTUAL ENVIRONMENT',
   },
 
   // P3 — spark open + dense data chirps + close beep
@@ -132,7 +141,7 @@ export const BINARY_INTERFACE_CUES: readonly BinaryInterfaceCue[] = [
     line: 'CHECKSUM — MATCH',
   },
 
-  // P6 — close-out; final line holds through sequence end
+  // P6 — close-out; final film line holds through sequence end
   {
     t: 5.027,
     kind: 'spark',
@@ -143,13 +152,13 @@ export const BINARY_INTERFACE_CUES: readonly BinaryInterfaceCue[] = [
     t: 5.277,
     kind: 'chirp',
     intensity: 'med',
-    line: 'J.A.R.V.I.S. LINK STABLE',
+    line: 'LINK STABLE',
   },
   {
     t: 5.445,
     kind: 'chirp',
     intensity: 'soft',
-    line: 'AWAITING ORDERS, SIR',
+    line: 'AT YOUR SERVICE, SIR',
   },
 ] as const;
 
@@ -177,8 +186,9 @@ export function cueAtCropTime(cropT: number): BinaryInterfaceCue | null {
 
 /**
  * Map seed-clock seconds → active cue.
- * Silent before the BCI window. After “AWAITING ORDERS, SIR” fires, hold
- * that line through {@link SEQUENCE_SEED_DURATION} (end of the animation).
+ * Silent before the BCI window. After the final JARVIS line fires, hold
+ * “AT YOUR SERVICE, SIR” through sequence end plus
+ * {@link BINARY_INTERFACE_FINAL_HOLD_PAD} so the ticker never empties early.
  */
 export function cueAtSeedTime(seedSec: number): BinaryInterfaceCue | null {
   if (!Number.isFinite(seedSec)) return null;
@@ -188,7 +198,9 @@ export function cueAtSeedTime(seedSec: number): BinaryInterfaceCue | null {
 
   // Final line rides out the hero tail / seed end (not just the audio crop).
   if (into >= FINAL_CUE.t) {
-    if (seedSec > SEQUENCE_SEED_DURATION + 0.05) return null;
+    const holdUntil =
+      SEQUENCE_SEED_DURATION + BINARY_INTERFACE_FINAL_HOLD_PAD;
+    if (seedSec > holdUntil) return null;
     return FINAL_CUE;
   }
 

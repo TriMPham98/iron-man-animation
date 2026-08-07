@@ -4,6 +4,7 @@ import {
   BINARY_INTERFACE_CLIP,
   BINARY_INTERFACE_CUES,
   BINARY_INTERFACE_DURATION,
+  BINARY_INTERFACE_FINAL_HOLD_PAD,
   binaryInterfaceProgress,
   cueAtCropTime,
   cueAtSeedTime,
@@ -36,9 +37,15 @@ describe('BINARY_INTERFACE_CUES', () => {
     }
   });
 
-  it('ends on AWAITING ORDERS, SIR', () => {
+  it('ends on AT YOUR SERVICE, SIR', () => {
     const last = BINARY_INTERFACE_CUES[BINARY_INTERFACE_CUES.length - 1]!;
-    expect(last.line).toBe('AWAITING ORDERS, SIR');
+    expect(last.line).toBe('AT YOUR SERVICE, SIR');
+  });
+
+  it('keeps IMPORTING PREFERENCES mid-stream', () => {
+    expect(
+      BINARY_INTERFACE_CUES.some((c) => c.line === 'IMPORTING PREFERENCES…'),
+    ).toBe(true);
   });
 });
 
@@ -58,7 +65,7 @@ describe('cueAtCropTime', () => {
 
   it('returns the final cue near crop end', () => {
     expect(cueAtCropTime(BINARY_INTERFACE_DURATION - 0.01)?.line).toBe(
-      'AWAITING ORDERS, SIR',
+      'AT YOUR SERVICE, SIR',
     );
   });
 });
@@ -75,19 +82,28 @@ describe('cueAtSeedTime', () => {
     expect(cueAtSeedTime(seedT)?.line).toBe(first.line);
   });
 
-  it('holds AWAITING ORDERS, SIR through sequence end', () => {
+  it('holds AT YOUR SERVICE, SIR through sequence end and pad', () => {
     const last = BINARY_INTERFACE_CUES[BINARY_INTERFACE_CUES.length - 1]!;
     const fireAt = BINARY_INTERFACE_CLIP.seedStart + last.t;
-    expect(cueAtSeedTime(fireAt)?.line).toBe('AWAITING ORDERS, SIR');
+    expect(cueAtSeedTime(fireAt)?.line).toBe('AT YOUR SERVICE, SIR');
     // Past the audio crop (~18.0s) but still inside the 18.5s seed tail
-    expect(cueAtSeedTime(18.2)?.line).toBe('AWAITING ORDERS, SIR');
+    expect(cueAtSeedTime(18.2)?.line).toBe('AT YOUR SERVICE, SIR');
     expect(cueAtSeedTime(SEQUENCE_SEED_DURATION)?.line).toBe(
-      'AWAITING ORDERS, SIR',
+      'AT YOUR SERVICE, SIR',
     );
+    expect(
+      cueAtSeedTime(
+        SEQUENCE_SEED_DURATION + BINARY_INTERFACE_FINAL_HOLD_PAD - 0.05,
+      )?.line,
+    ).toBe('AT YOUR SERVICE, SIR');
   });
 
-  it('clears after the animation ends', () => {
-    expect(cueAtSeedTime(SEQUENCE_SEED_DURATION + 0.2)).toBeNull();
+  it('clears after the final hold pad', () => {
+    expect(
+      cueAtSeedTime(
+        SEQUENCE_SEED_DURATION + BINARY_INTERFACE_FINAL_HOLD_PAD + 0.1,
+      ),
+    ).toBeNull();
   });
 });
 

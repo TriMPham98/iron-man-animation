@@ -215,49 +215,77 @@ export function createOverlay(): OverlayHandles {
     }, hold);
   };
 
+  /**
+   * Instant full hide. Must kill opacity transitions *before* clearing the
+   * line text — otherwise a 0.4–0.5s fade leaves the bare “J.A.R.V.I.S.”
+   * tag on screen for a frame (very visible on LOOP restart).
+   */
   const hideBottomNow = () => {
     if (!telemetryEl) return;
     window.clearTimeout(telemetryHideTimer);
     window.clearTimeout(telemetryPulseTimer);
+    telemetryHideTimer = 0;
+    // Freeze visual at invisible, then strip content
+    telemetryEl.style.transition = 'none';
+    telemetryEl.style.animation = 'none';
+    telemetryEl.style.opacity = '0';
+    telemetryEl.style.visibility = 'hidden';
     telemetryEl.classList.remove(
       'is-visible',
       'is-hiding',
       'is-pulse',
       'is-arriving',
+      'has-line',
     );
     telemetryEl.setAttribute('hidden', '');
     telemetryEl.setAttribute('aria-hidden', 'true');
     if (telemetryLineEl) telemetryLineEl.textContent = '';
     lastPaintedBottomLine = '';
     bottomWasHidden = true;
+    // Re-enable transitions for the next show (next frame so freeze sticks)
+    requestAnimationFrame(() => {
+      if (!telemetryEl || telemetryEl.classList.contains('is-visible')) return;
+      telemetryEl.style.transition = '';
+      telemetryEl.style.animation = '';
+      telemetryEl.style.opacity = '';
+      telemetryEl.style.visibility = '';
+    });
   };
 
+  /**
+   * Soft-hide: keep AT YOUR SERVICE (etc.) on screen through the fade, then
+   * hard-hide. Never clear the line while opacity is mid-transition.
+   */
   const clearTelemetry = () => {
     if (!telemetryEl) return;
     if (
-      telemetryEl.hasAttribute('hidden') ||
-      telemetryEl.classList.contains('is-hiding')
+      telemetryEl.hasAttribute('hidden') &&
+      !telemetryEl.classList.contains('is-visible') &&
+      !telemetryEl.classList.contains('is-hiding')
     ) {
       return;
     }
-    if (
-      !telemetryEl.classList.contains('is-visible') &&
-      !lastPaintedBottomLine
-    ) {
+    const lineText = telemetryLineEl?.textContent?.trim() ?? '';
+    if (!lineText && !lastPaintedBottomLine) {
+      hideBottomNow();
       return;
     }
     if (reducedMotion()) {
       hideBottomNow();
       return;
     }
+    if (telemetryEl.classList.contains('is-hiding')) {
+      return;
+    }
     window.clearTimeout(telemetryPulseTimer);
-    lastPaintedBottomLine = '';
+    // Keep textContent for the whole fade (has-line stays until hideBottomNow)
     telemetryEl.classList.add('is-hiding');
     telemetryEl.classList.remove('is-visible', 'is-pulse', 'is-arriving');
+    // Match .is-hiding transition (0.4s) with a little slack before text wipe
     window.clearTimeout(telemetryHideTimer);
     telemetryHideTimer = window.setTimeout(() => {
       hideBottomNow();
-    }, 400);
+    }, 450);
   };
 
   /**
@@ -265,22 +293,43 @@ export function createOverlay(): OverlayHandles {
    * Not gated on SYSTEMS ONLINE so audio and text stay locked.
    */
   const paintBottom = (line: string, kind?: string) => {
-    if (!telemetryEl || !telemetryLineEl || !line) return;
+    if (!telemetryEl || !telemetryLineEl) return;
+    const next = line.trim();
+    // Never show the chrome without copy (bare “J.A.R.V.I.S.” tag)
+    if (!next) {
+      hideBottomNow();
+      return;
+    }
     const same =
-      line === lastPaintedBottomLine &&
-      telemetryEl.classList.contains('is-visible');
+      next === lastPaintedBottomLine &&
+      telemetryEl.classList.contains('is-visible') &&
+      !telemetryEl.classList.contains('is-hiding') &&
+      telemetryLineEl.textContent === next;
     if (same) return;
 
-    const arriving = bottomWasHidden;
-    lastPaintedBottomLine = line;
+    const arriving =
+      bottomWasHidden ||
+      telemetryEl.hasAttribute('hidden') ||
+      telemetryEl.classList.contains('is-hiding');
+    lastPaintedBottomLine = next;
     bottomWasHidden = false;
+    // Cancel pending full-hide from a prior clear (e.g. loop edge frames)
     window.clearTimeout(telemetryHideTimer);
-    telemetryLineEl.textContent = line;
+    telemetryHideTimer = 0;
+
+    // Write copy first, then reveal — never the reverse
+    telemetryLineEl.textContent = next;
     if (kind) telemetryEl.dataset.kind = kind;
     else delete telemetryEl.dataset.kind;
 
+    // Clear any hard-hide inline freeze from hideBottomNow
+    telemetryEl.style.transition = '';
+    telemetryEl.style.animation = '';
+    telemetryEl.style.opacity = '';
+    telemetryEl.style.visibility = '';
+
     telemetryEl.classList.remove('is-hiding');
-    telemetryEl.classList.add('is-visible');
+    telemetryEl.classList.add('is-visible', 'has-line');
     telemetryEl.removeAttribute('hidden');
     telemetryEl.setAttribute('aria-hidden', 'false');
 

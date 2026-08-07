@@ -1093,7 +1093,15 @@ body.reduced-motion .hud-toast.is-hiding {
   transform: translateX(-50%) translateY(0);
 }
 
+/* Never show the J.A.R.V.I.S. chrome without a status line */
+.jarvis-telemetry.is-visible:not(.has-line),
+.jarvis-telemetry:has(.jarvis-telemetry-line:empty) {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
 .jarvis-telemetry.is-hiding {
+  /* Keep last line readable until opacity hits 0 — text is not cleared yet */
   opacity: 0;
   transform: translateX(-50%) translateY(0.35rem);
   transition:
