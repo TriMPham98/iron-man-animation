@@ -598,7 +598,7 @@ export function createAssemblySession(
     ui.setHintVisible(true);
     ui.fadeTitle(true);
     ui.setIntegrity('INTEGRITY 100%');
-    ui.setStatus('SYSTEMS ONLINE', true);
+    ui.setStatus('SYSTEMS ONLINE', true, { scrub: true });
     ui.setDebugProgress(1);
     audioStop();
     audioPlayheadFromTime(fullDuration());
@@ -646,12 +646,11 @@ export function createAssemblySession(
     ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
     ui.setDebugProgress(p);
     if (p >= 0.999) {
-      // Camera tail — suit is done; edge-triggered so no re-flash.
-      ui.setStatus('SYSTEMS ONLINE', true);
+      // Camera tail — suit is done; scrub skips staged baton delays.
+      ui.setStatus('SYSTEMS ONLINE', true, { scrub: true });
     } else {
-      ui.setSystemsOnline(false);
-      // Wave-paced phase label so scrub shows where you are, not "DEBUG SCRUB".
-      ui.setStatus(statusForIntegrityProgress(p), false);
+      // Wave-paced phase label so scrub shows where you are.
+      ui.setStatus(statusForIntegrityProgress(p), false, { scrub: true });
     }
   };
 

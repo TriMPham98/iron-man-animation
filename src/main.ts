@@ -158,8 +158,8 @@ async function boot(): Promise<void> {
     // Timeline-synced HUD clock (scrub-aware; keeps counting after complete).
     const seedSec = session.getHudElapsed();
     ui.updateClock(seedSec);
-    // Binary Code Interface phrases → JARVIS telemetry (seed clock).
-    // Final “AWAITING ORDERS, SIR” holds through SEQUENCE_SEED_DURATION.
+    // Bottom BCI ticker — always locked to the chirp/beep cue sheet (seed clock).
+    // Top panel soft-leaves after SYSTEMS ONLINE independently.
     if (!reducedMotion) {
       const cue = cueAtSeedTime(seedSec);
       if (cue) ui.setTelemetry(cue.line, { kind: cue.kind });

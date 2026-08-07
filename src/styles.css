@@ -1052,10 +1052,10 @@ body.reduced-motion .hud-toast.is-hiding {
 }
 
 /*
-  JARVIS binary-interface telemetry
-  ─────────────────────────────────
-  Seed-clock driven lines for Binary Code Interface chirps/beeps.
-  Sits above the mute toast so both can coexist briefly.
+  JARVIS binary-interface telemetry (bottom)
+  ─────────────────────────────────────────
+  Seed-clock chirp/beep cue sheet. Independent of the top integrity panel
+  so SFX and text stay locked; soft enter when it first appears.
 */
 .jarvis-telemetry {
   position: fixed;
@@ -1067,7 +1067,7 @@ body.reduced-motion .hud-toast.is-hiding {
   gap: 0.65rem;
   max-width: min(36rem, calc(100vw - 2rem));
   padding: 0.45rem 0.9rem 0.5rem;
-  transform: translateX(-50%) translateY(0.4rem);
+  transform: translateX(-50%) translateY(0.55rem);
   font-family: var(--mono);
   background: linear-gradient(
     180deg,
@@ -1084,8 +1084,8 @@ body.reduced-motion .hud-toast.is-hiding {
   pointer-events: none;
   overflow: hidden;
   transition:
-    opacity 0.32s ease,
-    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 0.48s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .jarvis-telemetry.is-visible {
@@ -1095,7 +1095,33 @@ body.reduced-motion .hud-toast.is-hiding {
 
 .jarvis-telemetry.is-hiding {
   opacity: 0;
-  transform: translateX(-50%) translateY(0.25rem);
+  transform: translateX(-50%) translateY(0.35rem);
+  transition:
+    opacity 0.4s ease,
+    transform 0.4s ease;
+}
+
+/* First appearance after hidden — longer settle, no harsh flash */
+.jarvis-telemetry.is-arriving {
+  animation: jarvis-telemetry-arrive 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes jarvis-telemetry-arrive {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(0.65rem) scale(0.98);
+    filter: brightness(1.25);
+  }
+  55% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+    filter: brightness(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+    filter: none;
+  }
 }
 
 .jarvis-telemetry-tag {
@@ -1178,7 +1204,8 @@ body.reduced-motion .jarvis-telemetry.is-hiding {
 }
 
 body.reduced-motion .jarvis-telemetry.is-pulse .jarvis-telemetry-line,
-body.reduced-motion .jarvis-telemetry.is-pulse .jarvis-telemetry-scan {
+body.reduced-motion .jarvis-telemetry.is-pulse .jarvis-telemetry-scan,
+body.reduced-motion .jarvis-telemetry.is-arriving {
   animation: none;
 }
 
@@ -1389,14 +1416,20 @@ body.reduced-motion .jarvis-telemetry.is-pulse .jarvis-telemetry-scan {
   animation: jarvis-panel-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Collapse with the fade — never leave an empty progress-track line behind */
+/* Soft exit while bottom BCI ticker holds the eye (cyan complete stays on) */
 .jarvis-panel.is-leaving {
   opacity: 0;
   visibility: hidden;
-  transform: translateY(-0.45rem) scale(0.985);
+  transform: translateY(-0.55rem) scale(0.98);
   max-height: 0;
   margin: 0;
   transform-origin: top center;
+  transition:
+    opacity 0.55s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.55s cubic-bezier(0.4, 0, 0.2, 1),
+    max-height 0.58s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0.55s,
+    margin 0.55s ease;
 }
 
 @keyframes jarvis-panel-in {

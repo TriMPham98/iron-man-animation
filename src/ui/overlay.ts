@@ -7,11 +7,7 @@ import {
   WAVE_ORDER,
   type ReclassEntry,
 } from './reclassCard';
-import {
-  JARVIS_DISMISS_MS,
-  JARVIS_LEAVE_MS,
-  shouldHandoffJarvisPanel,
-} from './jarvisHud';
+import { JARVIS_LEAVE_MS, JARVIS_ONLINE_HOLD_MS } from './jarvisHud';
 import {
   readDirectorPreference,
   writeDirectorPreference,
@@ -32,7 +28,15 @@ export interface OverlayHandles {
   setLoadingProgress: (p: number) => void;
   hideLoading: () => void;
   showHud: () => void;
-  setStatus: (text: string, online?: boolean) => void;
+  /**
+   * @param opts.scrub Instant UI (no online-hold delays) — used while
+   * seeking the assembly / audio playhead.
+   */
+  setStatus: (
+    text: string,
+    online?: boolean,
+    opts?: { scrub?: boolean },
+  ) => void;
   /** Updates integrity strip under the status line. */
   setIntegrity: (text: string) => void;
   setHintVisible: (v: boolean) => void;
@@ -69,8 +73,12 @@ export interface OverlayHandles {
   setReclassCollapsed: (collapsed: boolean) => void;
   toggleReclassCollapsed: () => void;
   isReclassCollapsed: () => boolean;
-  /** JARVIS: systems-online flourish, then auto-dismiss the panel. */
-  setSystemsOnline: (online: boolean) => void;
+  /**
+   * JARVIS: systems-online flourish on the top panel (cyan bar), then a soft
+   * leave so the bottom BCI ticker can own the frame. Pass `{ scrub: true }`
+   * to skip the hold (keep top for scrub context).
+   */
+  setSystemsOnline: (online: boolean, opts?: { scrub?: boolean }) => void;
   /**
    * JARVIS: reset state and show the top-bar briefing for a new assembly run.
    * Replaces the old title/status/INT loading strip while visible.
@@ -103,11 +111,12 @@ export interface OverlayHandles {
    */
   showToast: (message: string, holdMs?: number) => void;
   /**
-   * Binary-interface JARVIS ticker (seed-clock driven).
-   * Pass null / empty to hide. Same line re-entry does not re-flash.
+   * Binary-interface cue for the bottom JARVIS ticker (seed-clock / chirps).
+   * Always tracks the cue sheet — not gated on the top panel.
+   * Pass null when outside the BCI window to hide the ticker.
    */
   setTelemetry: (line: string | null, opts?: { kind?: string }) => void;
-  /** Force-hide telemetry (sequence reset / reduced-motion skip). */
+  /** Hide the bottom ticker and clear its line. */
   clearTelemetry: () => void;
 }
 
@@ -166,8 +175,8 @@ export function createOverlay(): OverlayHandles {
 
   let systemsOnline = false;
   let dismissTimer = 0;
-  /** True once the BCI → top-panel leave has been scheduled (once per run). */
-  let bciHandoffScheduled = false;
+  /** Top leave already scheduled for this complete beat. */
+  let topLeaveStarted = false;
   let lastProgress = 0;
   let toastTimer = 0;
   let toastHideTimer = 0;
@@ -179,9 +188,11 @@ export function createOverlay(): OverlayHandles {
   const toastEl = elOptional<HTMLDivElement>('hud-toast');
   const telemetryEl = elOptional<HTMLDivElement>('jarvis-telemetry');
   const telemetryLineEl = elOptional<HTMLSpanElement>('jarvis-telemetry-line');
-  let lastTelemetryLine = '';
+  let lastPaintedBottomLine = '';
   let telemetryHideTimer = 0;
   let telemetryPulseTimer = 0;
+  /** First paint after being hidden — softer enter, no flash spam. */
+  let bottomWasHidden = true;
 
   const showToast = (message: string, holdMs = 1600) => {
     if (!toastEl) return;
@@ -204,88 +215,68 @@ export function createOverlay(): OverlayHandles {
     }, hold);
   };
 
-  const hideTelemetryNow = () => {
+  const hideBottomNow = () => {
     if (!telemetryEl) return;
     window.clearTimeout(telemetryHideTimer);
     window.clearTimeout(telemetryPulseTimer);
-    telemetryEl.classList.remove('is-visible', 'is-hiding', 'is-pulse');
+    telemetryEl.classList.remove(
+      'is-visible',
+      'is-hiding',
+      'is-pulse',
+      'is-arriving',
+    );
     telemetryEl.setAttribute('hidden', '');
     telemetryEl.setAttribute('aria-hidden', 'true');
     if (telemetryLineEl) telemetryLineEl.textContent = '';
-    lastTelemetryLine = '';
+    lastPaintedBottomLine = '';
+    bottomWasHidden = true;
   };
 
   const clearTelemetry = () => {
     if (!telemetryEl) return;
-    // Already gone or mid-exit — don't reset the hide timer every frame.
     if (
       telemetryEl.hasAttribute('hidden') ||
       telemetryEl.classList.contains('is-hiding')
     ) {
       return;
     }
-    if (!telemetryEl.classList.contains('is-visible') && !lastTelemetryLine) {
-      return;
-    }
-    if (reducedMotion()) {
-      hideTelemetryNow();
-      return;
-    }
-    window.clearTimeout(telemetryPulseTimer);
-    lastTelemetryLine = '';
-    telemetryEl.classList.add('is-hiding');
-    telemetryEl.classList.remove('is-visible', 'is-pulse');
-    window.clearTimeout(telemetryHideTimer);
-    telemetryHideTimer = window.setTimeout(() => {
-      hideTelemetryNow();
-    }, 320);
-  };
-
-  /**
-   * Top SYSTEMS ONLINE ends the instant bottom BCI telemetry takes over
-   * (assembly complete). Cancels any fallback dismiss timer. Once per run.
-   */
-  const handoffJarvisPanelToTelemetry = () => {
-    if (!jarvisPanel || bciHandoffScheduled) return;
-    const panelVisible =
-      !jarvisPanel.classList.contains('is-hidden') &&
-      !jarvisPanel.classList.contains('is-leaving');
     if (
-      !shouldHandoffJarvisPanel({
-        telemetryActive: true,
-        panelVisible,
-        systemsOnline,
-        integrity01: lastProgress,
-      })
+      !telemetryEl.classList.contains('is-visible') &&
+      !lastPaintedBottomLine
     ) {
       return;
     }
-    bciHandoffScheduled = true;
-    window.clearTimeout(dismissTimer);
-    dismissTimer = 0;
-    hideJarvisPanel(false);
+    if (reducedMotion()) {
+      hideBottomNow();
+      return;
+    }
+    window.clearTimeout(telemetryPulseTimer);
+    lastPaintedBottomLine = '';
+    telemetryEl.classList.add('is-hiding');
+    telemetryEl.classList.remove('is-visible', 'is-pulse', 'is-arriving');
+    window.clearTimeout(telemetryHideTimer);
+    telemetryHideTimer = window.setTimeout(() => {
+      hideBottomNow();
+    }, 400);
   };
 
   /**
-   * Show / update the binary-interface ticker. Same line is a no-op so
-   * the seed-clock render loop can call every frame without re-flashing.
+   * Bottom BCI ticker — always tracks the chirp/beep cue sheet (seed clock).
+   * Not gated on SYSTEMS ONLINE so audio and text stay locked.
    */
-  const setTelemetry = (line: string | null, opts?: { kind?: string }) => {
-    if (!telemetryEl || !telemetryLineEl) return;
-    const next = (line ?? '').trim();
-    if (!next) {
-      clearTelemetry();
-      return;
-    }
-    if (next === lastTelemetryLine && telemetryEl.classList.contains('is-visible')) {
-      // Integrity may just have hit 100% while this line is held — recheck handoff.
-      handoffJarvisPanelToTelemetry();
-      return;
-    }
-    lastTelemetryLine = next;
+  const paintBottom = (line: string, kind?: string) => {
+    if (!telemetryEl || !telemetryLineEl || !line) return;
+    const same =
+      line === lastPaintedBottomLine &&
+      telemetryEl.classList.contains('is-visible');
+    if (same) return;
+
+    const arriving = bottomWasHidden;
+    lastPaintedBottomLine = line;
+    bottomWasHidden = false;
     window.clearTimeout(telemetryHideTimer);
-    telemetryLineEl.textContent = next;
-    if (opts?.kind) telemetryEl.dataset.kind = opts.kind;
+    telemetryLineEl.textContent = line;
+    if (kind) telemetryEl.dataset.kind = kind;
     else delete telemetryEl.dataset.kind;
 
     telemetryEl.classList.remove('is-hiding');
@@ -293,19 +284,27 @@ export function createOverlay(): OverlayHandles {
     telemetryEl.removeAttribute('hidden');
     telemetryEl.setAttribute('aria-hidden', 'false');
 
-    // Retrigger flash + scan on each new cue
-    telemetryEl.classList.remove('is-pulse');
+    if (reducedMotion()) {
+      telemetryEl.classList.remove('is-pulse', 'is-arriving');
+      return;
+    }
+
+    // First appearance: soft rise. Later line changes: light pulse only.
+    telemetryEl.classList.remove('is-pulse', 'is-arriving');
     void telemetryEl.offsetWidth;
-    if (!reducedMotion()) {
+    if (arriving) {
+      telemetryEl.classList.add('is-arriving');
+      window.clearTimeout(telemetryPulseTimer);
+      telemetryPulseTimer = window.setTimeout(() => {
+        telemetryEl.classList.remove('is-arriving');
+      }, 700);
+    } else {
       telemetryEl.classList.add('is-pulse');
       window.clearTimeout(telemetryPulseTimer);
       telemetryPulseTimer = window.setTimeout(() => {
         telemetryEl.classList.remove('is-pulse');
-      }, 560);
+      }, 480);
     }
-
-    // First (and subsequent new) BCI lines: yield the top integrity strip.
-    handoffJarvisPanelToTelemetry();
   };
 
   const hideJarvisPanel = (immediate = false) => {
@@ -319,7 +318,7 @@ export function createOverlay(): OverlayHandles {
       jarvisPanel.setAttribute('aria-hidden', 'true');
       return;
     }
-    // Collapse + fade while still is-complete (cyan finish state)
+    // Soft collapse while still cyan-complete
     jarvisPanel.classList.add('is-leaving');
     jarvisPanel.classList.remove('is-visible');
     window.setTimeout(() => {
@@ -332,6 +331,7 @@ export function createOverlay(): OverlayHandles {
   const showJarvisPanel = () => {
     if (!jarvisPanel) return;
     window.clearTimeout(dismissTimer);
+    topLeaveStarted = false;
     jarvisPanel.classList.remove('is-hidden', 'is-leaving', 'is-complete');
     jarvisPanel.setAttribute('aria-hidden', 'false');
     hudTop.classList.add('is-jarvis-live');
@@ -339,7 +339,6 @@ export function createOverlay(): OverlayHandles {
       jarvisPanel.classList.add('is-visible');
       return;
     }
-    // Retrigger enter animation cleanly
     jarvisPanel.classList.remove('is-visible', 'is-entering');
     void jarvisPanel.offsetWidth;
     jarvisPanel.classList.add('is-entering');
@@ -349,12 +348,38 @@ export function createOverlay(): OverlayHandles {
     }, 450);
   };
 
-  const setSystemsOnline = (online: boolean) => {
-    // Edge-trigger the cyan flourish — assembly end + camera-tail complete
-    // both used to call this and fire a second flash.
+  /** Play path: soft-leave top after the SYSTEMS ONLINE hold. */
+  const scheduleTopLeave = () => {
+    if (topLeaveStarted) return;
+    topLeaveStarted = true;
+    progressBar.classList.add('is-complete');
+    jarvisPanel?.classList.add('is-complete');
+    window.clearTimeout(dismissTimer);
+    dismissTimer = window.setTimeout(() => {
+      dismissTimer = 0;
+      hideJarvisPanel(false);
+    }, reducedMotion() ? 0 : JARVIS_ONLINE_HOLD_MS);
+  };
+
+  /**
+   * Bottom BCI ticker driven by the authored chirp/beep cue sheet.
+   * Independent of the top panel so SFX and text stay in lockstep.
+   */
+  const setTelemetry = (line: string | null, opts?: { kind?: string }) => {
+    const next = (line ?? '').trim();
+    if (!next) {
+      clearTelemetry();
+      return;
+    }
+    paintBottom(next, opts?.kind);
+  };
+
+  const setSystemsOnline = (online: boolean, opts?: { scrub?: boolean }) => {
     const becameOnline = online && !systemsOnline;
+    const becameOffline = !online && systemsOnline;
     systemsOnline = online;
     document.body.classList.toggle('systems-online', online);
+    const scrub = !!opts?.scrub;
 
     if (becameOnline) {
       hudFrame.classList.add('is-online-flash');
@@ -366,30 +391,42 @@ export function createOverlay(): OverlayHandles {
     }
 
     if (becameOnline && jarvisPanel) {
+      // Cyan complete on top; bottom keeps running on its own cue clock.
+      setProgressVisual(1);
+      progressBar.classList.add('is-complete');
       jarvisPanel.classList.add('is-complete');
-      window.clearTimeout(dismissTimer);
-      // Bottom already on → hand off now (systems-online end = BCI take-over).
-      // Otherwise fallback dismiss if BCI never arrives (skip / reduced motion).
-      const telemetryLive =
-        !!lastTelemetryLine &&
-        !!telemetryEl &&
-        telemetryEl.classList.contains('is-visible');
-      if (telemetryLive) {
-        handoffJarvisPanelToTelemetry();
-      } else {
-        dismissTimer = window.setTimeout(
-          () => hideJarvisPanel(false),
-          reducedMotion() ? 500 : JARVIS_DISMISS_MS,
-        );
-      }
-    } else if (!online && jarvisPanel?.classList.contains('is-hidden')) {
       showJarvisPanel();
+      const changed = lastStatus !== 'SYSTEMS ONLINE';
+      lastStatus = 'SYSTEMS ONLINE';
+      status.textContent = 'SYSTEMS ONLINE';
+      status.classList.add('online');
+      if (changed) flashStatus();
+
+      window.clearTimeout(dismissTimer);
+      topLeaveStarted = false;
+
+      if (scrub) {
+        // Scrub: keep top for phase context; bottom already free.
+        return;
+      }
+      // Soft exit so the bottom chirp HUD can hold the eye.
+      scheduleTopLeave();
+    } else if (becameOffline) {
+      window.clearTimeout(dismissTimer);
+      topLeaveStarted = false;
+      jarvisPanel?.classList.remove('is-complete');
+      if (lastProgress < 0.999) {
+        progressBar.classList.remove('is-complete');
+      }
+      if (jarvisPanel?.classList.contains('is-hidden')) {
+        showJarvisPanel();
+      }
     }
   };
 
   const resetJarvisChrome = (opts?: { softProgress?: boolean }) => {
     window.clearTimeout(dismissTimer);
-    bciHandoffScheduled = false;
+    topLeaveStarted = false;
     const prevProgress = lastProgress;
     const soft =
       !!opts?.softProgress &&
@@ -402,13 +439,10 @@ export function createOverlay(): OverlayHandles {
     hudFrame.classList.remove('is-online-flash');
     status.textContent = 'STAND BY';
     status.classList.remove('online', 'is-updating');
-    // Drop cyan complete styling before the fill eases back to gold
     progressBar.classList.remove('is-complete');
     jarvisPanel?.classList.remove('is-complete');
-    // New run — clear any leftover binary-interface ticker
-    hideTelemetryNow();
+    hideBottomNow();
 
-    // Show panel first so a soft drain is visible on re-entry
     if (soft) {
       progressFill.style.width = `${(prevProgress * 100).toFixed(3)}%`;
       lastProgress = prevProgress;
@@ -778,13 +812,15 @@ export function createOverlay(): OverlayHandles {
       clearProgressDrain();
     }
 
-    // Width still tracks smoothly every tick; aria / % only on whole-% change
+    // Width tracks every tick; cyan complete must also track every tick so
+    // 0.995→1.0 and SYSTEMS ONLINE never leave a gold bar at 100%.
     lastProgress = clamped;
     progressFill.style.width = widthPct;
+    const complete = clamped >= 0.999 || systemsOnline;
+    progressBar.classList.toggle('is-complete', complete);
     if (pct !== lastProgressPct || opts?.drain) {
       lastProgressPct = pct;
       progressBar.setAttribute('aria-valuenow', String(pct));
-      progressBar.classList.toggle('is-complete', clamped >= 0.999);
       if (jarvisInt) jarvisInt.textContent = `${pct}%`;
       hudTop.classList.toggle('is-live', clamped > 0.001 && clamped < 0.999);
     }
@@ -829,13 +865,14 @@ export function createOverlay(): OverlayHandles {
         hudFrame.classList.add('is-booted');
       }
     },
-    setStatus: (text: string, online = false) => {
+    setStatus: (text: string, online = false, opts?: { scrub?: boolean }) => {
       const changed = text !== lastStatus;
       lastStatus = text;
       status.textContent = text;
       status.classList.toggle('online', online);
       if (changed && text) flashStatus();
-      if (online) setSystemsOnline(true);
+      if (online) setSystemsOnline(true, opts);
+      else if (opts?.scrub) setSystemsOnline(false, opts);
     },
     setIntegrity: (text: string) => {
       const match = text.match(/(\d+)\s*%/);
