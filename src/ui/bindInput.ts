@@ -29,8 +29,8 @@ export interface BindInputOptions {
       getTime?: () => number;
     };
   };
-  /** Assembly SFX mute (M hotkey). */
-  audioTimeline?: Pick<AudioTimelinePanel, 'toggleMute'> | null;
+  /** Assembly SFX mute (M) + full-cycle loop (L) hotkeys. */
+  audioTimeline?: Pick<AudioTimelinePanel, 'toggleMute' | 'toggleLoop'> | null;
 }
 
 /**
@@ -74,6 +74,16 @@ export function bindInput(options: BindInputOptions): void {
       e.preventDefault();
       const muted = audioTimeline.toggleMute();
       ui.showToast(muted ? 'AUDIO MUTED' : 'AUDIO ON');
+      return;
+    }
+
+    // L — toggle full-cycle loop (preference can be set before INITIATE)
+    if ((e.key === 'l' || e.key === 'L') && !e.repeat) {
+      if (isTypingTarget(e.target)) return;
+      if (!audioTimeline) return;
+      e.preventDefault();
+      const looping = audioTimeline.toggleLoop();
+      ui.showToast(looping ? 'LOOP ON' : 'LOOP OFF');
       return;
     }
 

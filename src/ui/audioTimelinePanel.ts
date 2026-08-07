@@ -73,6 +73,8 @@ export type AudioTimelinePanel = {
    */
   onLoopChange: (cb: (enabled: boolean) => void) => void;
   isLooping: () => boolean;
+  /** Toggle full-cycle loop (persisted). Returns the new loop state. */
+  toggleLoop: () => boolean;
   /** True while the user is dragging the audio playhead. */
   isScrubbing: () => boolean;
   /** Toggle assembly SFX mute (persisted). Returns the new muted state. */
@@ -222,9 +224,24 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     btnLoop.classList.toggle('is-active', loopEnabled);
     btnLoop.setAttribute('aria-pressed', loopEnabled ? 'true' : 'false');
     btnLoop.title = loopEnabled
-      ? 'Loop on — full assembly restarts at end (click to disable)'
-      : 'Loop full assembly cycle (no idle spin)';
+      ? 'Loop on — full assembly restarts at end (L or click to disable)'
+      : 'Loop full assembly cycle (no idle spin) (L)';
   };
+
+  const setLoopState = (next: boolean): boolean => {
+    loopEnabled = next;
+    try {
+      window.localStorage.setItem(LOOP_STORAGE_KEY, loopEnabled ? '1' : '0');
+    } catch {
+      /* private mode */
+    }
+    applyLoopVisual();
+    loopChangeHandler?.(loopEnabled);
+    return loopEnabled;
+  };
+
+  const toggleLoop = (): boolean => setLoopState(!loopEnabled);
+
   applyLoopVisual();
 
   /** Source durations cache (file → seconds). */
@@ -1253,14 +1270,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   });
 
   btnLoop.addEventListener('click', () => {
-    loopEnabled = !loopEnabled;
-    try {
-      window.localStorage.setItem(LOOP_STORAGE_KEY, loopEnabled ? '1' : '0');
-    } catch {
-      /* private mode */
-    }
-    applyLoopVisual();
-    loopChangeHandler?.(loopEnabled);
+    toggleLoop();
   });
 
   const applyMuteVisual = () => {
@@ -1548,6 +1558,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       cb(loopEnabled);
     },
     isLooping: () => loopEnabled,
+    toggleLoop,
     isScrubbing: () => scrubbing,
     toggleMute,
     isMuted: () => muted,
