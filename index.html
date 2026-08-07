@@ -125,6 +125,23 @@
         hidden
       ></div>
 
+      <!--
+        JARVIS telemetry ticker — binary-code-interface chirps/beeps drive
+        the line via the seed-clock playhead (see binaryInterfaceCues.ts).
+      -->
+      <div
+        id="jarvis-telemetry"
+        class="jarvis-telemetry"
+        role="status"
+        aria-live="polite"
+        aria-hidden="true"
+        hidden
+      >
+        <span class="jarvis-telemetry-tag" aria-hidden="true">J.A.R.V.I.S.</span>
+        <span id="jarvis-telemetry-line" class="jarvis-telemetry-line"></span>
+        <span class="jarvis-telemetry-scan" aria-hidden="true"></span>
+      </div>
+
       <!-- First-play gate — cyan holographic ring CTA (hangar idle until click) -->
       <div
         id="start-gate"

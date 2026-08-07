@@ -1051,6 +1051,137 @@ body.reduced-motion .hud-toast.is-hiding {
   transform: translateX(-50%);
 }
 
+/*
+  JARVIS binary-interface telemetry
+  ─────────────────────────────────
+  Seed-clock driven lines for Binary Code Interface chirps/beeps.
+  Sits above the mute toast so both can coexist briefly.
+*/
+.jarvis-telemetry {
+  position: fixed;
+  left: 50%;
+  bottom: max(4.25rem, env(safe-area-inset-bottom, 0px) + 3.5rem);
+  z-index: 48;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  max-width: min(36rem, calc(100vw - 2rem));
+  padding: 0.45rem 0.9rem 0.5rem;
+  transform: translateX(-50%) translateY(0.4rem);
+  font-family: var(--mono);
+  background: linear-gradient(
+    180deg,
+    rgba(6, 16, 26, 0.9) 0%,
+    rgba(3, 8, 14, 0.86) 100%
+  );
+  border: 1px solid rgba(126, 232, 255, 0.32);
+  border-radius: 1px;
+  box-shadow:
+    0 0 0 1px rgba(126, 232, 255, 0.06),
+    0 0 28px rgba(126, 232, 255, 0.14),
+    inset 0 1px 0 rgba(184, 244, 255, 0.1);
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  transition:
+    opacity 0.32s ease,
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.jarvis-telemetry.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.jarvis-telemetry.is-hiding {
+  opacity: 0;
+  transform: translateX(-50%) translateY(0.25rem);
+}
+
+.jarvis-telemetry-tag {
+  flex-shrink: 0;
+  font-family: var(--jarvis);
+  font-size: 0.48rem;
+  letter-spacing: 0.28em;
+  color: rgba(126, 232, 255, 0.72);
+  text-shadow: 0 0 10px rgba(126, 232, 255, 0.35);
+}
+
+.jarvis-telemetry-line {
+  min-width: 0;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cyan-bright);
+  text-shadow: 0 0 12px rgba(126, 232, 255, 0.4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jarvis-telemetry.is-pulse .jarvis-telemetry-line {
+  animation: jarvis-telemetry-flash 0.42s ease-out;
+}
+
+.jarvis-telemetry-scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(126, 232, 255, 0.08) 45%,
+    rgba(184, 244, 255, 0.16) 50%,
+    rgba(126, 232, 255, 0.08) 55%,
+    transparent 100%
+  );
+  transform: translateX(-120%);
+  opacity: 0;
+}
+
+.jarvis-telemetry.is-pulse .jarvis-telemetry-scan {
+  animation: jarvis-telemetry-scan 0.55s ease-out;
+}
+
+@keyframes jarvis-telemetry-flash {
+  0% {
+    opacity: 0.35;
+    filter: brightness(1.6);
+  }
+  35% {
+    opacity: 1;
+    filter: brightness(1.25);
+  }
+  100% {
+    opacity: 1;
+    filter: none;
+  }
+}
+
+@keyframes jarvis-telemetry-scan {
+  0% {
+    opacity: 0.9;
+    transform: translateX(-120%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(120%);
+  }
+}
+
+body.reduced-motion .jarvis-telemetry,
+body.reduced-motion .jarvis-telemetry.is-visible,
+body.reduced-motion .jarvis-telemetry.is-hiding {
+  transition: opacity 0.12s ease;
+  transform: translateX(-50%);
+}
+
+body.reduced-motion .jarvis-telemetry.is-pulse .jarvis-telemetry-line,
+body.reduced-motion .jarvis-telemetry.is-pulse .jarvis-telemetry-scan {
+  animation: none;
+}
+
 /* —— HUD —— */
 .hud {
   position: absolute;

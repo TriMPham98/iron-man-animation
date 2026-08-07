@@ -11,6 +11,7 @@ import { createAssemblySession } from './session/assemblySession';
 import { Suit } from './suit/Suit';
 import { bindInput } from './ui/bindInput';
 import { installButtonFocusRelease } from './ui/blurButtons';
+import { cueAtSeedTime } from './audio/binaryInterfaceCues';
 import { createAudioTimelinePanel } from './ui/audioTimelinePanel';
 import { createOverlay } from './ui/overlay';
 import { createPickHighlight } from './ui/pickHighlight';
@@ -155,7 +156,15 @@ async function boot(): Promise<void> {
     }
 
     // Timeline-synced HUD clock (scrub-aware; keeps counting after complete).
-    ui.updateClock(session.getHudElapsed());
+    const seedSec = session.getHudElapsed();
+    ui.updateClock(seedSec);
+    // Binary Code Interface phrases → JARVIS telemetry (seed clock).
+    // Final “AWAITING ORDERS, SIR” holds through SEQUENCE_SEED_DURATION.
+    if (!reducedMotion) {
+      const cue = cueAtSeedTime(seedSec);
+      if (cue) ui.setTelemetry(cue.line, { kind: cue.kind });
+      else ui.setTelemetry(null);
+    }
     post.render(delta);
   };
 

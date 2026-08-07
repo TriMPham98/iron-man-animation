@@ -98,6 +98,13 @@ export interface OverlayHandles {
    * Auto-hides after a short hold; restarts the timer on repeat calls.
    */
   showToast: (message: string, holdMs?: number) => void;
+  /**
+   * Binary-interface JARVIS ticker (seed-clock driven).
+   * Pass null / empty to hide. Same line re-entry does not re-flash.
+   */
+  setTelemetry: (line: string | null, opts?: { kind?: string }) => void;
+  /** Force-hide telemetry (sequence reset / reduced-motion skip). */
+  clearTelemetry: () => void;
 }
 
 export interface DebugPickedPiece {
@@ -164,6 +171,11 @@ export function createOverlay(): OverlayHandles {
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const toastEl = elOptional<HTMLDivElement>('hud-toast');
+  const telemetryEl = elOptional<HTMLDivElement>('jarvis-telemetry');
+  const telemetryLineEl = elOptional<HTMLSpanElement>('jarvis-telemetry-line');
+  let lastTelemetryLine = '';
+  let telemetryHideTimer = 0;
+  let telemetryPulseTimer = 0;
 
   const showToast = (message: string, holdMs = 1600) => {
     if (!toastEl) return;
@@ -184,6 +196,80 @@ export function createOverlay(): OverlayHandles {
         toastEl.setAttribute('aria-hidden', 'true');
       }, reducedMotion() ? 0 : 280);
     }, hold);
+  };
+
+  const hideTelemetryNow = () => {
+    if (!telemetryEl) return;
+    window.clearTimeout(telemetryHideTimer);
+    window.clearTimeout(telemetryPulseTimer);
+    telemetryEl.classList.remove('is-visible', 'is-hiding', 'is-pulse');
+    telemetryEl.setAttribute('hidden', '');
+    telemetryEl.setAttribute('aria-hidden', 'true');
+    if (telemetryLineEl) telemetryLineEl.textContent = '';
+    lastTelemetryLine = '';
+  };
+
+  const clearTelemetry = () => {
+    if (!telemetryEl) return;
+    // Already gone or mid-exit — don't reset the hide timer every frame.
+    if (
+      telemetryEl.hasAttribute('hidden') ||
+      telemetryEl.classList.contains('is-hiding')
+    ) {
+      return;
+    }
+    if (!telemetryEl.classList.contains('is-visible') && !lastTelemetryLine) {
+      return;
+    }
+    if (reducedMotion()) {
+      hideTelemetryNow();
+      return;
+    }
+    window.clearTimeout(telemetryPulseTimer);
+    lastTelemetryLine = '';
+    telemetryEl.classList.add('is-hiding');
+    telemetryEl.classList.remove('is-visible', 'is-pulse');
+    window.clearTimeout(telemetryHideTimer);
+    telemetryHideTimer = window.setTimeout(() => {
+      hideTelemetryNow();
+    }, 320);
+  };
+
+  /**
+   * Show / update the binary-interface ticker. Same line is a no-op so
+   * the seed-clock render loop can call every frame without re-flashing.
+   */
+  const setTelemetry = (line: string | null, opts?: { kind?: string }) => {
+    if (!telemetryEl || !telemetryLineEl) return;
+    const next = (line ?? '').trim();
+    if (!next) {
+      clearTelemetry();
+      return;
+    }
+    if (next === lastTelemetryLine && telemetryEl.classList.contains('is-visible')) {
+      return;
+    }
+    lastTelemetryLine = next;
+    window.clearTimeout(telemetryHideTimer);
+    telemetryLineEl.textContent = next;
+    if (opts?.kind) telemetryEl.dataset.kind = opts.kind;
+    else delete telemetryEl.dataset.kind;
+
+    telemetryEl.classList.remove('is-hiding');
+    telemetryEl.classList.add('is-visible');
+    telemetryEl.removeAttribute('hidden');
+    telemetryEl.setAttribute('aria-hidden', 'false');
+
+    // Retrigger flash + scan on each new cue
+    telemetryEl.classList.remove('is-pulse');
+    void telemetryEl.offsetWidth;
+    if (!reducedMotion()) {
+      telemetryEl.classList.add('is-pulse');
+      window.clearTimeout(telemetryPulseTimer);
+      telemetryPulseTimer = window.setTimeout(() => {
+        telemetryEl.classList.remove('is-pulse');
+      }, 560);
+    }
   };
 
   const hideJarvisPanel = (immediate = false) => {
@@ -273,6 +359,8 @@ export function createOverlay(): OverlayHandles {
     // Drop cyan complete styling before the fill eases back to gold
     progressBar.classList.remove('is-complete');
     jarvisPanel?.classList.remove('is-complete');
+    // New run — clear any leftover binary-interface ticker
+    hideTelemetryNow();
 
     // Show panel first so a soft drain is visible on re-entry
     if (soft) {
@@ -791,5 +879,7 @@ export function createOverlay(): OverlayHandles {
       startGestureHandler = cb;
     },
     showToast,
+    setTelemetry,
+    clearTelemetry,
   };
 }
