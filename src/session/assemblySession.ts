@@ -72,8 +72,9 @@ export interface AssemblySession {
   assembly: AssemblyController;
   isComplete: () => boolean;
   /**
-   * HUD timer seconds: assembly timeline time while building/scrubbing;
-   * after complete, keeps counting past the sequence duration (showcase).
+   * HUD timer seconds — same seed/audio clock as the DAW playhead (not raw
+   * GSAP). Hangar hold maps to 0; cascade + camera tail match the ruler.
+   * After complete, keeps counting through the showcase.
    */
   getHudElapsed: () => number;
   /** @deprecated Prefer getHudElapsed — kept for boot handoff. */
@@ -277,17 +278,15 @@ export function createAssemblySession(
   };
 
   const getHudElapsed = (): number => {
-    // After true complete, keep counting on wall clock through the showcase.
+    // Same seed clock as the audio DAW playhead (gsap − sfxOffset, ≥ 0).
+    // Raw GSAP includes the hangar hold, so the top-right timer used to read
+    // ~0.68s ahead of the sound timeline for the whole run.
     if (assemblyComplete && completeAnchor != null) {
-      return (
-        completeBaseElapsed +
-        Math.max(0, clock.getElapsedTime() - completeAnchor)
-      );
+      const base = Math.max(0, toAudioSec(completeBaseElapsed));
+      return base + Math.max(0, clock.getElapsedTime() - completeAnchor);
     }
-    // Live GSAP time through hangar hold, cascade, *and* post–systems-online
-    // camera tail. Do not freeze at integrity 100% / assemblyDuration — that
-    // used to stall the HUD for the whole hero pullback.
-    return Math.max(0, assembly.getTime());
+    // Live seed time through cascade + camera tail (hold stays at 0:00).
+    return Math.max(0, toAudioSec(assembly.getTime()));
   };
 
   const applyCompleteUi = (opts?: { preserveCamera?: boolean }) => {
