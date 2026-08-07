@@ -134,21 +134,23 @@ async function boot(): Promise<void> {
     const showcaseOrbiting = session.update(delta);
 
     // Camera ownership (scrub ↔ orbit):
-    // - Path mode (!userOwnsCamera): cinematic lookTarget + FOV from the
-    //   timeline; OrbitControls still runs so distance/angles keep the
-    //   established composition (skipping update() made pure GSAP poses
-    //   and changed framing).
+    // - Path mode while playing: OrbitControls keeps distance/angles so the
+    //   composition tracks lookTarget (pure GSAP poses read differently).
+    // - Path mode while paused/scrubbed: do NOT call controls.update —
+    //   minDistance / polar clamps yank the camera off close ECU / early
+    //   pullback poses (visible jerk on ←/→ after systems online).
     // - Free-look (userOwnsCamera): orbit owns target + position.
     // Scrub re-attaches to path; viewport drag detaches (bindInput).
     if (controls.enabled && !showcaseOrbiting) {
       const ownsCamera = session.assembly.userOwnsCamera();
-      if (!ownsCamera) {
-        // Pivot follows the path so composition tracks cinematic look-ats
-        controls.target.copy(lookTarget);
-      }
-      controls.update(delta);
       if (ownsCamera) {
+        controls.update(delta);
         lookTarget.copy(controls.target);
+      } else {
+        controls.target.copy(lookTarget);
+        if (session.assembly.isPlaying()) {
+          controls.update(delta);
+        }
       }
     }
 

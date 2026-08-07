@@ -583,25 +583,60 @@ export function createAssemblySession(
   };
 
   /**
-   * HUD / complete chrome for a scrubbed GSAP time.
-   * Complete + showcase only at the true full-cycle end — not systems online.
+   * Park at the final GSAP frame while scrubbing — finished suit + complete
+   * chrome, but no showcase spin kick (that yaw felt like a camera jerk when
+   * ←/→ reached the end of the extended ruler).
+   */
+  const parkScrubAtEnd = () => {
+    assemblyComplete = true;
+    markCompleteClock();
+    suit.showFinal();
+    stopCompleteSpinTracking();
+    // Keep the cinematic end pose; only reseed pivot for the next free-look.
+    setOrbitMode('free', { preserveTarget: false });
+    ui.setReplayEnabled(true);
+    ui.setSkipEnabled(false);
+    ui.setHintVisible(true);
+    ui.fadeTitle(true);
+    ui.setIntegrity('INTEGRITY 100%');
+    ui.setStatus('SYSTEMS ONLINE', true);
+    ui.setDebugProgress(1);
+    audioStop();
+    audioPlayheadFromTime(fullDuration());
+    syncDebugPauseLabel();
+    refreshHintCopy();
+  };
+
+  /**
+   * HUD chrome for a scrubbed GSAP time.
+   * Complete chrome only at the true full-cycle end — not systems online.
    * Integrity plateaus at 100% through the camera tail; scrubbing there must
-   * stay on the cinematic path (no spin jump).
+   * stay on the cinematic path (no spin jump / orbit clamp fight).
    */
   const applyScrubUiAtTime = (gsapT: number) => {
     const full = fullDuration();
     if (gsapT >= full - 1e-3) {
-      applyCompleteUi({ preserveCamera: false });
+      parkScrubAtEnd();
       return;
     }
 
-    // Mid-cycle (plates or camera tail): re-attach path, no showcase spin.
-    // Avoid applyAssemblyUi here — it clears systems-online and would re-flash
-    // cyan every arrow key while scrubbing the tail.
+    // Mid-cycle (plates or camera tail): path owns framing, no showcase spin.
+    // Avoid applyAssemblyUi — it clears systems-online and re-flashes cyan
+    // every arrow key while scrubbing the tail.
+    const wasComplete = assemblyComplete;
     assemblyComplete = false;
     clearCompleteClock();
-    stopCompleteSpinTracking();
-    setOrbitMode('free', { preserveTarget: false });
+    if (wasComplete || completeSpinActive) {
+      stopCompleteSpinTracking();
+    }
+    // Only reseed the orbit pivot when leaving complete / spin. Doing it every
+    // step is unnecessary — seekTime already applied the cinematic camera, and
+    // main.ts skips controls.update while paused so the pose sticks.
+    if (wasComplete) {
+      setOrbitMode('free', { preserveTarget: false });
+    } else {
+      controls.target.copy(lookTarget);
+    }
     ui.setReplayEnabled(false);
     ui.setSkipEnabled(true);
     ui.setHintVisible(false);

@@ -1338,9 +1338,10 @@ export function createAssemblyTimeline(
       timeline.pause();
       playing = false;
       userOwnsCamera = !!opts?.preserveCamera;
-      const asmEnd = Math.max(assemblyEndTime, 1e-6);
-      const t = Math.max(0, timeSec);
-      syncAfterTime(t, t >= asmEnd - 1e-4);
+      // Exact wall-clock seek (camera tail included). Do not forceComplete —
+      // that snapped any t≈assemblyEnd up to systems-online and made ←/→
+      // past integrity 100% feel like a hard camera cut.
+      syncAfterTime(Math.max(0, timeSec), false);
     },
     getProgress: () => {
       if (!tl) return 0;
