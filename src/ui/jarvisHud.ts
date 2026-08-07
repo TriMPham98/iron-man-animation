@@ -4,14 +4,38 @@ import { WAVE_ORDER, type PieceWave } from '../suit/waves';
 export const JARVIS_LOG_CAP = 2;
 
 /**
- * Hold on SYSTEMS ONLINE flourish before the panel starts leaving (ms).
- * Keep long enough for the cyan complete pulse to read, short enough to
- * clear the top bar before the showcase spin settles.
+ * Fallback hold on SYSTEMS ONLINE when Binary Code Interface telemetry never
+ * appears (skip-to-end, reduced motion). Normal play hands off the moment
+ * the bottom ticker goes live ({@link shouldHandoffJarvisPanel}).
  */
 export const JARVIS_DISMISS_MS = 1800;
 
 /** Match `.jarvis-panel.is-leaving` collapse duration (ms). */
 export const JARVIS_LEAVE_MS = 520;
+
+/**
+ * Integrity threshold treated as “assembly done” for the BCI handoff
+ * (matches the 100% progress / systems-online path).
+ */
+export const JARVIS_HANDOFF_INTEGRITY = 0.999;
+
+/**
+ * True when the top integrity panel should leave so the bottom Binary Code
+ * Interface ticker owns the post-lock beat — same frame the bottom goes on.
+ *
+ * Only when assembly is complete (systems online or integrity ≈ 1); mid-cascade
+ * BCI audio must not collapse the progress strip early.
+ */
+export function shouldHandoffJarvisPanel(opts: {
+  telemetryActive: boolean;
+  panelVisible: boolean;
+  systemsOnline: boolean;
+  integrity01: number;
+}): boolean {
+  if (!opts.telemetryActive || !opts.panelVisible) return false;
+  if (opts.systemsOnline) return true;
+  return opts.integrity01 >= JARVIS_HANDOFF_INTEGRITY;
+}
 
 /**
  * True only for the final suit-complete status line.

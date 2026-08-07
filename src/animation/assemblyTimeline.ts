@@ -413,8 +413,13 @@ export function createAssemblyTimeline(
 
   /** Default cinematic FOV — matches createCamera / BASE_CAM_FOV. */
   const BASE_FOV = BASE_CAM_FOV;
-  /** Extreme faceplate ECU — compressed, mask-filling. */
-  const FACEPLATE_FOV = 20;
+  /**
+   * Faceplate hero FOV — tighter than base, but stays above OrbitControls
+   * minDistance (~1.8) so live play and paused scrub match. Older ECU
+   * (FOV 19–20 at z≈0.6) only read as intended while playing (controls
+   * pulled distance out); scrub kept the raw macro and felt wrong.
+   */
+  const FACEPLATE_FOV = 27;
 
   const cameraProxy = {
     x: camera.position.x,
@@ -1179,55 +1184,55 @@ export function createAssemblyTimeline(
       helmetCamStart,
     );
 
-    // Faceplate hero slam — full cinematic ECU (dolly + FOV crush).
-    // Staged late so the frontal plate has mostly cleared the lens path;
-    // slight +X keeps the slam readable without flying into the camera.
+    // Faceplate hero slam — tighter portrait on the mask, not a macro ECU.
+    // Keep camera–target distance ≥ ~1.9 so paused scrub matches live play
+    // (OrbitControls minDistance is 1.8; older z≈0.6 only “worked” mid-play).
     if (faceplateStartAt > 0) {
       // Commit to face framing mid-approach
       timeline.to(
         cameraProxy,
         {
-          x: 0.12,
-          y: 1.6,
-          z: 1.05,
-          ly: 1.63,
+          x: 0.18,
+          y: 1.58,
+          z: 2.05,
+          ly: 1.58,
           lx: 0.02,
-          lz: 0.06,
-          fov: 26,
+          lz: 0.04,
+          fov: FACEPLATE_FOV + 1,
           duration: 1.35,
           ease: 'power3.inOut',
           onUpdate: applyCamera,
         },
         faceplateStartAt + 0.55,
       );
-      // Drive all the way into the clamp — mask fills the frame
+      // Push in for the clamp — mask fills the frame without under-minDistance
       timeline.to(
         cameraProxy,
         {
-          x: 0.04,
-          y: 1.62,
-          z: 0.68,
-          ly: 1.655,
+          x: 0.1,
+          y: 1.6,
+          z: 1.92,
+          ly: 1.62,
           lx: 0,
-          lz: 0.08,
+          lz: 0.05,
           fov: FACEPLATE_FOV,
           duration: 1.15,
-          ease: 'power3.in',
+          ease: 'power3.inOut',
           onUpdate: applyCamera,
         },
         faceplateStartAt + 1.65,
       );
-      // Hold the ECU through eye ignition (tiny settle, no retreat)
+      // Hold through eye ignition (tiny settle, no retreat)
       timeline.to(
         cameraProxy,
         {
-          x: 0.03,
-          y: 1.625,
-          z: 0.62,
-          ly: 1.66,
+          x: 0.08,
+          y: 1.61,
+          z: 1.88,
+          ly: 1.63,
           lx: 0,
-          lz: 0.09,
-          fov: FACEPLATE_FOV - 1,
+          lz: 0.05,
+          fov: FACEPLATE_FOV - 0.5,
           duration: 1.1,
           ease: 'power1.out',
           onUpdate: applyCamera,

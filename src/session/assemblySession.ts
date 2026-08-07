@@ -8,6 +8,7 @@ import {
   type AssemblyController,
 } from '../animation/assemblyTimeline';
 import type { Suit } from '../suit/Suit';
+import { statusForIntegrityProgress } from '../suit/waves';
 import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
 import { isSystemsOnlineStatus } from '../ui/jarvisHud';
@@ -649,7 +650,8 @@ export function createAssemblySession(
       ui.setStatus('SYSTEMS ONLINE', true);
     } else {
       ui.setSystemsOnline(false);
-      ui.setStatus('DEBUG SCRUB', false);
+      // Wave-paced phase label so scrub shows where you are, not "DEBUG SCRUB".
+      ui.setStatus(statusForIntegrityProgress(p), false);
     }
   };
 

@@ -7,7 +7,11 @@ import {
   WAVE_ORDER,
   type ReclassEntry,
 } from './reclassCard';
-import { JARVIS_DISMISS_MS, JARVIS_LEAVE_MS } from './jarvisHud';
+import {
+  JARVIS_DISMISS_MS,
+  JARVIS_LEAVE_MS,
+  shouldHandoffJarvisPanel,
+} from './jarvisHud';
 import {
   readDirectorPreference,
   writeDirectorPreference,
@@ -162,6 +166,8 @@ export function createOverlay(): OverlayHandles {
 
   let systemsOnline = false;
   let dismissTimer = 0;
+  /** True once the BCI → top-panel leave has been scheduled (once per run). */
+  let bciHandoffScheduled = false;
   let lastProgress = 0;
   let toastTimer = 0;
   let toastHideTimer = 0;
@@ -236,6 +242,31 @@ export function createOverlay(): OverlayHandles {
   };
 
   /**
+   * Top SYSTEMS ONLINE ends the instant bottom BCI telemetry takes over
+   * (assembly complete). Cancels any fallback dismiss timer. Once per run.
+   */
+  const handoffJarvisPanelToTelemetry = () => {
+    if (!jarvisPanel || bciHandoffScheduled) return;
+    const panelVisible =
+      !jarvisPanel.classList.contains('is-hidden') &&
+      !jarvisPanel.classList.contains('is-leaving');
+    if (
+      !shouldHandoffJarvisPanel({
+        telemetryActive: true,
+        panelVisible,
+        systemsOnline,
+        integrity01: lastProgress,
+      })
+    ) {
+      return;
+    }
+    bciHandoffScheduled = true;
+    window.clearTimeout(dismissTimer);
+    dismissTimer = 0;
+    hideJarvisPanel(false);
+  };
+
+  /**
    * Show / update the binary-interface ticker. Same line is a no-op so
    * the seed-clock render loop can call every frame without re-flashing.
    */
@@ -247,6 +278,8 @@ export function createOverlay(): OverlayHandles {
       return;
     }
     if (next === lastTelemetryLine && telemetryEl.classList.contains('is-visible')) {
+      // Integrity may just have hit 100% while this line is held — recheck handoff.
+      handoffJarvisPanelToTelemetry();
       return;
     }
     lastTelemetryLine = next;
@@ -270,6 +303,9 @@ export function createOverlay(): OverlayHandles {
         telemetryEl.classList.remove('is-pulse');
       }, 560);
     }
+
+    // First (and subsequent new) BCI lines: yield the top integrity strip.
+    handoffJarvisPanelToTelemetry();
   };
 
   const hideJarvisPanel = (immediate = false) => {
@@ -332,11 +368,20 @@ export function createOverlay(): OverlayHandles {
     if (becameOnline && jarvisPanel) {
       jarvisPanel.classList.add('is-complete');
       window.clearTimeout(dismissTimer);
-      // Brief “online” beat in the same panel, then clear the top center
-      dismissTimer = window.setTimeout(
-        () => hideJarvisPanel(false),
-        reducedMotion() ? 500 : JARVIS_DISMISS_MS,
-      );
+      // Bottom already on → hand off now (systems-online end = BCI take-over).
+      // Otherwise fallback dismiss if BCI never arrives (skip / reduced motion).
+      const telemetryLive =
+        !!lastTelemetryLine &&
+        !!telemetryEl &&
+        telemetryEl.classList.contains('is-visible');
+      if (telemetryLive) {
+        handoffJarvisPanelToTelemetry();
+      } else {
+        dismissTimer = window.setTimeout(
+          () => hideJarvisPanel(false),
+          reducedMotion() ? 500 : JARVIS_DISMISS_MS,
+        );
+      }
     } else if (!online && jarvisPanel?.classList.contains('is-hidden')) {
       showJarvisPanel();
     }
@@ -344,6 +389,7 @@ export function createOverlay(): OverlayHandles {
 
   const resetJarvisChrome = (opts?: { softProgress?: boolean }) => {
     window.clearTimeout(dismissTimer);
+    bciHandoffScheduled = false;
     const prevProgress = lastProgress;
     const soft =
       !!opts?.softProgress &&

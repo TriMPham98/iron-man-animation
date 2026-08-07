@@ -4,8 +4,10 @@ import {
   isPieceWave,
   isSystemsOnlineStatus,
   JARVIS_DISMISS_MS,
+  JARVIS_HANDOFF_INTEGRITY,
   JARVIS_LEAVE_MS,
   JARVIS_LOG_CAP,
+  shouldHandoffJarvisPanel,
 } from './jarvisHud';
 
 describe('appendLogLine', () => {
@@ -34,11 +36,65 @@ describe('isPieceWave', () => {
 });
 
 describe('JARVIS dismiss timing', () => {
-  it('holds complete long enough to read, then leaves', () => {
+  it('fallback hold is used only when BCI never takes over', () => {
     expect(JARVIS_DISMISS_MS).toBeGreaterThan(500);
     expect(JARVIS_DISMISS_MS).toBeLessThan(3000);
     expect(JARVIS_LEAVE_MS).toBeGreaterThan(300);
     expect(JARVIS_LEAVE_MS).toBeLessThan(800);
+  });
+});
+
+describe('shouldHandoffJarvisPanel (BCI → top panel)', () => {
+  it('hands off when telemetry is live and systems are online', () => {
+    expect(
+      shouldHandoffJarvisPanel({
+        telemetryActive: true,
+        panelVisible: true,
+        systemsOnline: true,
+        integrity01: 1,
+      }),
+    ).toBe(true);
+  });
+
+  it('hands off at full integrity even before the online flag', () => {
+    expect(
+      shouldHandoffJarvisPanel({
+        telemetryActive: true,
+        panelVisible: true,
+        systemsOnline: false,
+        integrity01: JARVIS_HANDOFF_INTEGRITY,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not collapse mid-cascade (telemetry early, integrity low)', () => {
+    expect(
+      shouldHandoffJarvisPanel({
+        telemetryActive: true,
+        panelVisible: true,
+        systemsOnline: false,
+        integrity01: 0.72,
+      }),
+    ).toBe(false);
+  });
+
+  it('is a no-op when the panel is already gone or telemetry is off', () => {
+    expect(
+      shouldHandoffJarvisPanel({
+        telemetryActive: false,
+        panelVisible: true,
+        systemsOnline: true,
+        integrity01: 1,
+      }),
+    ).toBe(false);
+    expect(
+      shouldHandoffJarvisPanel({
+        telemetryActive: true,
+        panelVisible: false,
+        systemsOnline: true,
+        integrity01: 1,
+      }),
+    ).toBe(false);
   });
 });
 
