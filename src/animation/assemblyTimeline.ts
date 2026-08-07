@@ -70,7 +70,16 @@ export interface AssemblyController {
    */
   seekTime: (timeSec: number, opts?: CameraControlOptions) => void;
   getProgress: () => number;
+  /**
+   * Visual integrity span — systems online (excludes trailing camera pullback).
+   * HUD progress / skip-to-end use this mark.
+   */
   getDuration: () => number;
+  /**
+   * Full GSAP wall-clock length including post–systems-online camera tail.
+   * Audio DAW ruler + seed-clock scrub use this so SFX can cover the hero pullback.
+   */
+  getFullDuration: () => number;
   /** Raw GSAP playhead seconds (includes opening hold). */
   getTime: () => number;
   kill: () => void;
@@ -1343,6 +1352,12 @@ export function createAssemblyTimeline(
       // Expose assembly span for HUD so 100% lines up with systems online.
       // Trailing camera still runs on the GSAP timeline past this mark.
       return Math.max(assemblyEndTime, 1e-6);
+    },
+    getFullDuration: () => {
+      if (!tl) return 0;
+      // GSAP total (plates + systems + hero pullback). Never shorter than
+      // systems-online so a mid-build timeline still has a sane audio span.
+      return Math.max(tl.duration(), assemblyEndTime, 1e-6);
     },
     getTime: () => {
       if (!tl) return 0;

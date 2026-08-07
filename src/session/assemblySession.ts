@@ -200,15 +200,20 @@ export function createAssemblySession(
   // Declared before callbacks so they can call into the controller once assigned.
   let assembly!: ReturnType<typeof createAssemblyTimeline>;
 
-  /** Visual assembly span (includes opening hold → systems online). */
-  const asmDuration = () => Math.max(assembly.getDuration(), 1e-6);
+  /** Full sequence including post–systems-online camera pullback. */
+  const fullDuration = () => Math.max(assembly.getFullDuration(), 1e-6);
 
   /**
    * SFX seed was authored before OPENING_HOLD. Map GSAP time onto that clock
    * so plate hits stay aligned; hangar hold is silent lead-in.
    */
   const sfxOffset = () => audioTimelineOffset();
-  const audioDuration = () => Math.max(asmDuration() - sfxOffset(), 1e-6);
+  /**
+   * Audio ruler length: full GSAP cycle on the seed clock (cascade + camera
+   * tail). Was previously integrity-only (~14s) and cut off the ~3–4s hero
+   * pullback so directors could not place SFX through the end (~18s).
+   */
+  const audioDuration = () => Math.max(fullDuration() - sfxOffset(), 1e-6);
   const toAudioSec = (gsapTime: number) => gsapTime - sfxOffset();
   const fromAudioSec = (audioSec: number) => audioSec + sfxOffset();
 
@@ -302,7 +307,8 @@ export function createAssemblySession(
     ui.setStatus('SYSTEMS ONLINE', true);
     ui.setDebugProgress(1);
     audioStop();
-    audioPlayheadFromTime(asmDuration());
+    // Park the DAW playhead at the end of the full cycle (incl. camera tail).
+    audioPlayheadFromTime(fullDuration());
     syncDebugPauseLabel();
     refreshHintCopy();
   };

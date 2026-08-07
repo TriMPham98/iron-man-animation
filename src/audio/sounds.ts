@@ -8,6 +8,7 @@ export type SoundDef = {
 
 /** Clips available in the timeline library. */
 export const SOUNDS: SoundDef[] = [
+  { id: 'binary-code-interface', label: 'Binary Code Interface', file: 'binary-code-interface.mp3' },
   { id: 'clasp-long-conveyor', label: 'Clasp Long Conveyor', file: 'clasp-long-conveyor.mp3' },
   { id: 'connect-hiss', label: 'Connect Hiss', file: 'connect-hiss.mp3' },
   { id: 'conveyor-hiss', label: 'Conveyor Hiss', file: 'conveyor-hiss.mp3' },
