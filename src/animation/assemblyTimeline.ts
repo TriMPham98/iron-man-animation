@@ -1018,9 +1018,14 @@ export function createAssemblyTimeline(
 
     // Face-mask eyes after the helmet seals (reactor already online from torso)
     const eyesT = helmetDone + 0.3;
+    const EYES_RAMP = 1.55;
+    // Initial eye ignition — top HUD SYSTEMS ONLINE + integrity 100%.
+    // Status must be the last "complete" beat (no later onStatus overwrites it).
+    assemblyEndTime = eyesT;
     timeline.call(
       () => {
-        callbacks.onStatus?.('HELMET SEALED — HUD ONLINE…');
+        callbacks.onStatus?.('SYSTEMS ONLINE');
+        callbacks.onProgress?.(1);
       },
       undefined,
       eyesT,
@@ -1029,34 +1034,21 @@ export function createAssemblyTimeline(
       eyesProxy,
       {
         v: 1,
-        duration: 1.55,
+        duration: EYES_RAMP,
         ease: 'power2.inOut',
         onUpdate: syncSystems,
       },
       eyesT,
     );
 
-    // Seamless mesh once head systems are lit
+    // Seamless mesh while eyes finish ramping (no status — keeps SYSTEMS ONLINE)
     finalSwapTime = eyesT + 1.2;
     timeline.call(
       () => {
         suit.showFinal();
-        callbacks.onStatus?.('ARMOR LOCKED');
       },
       undefined,
       finalSwapTime,
-    );
-
-    // Suit systems complete — integrity bar reaches 100% here (not after the
-    // trailing hero pullback camera, which only frames the finished suit).
-    assemblyEndTime = eyesT + 1.9;
-    timeline.call(
-      () => {
-        callbacks.onStatus?.('SYSTEMS ONLINE');
-        callbacks.onProgress?.(1);
-      },
-      undefined,
-      assemblyEndTime,
     );
 
     // ── Camera path ────────────────────────────────────────────────
