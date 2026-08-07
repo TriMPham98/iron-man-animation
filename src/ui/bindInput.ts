@@ -20,19 +20,26 @@ export interface BindInputOptions {
     skipToEnd: () => void;
     togglePause: () => void;
     seek: (progress01: number) => void;
+    /** Wall-clock scrub across full GSAP cycle (incl. camera tail). */
+    scrubBySeconds: (deltaSec: number) => void;
     isComplete: () => boolean;
     assembly?: {
       setUserOwnsCamera: (owns: boolean) => void;
       getProgress: () => number;
+      getTime?: () => number;
     };
   };
   /** Assembly SFX mute (M hotkey). */
   audioTimeline?: Pick<AudioTimelinePanel, 'toggleMute'> | null;
 }
 
-/** Progress step for ←/→ scrub. Shift = coarse. */
-const SCRUB_STEP = 0.002;
-const SCRUB_STEP_COARSE = 0.01;
+/**
+ * ←/→ scrub step in wall-clock seconds (not integrity %).
+ * Integrity plateaus at systems online; time steps keep moving through the
+ * hero pullback. Shift = coarse.
+ */
+const SCRUB_STEP_SEC = 0.05;
+const SCRUB_STEP_COARSE_SEC = 0.25;
 
 /**
  * Keyboard (R / S / Space / ← →) + director pointer pick raycast.
@@ -75,18 +82,16 @@ export function bindInput(options: BindInputOptions): void {
     // the INITIATE orb still on screen.
     if (!ui.hasInitiated()) return;
 
-    // ← / → — scrub assembly progress (Shift = coarser steps).
+    // ← / → — scrub full sequence by wall-clock seconds (Shift = coarser).
     // Key-repeat is intentional so holding an arrow keeps scrubbing.
+    // Must not use integrity progress: that hits 1.0 at systems online and
+    // the next right-arrow used to jump to complete / end of timeline.
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       if (isTypingTarget(e.target)) return;
       e.preventDefault();
-      const cur = session.assembly?.getProgress() ?? 0;
-      const step = e.shiftKey ? SCRUB_STEP_COARSE : SCRUB_STEP;
-      const next =
-        e.key === 'ArrowLeft'
-          ? Math.max(0, cur - step)
-          : Math.min(1, cur + step);
-      session.seek(next);
+      const step = e.shiftKey ? SCRUB_STEP_COARSE_SEC : SCRUB_STEP_SEC;
+      const delta = e.key === 'ArrowLeft' ? -step : step;
+      session.scrubBySeconds(delta);
       return;
     }
 

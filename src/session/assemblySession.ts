@@ -56,6 +56,12 @@ export interface AssemblySession {
   togglePause: () => void;
   seek: (progress01: number) => void;
   /**
+   * Arrow-key scrub: step the raw GSAP playhead by wall-clock seconds across
+   * the full cycle (including camera tail). Integrity % alone plateaus at
+   * systems online, so progress-based scrub used to jump straight to the end.
+   */
+  scrubBySeconds: (deltaSec: number) => void;
+  /**
    * Per-frame: advances the showcase orbit (wall-clock) and restarts assembly
    * after a full 360°. Pass frame delta in seconds.
    * @returns true when this frame drove the showcase orbit (skip OrbitControls.update).
@@ -576,6 +582,44 @@ export function createAssemblySession(
     syncDebugPauseLabel();
   };
 
+  /**
+   * HUD / complete chrome for a scrubbed GSAP time.
+   * Complete + showcase only at the true full-cycle end — not systems online.
+   * Integrity plateaus at 100% through the camera tail; scrubbing there must
+   * stay on the cinematic path (no spin jump).
+   */
+  const applyScrubUiAtTime = (gsapT: number) => {
+    const full = fullDuration();
+    if (gsapT >= full - 1e-3) {
+      applyCompleteUi({ preserveCamera: false });
+      return;
+    }
+
+    // Mid-cycle (plates or camera tail): re-attach path, no showcase spin.
+    // Avoid applyAssemblyUi here — it clears systems-online and would re-flash
+    // cyan every arrow key while scrubbing the tail.
+    assemblyComplete = false;
+    clearCompleteClock();
+    stopCompleteSpinTracking();
+    setOrbitMode('free', { preserveTarget: false });
+    ui.setReplayEnabled(false);
+    ui.setSkipEnabled(true);
+    ui.setHintVisible(false);
+    ui.fadeTitle(false);
+
+    const p = assembly.getProgress();
+    const pct = Math.round(p * 100);
+    ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
+    ui.setDebugProgress(p);
+    if (p >= 0.999) {
+      // Camera tail — suit is done; edge-triggered so no re-flash.
+      ui.setStatus('SYSTEMS ONLINE', true);
+    } else {
+      ui.setSystemsOnline(false);
+      ui.setStatus('DEBUG SCRUB', false);
+    }
+  };
+
   /** Seek visual integrity progress 0–1 (wave-paced; includes hangar hold at 0%). */
   const seek = (p: number) => {
     killHandoff();
@@ -587,16 +631,31 @@ export function createAssemblySession(
     assembly.seek(p, { preserveCamera: false });
     audioPlayheadFromTime();
     syncDebugPauseLabel();
+    // Integrity 1 maps to systems online — still allow skip-style end via seek(1).
     if (p >= 0.999) {
       applyCompleteUi({ preserveCamera: false });
     } else {
-      // Reseed orbit pivot from cinematic lookTarget so the next drag
-      // starts from this frame’s path pose (not a stale free-look target).
-      applyAssemblyUi({ preserveTarget: false });
-      const pct = Math.round(p * 100);
-      ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
-      ui.setStatus('DEBUG SCRUB', false);
+      applyScrubUiAtTime(assembly.getTime());
     }
+  };
+
+  /**
+   * Step the GSAP playhead by wall-clock seconds (full cycle, incl. camera tail).
+   * Used by ←/→ so scrubbing past systems online continues through the pullback
+   * instead of treating integrity 100% as "jump to end".
+   */
+  const scrubBySeconds = (deltaSec: number) => {
+    killHandoff();
+    clearPick();
+    audioStop();
+    const full = fullDuration();
+    // After complete, timeline time is already at the end — step back from there.
+    const cur = Math.min(full, Math.max(0, assembly.getTime()));
+    const next = THREE.MathUtils.clamp(cur + deltaSec, 0, full);
+    assembly.seekTime(next, { preserveCamera: false });
+    audioPlayheadFromTime();
+    syncDebugPauseLabel();
+    applyScrubUiAtTime(next);
   };
 
   /**
@@ -612,15 +671,7 @@ export function createAssemblySession(
     assembly.seekTime(gsapT, { preserveCamera: false });
     audioPlayheadFromTime();
     syncDebugPauseLabel();
-    const p = assembly.getProgress();
-    if (p >= 0.999) {
-      applyCompleteUi({ preserveCamera: false });
-    } else {
-      applyAssemblyUi({ preserveTarget: false });
-      const pct = Math.round(p * 100);
-      ui.setIntegrity(`INTEGRITY ${String(pct).padStart(3, ' ')}%`);
-      ui.setStatus('DEBUG SCRUB', false);
-    }
+    applyScrubUiAtTime(gsapT);
   };
 
   ui.onReplay(() => {
@@ -723,6 +774,7 @@ export function createAssemblySession(
     skipToEnd,
     togglePause,
     seek,
+    scrubBySeconds,
     update,
     isShowcaseOrbiting: () =>
       completeSpinActive &&
