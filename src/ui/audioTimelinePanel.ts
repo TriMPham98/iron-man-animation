@@ -20,6 +20,7 @@ import {
   type TimelineClip,
   type TrackRow,
 } from '../audio/timelineModel';
+import { JARVIS_STARTUP_VOICE_ID } from '../audio/jarvisStartup';
 import { colorForSoundId, SOUNDS } from '../audio/sounds';
 import {
   collectSnapTargets,
@@ -1110,21 +1111,9 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     commit();
   };
 
+  /** Prefer engine probe so blob / file drops get the Infinity→seek fix. */
   const probeBlobDuration = (url: string): Promise<number> =>
-    new Promise((resolve) => {
-      const a = new Audio();
-      a.preload = 'metadata';
-      a.addEventListener(
-        'loadedmetadata',
-        () => {
-          const d = a.duration;
-          resolve(Number.isFinite(d) && d > 0 ? d : 1);
-        },
-        { once: true },
-      );
-      a.addEventListener('error', () => resolve(1), { once: true });
-      a.src = url;
-    });
+    engine.probeDuration(url);
 
   // Meta inputs (timing + Logic-style gain + pitch)
   const applyMetaFromInputs = () => {
@@ -1427,14 +1416,20 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     playingFrom = null;
   };
 
+  /**
+   * Voices that outlive timeline transport (INITIATE one-shots).
+   * engine.stop() would cut them the moment assembly boots.
+   */
+  const transportKeepVoices = [JARVIS_STARTUP_VOICE_ID] as const;
+
   const onTransportStop = () => {
     cancelSchedule();
-    engine.stop();
+    engine.stopAllExcept(transportKeepVoices);
   };
 
   const onTransportPlay = (sec: number) => {
     killScheduled();
-    engine.stop();
+    engine.stopAllExcept(transportKeepVoices);
     // `sec` is the seed/cascade clock. May be negative during a hangar hold
     // so clip delays stay authored against original plate times.
     // Keep this set even when muted — otherwise unmute cannot resume mid-run

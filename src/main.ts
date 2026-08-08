@@ -13,6 +13,11 @@ import { bindInput } from './ui/bindInput';
 import { installButtonFocusRelease } from './ui/blurButtons';
 import { cueAtSeedTime } from './audio/binaryInterfaceCues';
 import { createAudioTimelinePanel } from './ui/audioTimelinePanel';
+import {
+  JARVIS_STARTUP_FILE,
+  JARVIS_STARTUP_SEC,
+  JARVIS_STARTUP_VOICE_ID,
+} from './audio/jarvisStartup';
 import { installJarvisCursor } from './ui/jarvisCursor';
 import { createOverlay } from './ui/overlay';
 import { createPickHighlight } from './ui/pickHighlight';
@@ -189,8 +194,26 @@ async function boot(): Promise<void> {
   // Space / Enter / R / click all fire once; later loops use auto-replay.
   // Unlock audio in the gesture turn — assembly start is delayed for the
   // orb exit, and browsers drop autoplay permission across setTimeout.
+  //
+  // JARVIS startup VO is a one-shot on INITIATE (not the director timeline).
+  let jarvisStartupDur = JARVIS_STARTUP_SEC;
+  audioTimeline.engine.preload(JARVIS_STARTUP_FILE);
+  void audioTimeline.engine.probeDuration(JARVIS_STARTUP_FILE).then((d) => {
+    if (d > 0.05) jarvisStartupDur = d;
+  });
+
   ui.onStartGesture(() => {
     void audioTimeline.engine.unlock();
+    // Same gesture turn as unlock so autoplay policies allow the VO.
+    audioTimeline.engine.play({
+      id: JARVIS_STARTUP_VOICE_ID,
+      file: JARVIS_STARTUP_FILE,
+      offset: 0,
+      duration: jarvisStartupDur,
+      volume: 1,
+      fadeIn: 0.02,
+      fadeOut: 0.12,
+    });
   });
   ui.onStart(() => {
     session.setClockStart(clock.getElapsedTime());

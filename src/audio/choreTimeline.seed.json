@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "choreVersion": 6,
-  "note": "Director mix promoted 2026-08-07 — clasp-long-conveyor −2.8 dB (vol 0.72); same 18.5s layout.",
+  "choreVersion": 9,
+  "note": "Director mix promoted 2026-08-07 — JARVIS Startup removed from timeline (plays on INITIATE one-shot); clasp-long-conveyor −2.8 dB.",
   "clips": [
     {
       "id": "clip-seed-v5-01",

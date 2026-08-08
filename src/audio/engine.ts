@@ -118,6 +118,23 @@ export function createAudioEngine() {
   };
 
   /**
+   * Stop every active voice except the given ids.
+   * Used so assembly transport can re-arm timeline SFX without killing
+   * one-shots (e.g. JARVIS startup VO on INITIATE).
+   */
+  const stopAllExcept = (keepIds: readonly string[]) => {
+    if (!keepIds.length) {
+      stop();
+      return;
+    }
+    const keep = new Set(keepIds);
+    for (const v of [...active.values()]) {
+      if (keep.has(v.id)) continue;
+      stopVoice(v);
+    }
+  };
+
+  /**
    * Call from a user gesture (INITIATE click, keydown, pointerdown).
    * Production browsers block HTMLAudioElement.play() until the origin
    * has media engagement; delayed setTimeout starts lose the gesture
@@ -347,24 +364,37 @@ export function createAudioEngine() {
     }
   };
 
-  /** Probe source duration via a temporary Audio element. */
+  /**
+   * Probe source duration via a temporary Audio element.
+   * Some VBR/ADTS MP3s report `Infinity` until a seek forces the decoder to
+   * scan length — fall back to that before defaulting to 1s.
+   */
   const probeDuration = (file: string): Promise<number> =>
     new Promise((resolve) => {
       const a = new Audio();
       a.preload = 'metadata';
+      let settled = false;
       const done = (sec: number) => {
-        a.removeAttribute('src');
-        a.load();
-        resolve(sec);
+        if (settled) return;
+        settled = true;
+        try {
+          a.removeAttribute('src');
+          a.load();
+        } catch {
+          /* ignore */
+        }
+        resolve(sec > 0 && Number.isFinite(sec) ? sec : 1);
       };
-      a.addEventListener(
-        'loadedmetadata',
-        () => {
-          const d = a.duration;
-          done(Number.isFinite(d) && d > 0 ? d : 1);
-        },
-        { once: true },
-      );
+
+      const finishFromDuration = () => {
+        const d = a.duration;
+        if (Number.isFinite(d) && d > 0) {
+          done(d);
+          return true;
+        }
+        return false;
+      };
+
       a.addEventListener(
         'error',
         () => {
@@ -372,17 +402,46 @@ export function createAudioEngine() {
         },
         { once: true },
       );
+
+      a.addEventListener(
+        'loadedmetadata',
+        () => {
+          if (finishFromDuration()) return;
+          // Infinity / NaN: seek far to force duration calculation (Chromium).
+          const onUpdate = () => {
+            if (finishFromDuration()) {
+              a.removeEventListener('timeupdate', onUpdate);
+              a.removeEventListener('durationchange', onUpdate);
+            }
+          };
+          a.addEventListener('timeupdate', onUpdate);
+          a.addEventListener('durationchange', onUpdate);
+          try {
+            a.currentTime = 1e101;
+          } catch {
+            done(1);
+            return;
+          }
+          window.setTimeout(() => {
+            if (!settled) done(finishFromDuration() ? a.duration : 1);
+          }, 800);
+        },
+        { once: true },
+      );
+
       a.src = resolveSrc(file);
     });
 
   return {
     play,
     stop,
+    stopAllExcept,
     unlock,
     preload,
     isUnlocked: () => unlocked,
     setMuted: (m: boolean) => {
       muted = m;
+      // Mute kills everything, including one-shots.
       if (m) stop();
     },
     isMuted: () => muted,

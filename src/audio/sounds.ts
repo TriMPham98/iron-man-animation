@@ -16,6 +16,7 @@ export const SOUNDS: SoundDef[] = [
   { id: 'electric-motor', label: 'Electric Motor', file: 'electric-motor.mp3' },
   { id: 'footstep', label: 'Footstep', file: 'footstep.mp3' },
   { id: 'impact', label: 'Impact', file: 'impact.mp3' },
+  { id: 'jarvis-startup', label: 'JARVIS Startup', file: 'jarvis-startup.mp3' },
   { id: 'light-attach', label: 'Light Attach', file: 'light-attach.mp3' },
   { id: 'medium-close', label: 'Medium Close', file: 'medium-close.mp3' },
   { id: 'metal-clang', label: 'Metal Clang', file: 'metal-clang.mp3' },
