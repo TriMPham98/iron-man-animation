@@ -13,6 +13,7 @@ import { bindInput } from './ui/bindInput';
 import { installButtonFocusRelease } from './ui/blurButtons';
 import { cueAtSeedTime } from './audio/binaryInterfaceCues';
 import { createAudioTimelinePanel } from './ui/audioTimelinePanel';
+import { installJarvisCursor } from './ui/jarvisCursor';
 import { createOverlay } from './ui/overlay';
 import { createPickHighlight } from './ui/pickHighlight';
 import { prefersReducedMotion } from './ui/viewerMode';
@@ -23,6 +24,8 @@ async function boot(): Promise<void> {
 
   // Don't leave buttons focused after a tap (Space would re-trigger them).
   installButtonFocusRelease();
+  // Cyan holographic reticle (fine-pointer desktops only).
+  installJarvisCursor();
 
   const ui = createOverlay();
   ui.setLoadingProgress(0.05);

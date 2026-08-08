@@ -2852,3 +2852,406 @@ body.reduced-motion .hud-top.is-booting .hud-top-right {
   opacity: 1;
   transform: none;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   JARVIS holographic targeting reticle (custom cursor)
+   Installed by src/ui/jarvisCursor.ts on fine-pointer desktops only.
+   ═══════════════════════════════════════════════════════════════════ */
+
+body.jarvis-cursor-active,
+body.jarvis-cursor-active * {
+  cursor: none !important;
+}
+
+.jarvis-cursor {
+  --jc-size: 28px;
+  --jc-cyan: rgba(126, 232, 255, 0.95);
+  --jc-cyan-dim: rgba(126, 232, 255, 0.45);
+  --jc-glow: rgba(80, 210, 255, 0.55);
+
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--jc-size);
+  height: var(--jc-size);
+  margin: calc(var(--jc-size) / -2) 0 0 calc(var(--jc-size) / -2);
+  z-index: 100000;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  will-change: transform;
+  transition:
+    opacity 0.18s ease,
+    visibility 0.18s ease;
+  /* Scale is applied on children so translate stays crisp */
+}
+
+.jarvis-cursor.is-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.jarvis-cursor-glow,
+.jarvis-cursor-ring,
+.jarvis-cursor-cross,
+.jarvis-cursor-brackets,
+.jarvis-cursor-dot,
+.jarvis-cursor-ew {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+}
+
+/* Soft bloom under the reticle */
+.jarvis-cursor-glow {
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(90, 210, 255, 0.22) 0%,
+    rgba(40, 150, 210, 0.08) 42%,
+    transparent 70%
+  );
+  transform: scale(1.35);
+  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Concentric rings */
+.jarvis-cursor-ring {
+  border-radius: 50%;
+  border: 1px solid var(--jc-cyan-dim);
+  transition:
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.18s ease,
+    opacity 0.18s ease,
+    box-shadow 0.22s ease;
+}
+
+.jarvis-cursor-ring-outer {
+  inset: 1px;
+  border-color: rgba(126, 232, 255, 0.55);
+  box-shadow:
+    0 0 6px rgba(80, 210, 255, 0.35),
+    inset 0 0 4px rgba(126, 232, 255, 0.12);
+}
+
+.jarvis-cursor-ring-inner {
+  inset: 7px;
+  border-color: rgba(126, 232, 255, 0.35);
+  opacity: 0.85;
+}
+
+/* Crosshair arms with center gap */
+.jarvis-cursor-cross {
+  transition: opacity 0.15s ease, transform 0.2s ease;
+}
+
+.jarvis-cursor-arm {
+  position: absolute;
+  background: var(--jc-cyan);
+  box-shadow: 0 0 4px var(--jc-glow);
+  border-radius: 0.5px;
+}
+
+.jarvis-cursor-arm-n,
+.jarvis-cursor-arm-s {
+  left: 50%;
+  width: 1px;
+  height: 5px;
+  margin-left: -0.5px;
+}
+
+.jarvis-cursor-arm-n {
+  top: 1px;
+}
+
+.jarvis-cursor-arm-s {
+  bottom: 1px;
+}
+
+.jarvis-cursor-arm-e,
+.jarvis-cursor-arm-w {
+  top: 50%;
+  height: 1px;
+  width: 5px;
+  margin-top: -0.5px;
+}
+
+.jarvis-cursor-arm-e {
+  right: 1px;
+}
+
+.jarvis-cursor-arm-w {
+  left: 1px;
+}
+
+/* HUD corner brackets — expand on lock-on */
+.jarvis-cursor-brackets {
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
+  opacity: 0.75;
+}
+
+.jarvis-cursor-br {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-color: var(--jc-cyan);
+  border-style: solid;
+  border-width: 0;
+  opacity: 0.9;
+  filter: drop-shadow(0 0 2px rgba(80, 210, 255, 0.6));
+}
+
+.jarvis-cursor-br-tl {
+  top: 3px;
+  left: 3px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+
+.jarvis-cursor-br-tr {
+  top: 3px;
+  right: 3px;
+  border-top-width: 1px;
+  border-right-width: 1px;
+}
+
+.jarvis-cursor-br-bl {
+  bottom: 3px;
+  left: 3px;
+  border-bottom-width: 1px;
+  border-left-width: 1px;
+}
+
+.jarvis-cursor-br-br {
+  bottom: 3px;
+  right: 3px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+
+/* Arc-reactor core */
+.jarvis-cursor-dot {
+  inset: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: 50%;
+  background: var(--cyan-bright, #b8f4ff);
+  box-shadow:
+    0 0 4px rgba(184, 244, 255, 0.95),
+    0 0 10px rgba(80, 210, 255, 0.65);
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.18s ease,
+    opacity 0.15s ease;
+}
+
+/* Horizontal scrub chevrons (ew-resize mode) */
+.jarvis-cursor-ew {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.jarvis-cursor-ew-l,
+.jarvis-cursor-ew-r {
+  position: absolute;
+  top: 50%;
+  width: 0;
+  height: 0;
+  margin-top: -3px;
+  border-style: solid;
+  border-color: transparent;
+  filter: drop-shadow(0 0 2px rgba(80, 210, 255, 0.7));
+}
+
+.jarvis-cursor-ew-l {
+  left: 2px;
+  border-width: 3px 5px 3px 0;
+  border-right-color: var(--jc-cyan);
+}
+
+.jarvis-cursor-ew-r {
+  right: 2px;
+  border-width: 3px 0 3px 5px;
+  border-left-color: var(--jc-cyan);
+}
+
+/* ── Modes ────────────────────────────────────────────────────────── */
+
+/* Lock-on over buttons / links */
+.jarvis-cursor.is-pointer .jarvis-cursor-ring-outer {
+  transform: scale(1.28);
+  border-color: rgba(184, 244, 255, 0.95);
+  box-shadow:
+    0 0 10px rgba(80, 210, 255, 0.55),
+    0 0 22px rgba(80, 210, 255, 0.25),
+    inset 0 0 6px rgba(126, 232, 255, 0.2);
+}
+
+.jarvis-cursor.is-pointer .jarvis-cursor-ring-inner {
+  transform: scale(0.88);
+  border-color: rgba(126, 232, 255, 0.75);
+}
+
+.jarvis-cursor.is-pointer .jarvis-cursor-brackets {
+  transform: scale(1.22);
+  opacity: 1;
+}
+
+.jarvis-cursor.is-pointer .jarvis-cursor-glow {
+  transform: scale(1.7);
+  opacity: 1;
+}
+
+.jarvis-cursor.is-pointer .jarvis-cursor-dot {
+  transform: scale(1.35);
+  box-shadow:
+    0 0 6px rgba(184, 244, 255, 1),
+    0 0 14px rgba(80, 210, 255, 0.85);
+}
+
+/* Click / press */
+.jarvis-cursor.is-active .jarvis-cursor-ring-outer {
+  transform: scale(0.82);
+  border-color: rgba(184, 244, 255, 1);
+  box-shadow:
+    0 0 12px rgba(126, 232, 255, 0.75),
+    0 0 28px rgba(80, 210, 255, 0.4);
+}
+
+.jarvis-cursor.is-active .jarvis-cursor-ring-inner {
+  transform: scale(1.15);
+}
+
+.jarvis-cursor.is-active .jarvis-cursor-dot {
+  transform: scale(0.7);
+  background: #fff;
+}
+
+.jarvis-cursor.is-active .jarvis-cursor-brackets {
+  transform: scale(0.9);
+  opacity: 1;
+}
+
+/* Grab (timeline clips) */
+.jarvis-cursor.is-grab .jarvis-cursor-ring-outer,
+.jarvis-cursor.is-grabbing .jarvis-cursor-ring-outer {
+  transform: scale(1.12);
+  border-style: dashed;
+  border-color: rgba(201, 162, 39, 0.75);
+  box-shadow: 0 0 8px rgba(201, 162, 39, 0.35);
+}
+
+.jarvis-cursor.is-grab .jarvis-cursor-dot,
+.jarvis-cursor.is-grabbing .jarvis-cursor-dot {
+  background: var(--gold-bright, #e8c547);
+  box-shadow:
+    0 0 4px rgba(232, 197, 71, 0.9),
+    0 0 10px rgba(201, 162, 39, 0.55);
+}
+
+.jarvis-cursor.is-grabbing .jarvis-cursor-ring-outer {
+  transform: scale(0.95);
+  border-style: solid;
+}
+
+.jarvis-cursor.is-grabbing .jarvis-cursor-brackets {
+  opacity: 0.4;
+}
+
+/* Timeline crosshair */
+.jarvis-cursor.is-cross .jarvis-cursor-ring-outer {
+  border-radius: 2px;
+  transform: scale(1.05) rotate(0deg);
+  border-color: rgba(126, 232, 255, 0.65);
+}
+
+.jarvis-cursor.is-cross .jarvis-cursor-ring-inner {
+  opacity: 0.35;
+}
+
+.jarvis-cursor.is-cross .jarvis-cursor-arm-n,
+.jarvis-cursor.is-cross .jarvis-cursor-arm-s {
+  height: 8px;
+}
+
+.jarvis-cursor.is-cross .jarvis-cursor-arm-e,
+.jarvis-cursor.is-cross .jarvis-cursor-arm-w {
+  width: 8px;
+}
+
+/* Horizontal scrub */
+.jarvis-cursor.is-ew .jarvis-cursor-cross {
+  opacity: 0.15;
+}
+
+.jarvis-cursor.is-ew .jarvis-cursor-brackets {
+  opacity: 0.2;
+}
+
+.jarvis-cursor.is-ew .jarvis-cursor-ring-inner {
+  opacity: 0;
+}
+
+.jarvis-cursor.is-ew .jarvis-cursor-ring-outer {
+  transform: scaleX(1.35) scaleY(0.72);
+  border-color: rgba(126, 232, 255, 0.7);
+}
+
+.jarvis-cursor.is-ew .jarvis-cursor-ew {
+  opacity: 1;
+}
+
+/* Text caret */
+.jarvis-cursor.is-text .jarvis-cursor-ring-outer,
+.jarvis-cursor.is-text .jarvis-cursor-ring-inner,
+.jarvis-cursor.is-text .jarvis-cursor-brackets,
+.jarvis-cursor.is-text .jarvis-cursor-ew,
+.jarvis-cursor.is-text .jarvis-cursor-glow {
+  opacity: 0;
+}
+
+.jarvis-cursor.is-text .jarvis-cursor-arm-n,
+.jarvis-cursor.is-text .jarvis-cursor-arm-s {
+  height: 9px;
+  width: 1.5px;
+  margin-left: -0.75px;
+}
+
+.jarvis-cursor.is-text .jarvis-cursor-arm-e,
+.jarvis-cursor.is-text .jarvis-cursor-arm-w {
+  width: 3px;
+  opacity: 0.55;
+}
+
+.jarvis-cursor.is-text .jarvis-cursor-dot {
+  opacity: 0;
+}
+
+/* Subtle idle spin on outer ticks feel — very slow ring breath */
+@keyframes jarvis-cursor-breathe {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.jarvis-cursor.is-idle .jarvis-cursor-ring-outer,
+.jarvis-cursor.is-pointer .jarvis-cursor-ring-outer {
+  animation: jarvis-cursor-breathe 2.8s ease-in-out infinite;
+}
+
+body.reduced-motion .jarvis-cursor .jarvis-cursor-ring-outer {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jarvis-cursor {
+    display: none !important;
+  }
+}
