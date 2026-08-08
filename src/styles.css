@@ -500,19 +500,26 @@ body.scene-ready #app {
   pointer-events: none;
 }
 
-/* Exit: vignette clears; orb pulses then shrinks in place */
+/*
+  Exit: vignette clears; orb pulses at the VO peak then shrinks with the
+  accelerated blip-train decrescendo. --jarvis-exit-dur matches
+  jarvis-startup.mp3 wall-clock (set from overlay; default ≈ 1.254s).
+*/
 .start-gate.is-exiting {
+  --jarvis-exit-dur: 1.254s;
   pointer-events: none;
-  animation: start-gate-vignette-out 0.92s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation: start-gate-vignette-out var(--jarvis-exit-dur)
+    cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
 .start-gate.is-exiting .start-btn.jarvis-orb {
   pointer-events: none;
   cursor: default;
   transition: none;
-  animation: jarvis-orb-exit 0.9s linear forwards;
+  /* Timing lives in keyframe-segment easings (pulse then smooth ease-out) */
+  animation: jarvis-orb-exit var(--jarvis-exit-dur) forwards;
   transform-origin: center center;
-  will-change: transform, opacity, filter;
+  will-change: transform, opacity;
 }
 
 .start-gate.is-exiting .start-btn.jarvis-orb:hover,
@@ -522,7 +529,7 @@ body.scene-ready #app {
 
 .start-gate.is-exiting .jarvis-orb-glow,
 .start-gate.is-exiting .jarvis-orb-halo {
-  animation: jarvis-orb-glow-flare 0.9s linear forwards;
+  animation: jarvis-orb-glow-flare var(--jarvis-exit-dur) forwards;
 }
 
 .start-gate.is-exiting .jarvis-orb-pulse {
@@ -531,11 +538,12 @@ body.scene-ready #app {
 }
 
 .start-gate.is-exiting .jarvis-orb-label {
+  /* Label clears early so the nucleus can dissolve with the decay */
   animation: jarvis-orb-label-out 0.28s ease-out forwards;
 }
 
 .start-gate.is-exiting .jarvis-orb-core {
-  animation: jarvis-orb-core-out 0.9s linear forwards;
+  animation: jarvis-orb-core-out var(--jarvis-exit-dur) forwards;
 }
 
 /* Spin-up as the sequence engages */
@@ -1110,23 +1118,28 @@ body.scene-ready #app {
   }
 }
 
+/*
+  Continuous exit (~1.25s VO): ease into a peak pulse, then one smooth
+  ease-out shrink/fade through the decrescendo (no stepped mid-stops).
+  Scale + opacity only — filter animation is skipped (choppy on many GPUs).
+*/
 @keyframes jarvis-orb-exit {
   0% {
     transform: scale(1);
     opacity: 1;
-    filter: brightness(1) blur(0);
-    animation-timing-function: cubic-bezier(0.2, 0.8, 0.35, 1);
+    /* Soft ease into the VO peak */
+    animation-timing-function: cubic-bezier(0.33, 0.9, 0.4, 1);
   }
-  12% {
-    transform: scale(1.12);
+  /* VO peak — bright pulse (~0.21s / ~17%) */
+  17% {
+    transform: scale(1.1);
     opacity: 1;
-    filter: brightness(1.65) blur(0);
-    animation-timing-function: cubic-bezier(0.55, 0.05, 0.25, 1);
+    /* Continuous decelerating dissolve through the rest of the clip */
+    animation-timing-function: cubic-bezier(0.25, 0.08, 0.2, 1);
   }
   100% {
     transform: scale(0.04);
     opacity: 0;
-    filter: brightness(2.4) blur(2.5px);
   }
 }
 
@@ -1139,15 +1152,17 @@ body.scene-ready #app {
       rgba(4, 10, 18, 0.3) 40%,
       transparent 70%
     );
+    animation-timing-function: cubic-bezier(0.33, 0.9, 0.4, 1);
   }
-  45% {
+  17% {
     opacity: 1;
     background: radial-gradient(
       circle at center,
-      rgba(4, 12, 22, 0.28) 0%,
-      rgba(4, 10, 18, 0.12) 42%,
-      transparent 68%
+      rgba(4, 14, 26, 0.5) 0%,
+      rgba(4, 10, 18, 0.22) 42%,
+      transparent 70%
     );
+    animation-timing-function: cubic-bezier(0.33, 0, 0.2, 1);
   }
   100% {
     opacity: 0;
@@ -1174,16 +1189,16 @@ body.scene-ready #app {
   0% {
     opacity: 0.9;
     transform: scale(1);
-    animation-timing-function: cubic-bezier(0.2, 0.8, 0.35, 1);
+    animation-timing-function: cubic-bezier(0.33, 0.9, 0.4, 1);
   }
-  12% {
+  17% {
     opacity: 1;
     transform: scale(1.18);
-    animation-timing-function: cubic-bezier(0.55, 0.05, 0.25, 1);
+    animation-timing-function: cubic-bezier(0.22, 0.05, 0.25, 1);
   }
   100% {
     opacity: 0;
-    transform: scale(0.2);
+    transform: scale(0.14);
   }
 }
 
@@ -1191,11 +1206,16 @@ body.scene-ready #app {
   0% {
     opacity: 1;
     transform: scale(1);
-    animation-timing-function: cubic-bezier(0.55, 0.05, 0.25, 1);
+    animation-timing-function: cubic-bezier(0.33, 0.9, 0.4, 1);
+  }
+  17% {
+    opacity: 1;
+    transform: scale(1.06);
+    animation-timing-function: cubic-bezier(0.22, 0.05, 0.25, 1);
   }
   100% {
     opacity: 0;
-    transform: scale(0.35);
+    transform: scale(0.3);
   }
 }
 

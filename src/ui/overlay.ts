@@ -7,6 +7,10 @@ import {
   WAVE_ORDER,
   type ReclassEntry,
 } from './reclassCard';
+import {
+  JARVIS_STARTUP_ASSEMBLY_AT_MS,
+  JARVIS_STARTUP_EXIT_MS,
+} from '../audio/jarvisStartup';
 import { JARVIS_LEAVE_MS, JARVIS_ONLINE_HOLD_MS } from './jarvisHud';
 import {
   readDirectorPreference,
@@ -725,12 +729,12 @@ export function createOverlay(): OverlayHandles {
   };
 
   /**
-   * Exit handoff: orb flares → shrinks in place,
-   * assembly boots mid-shrink so the JARVIS panel enters as the CTA dissolves.
+   * Exit handoff: orb flares → shrinks with the jarvis-startup decrescendo
+   * (same wall-clock as the VO). Assembly boots mid-shrink so the JARVIS
+   * panel enters as the CTA dissolves.
    */
-  const START_EXIT_MS = 920;
-  /** When to kick assembly (after the bright pulse, mid continuous shrink). */
-  const START_ASSEMBLY_AT_MS = 320;
+  const START_EXIT_MS = JARVIS_STARTUP_EXIT_MS;
+  const START_ASSEMBLY_AT_MS = JARVIS_STARTUP_ASSEMBLY_AT_MS;
 
   let startExitTimer = 0;
   let startAssemblyTimer = 0;
@@ -818,6 +822,8 @@ export function createOverlay(): OverlayHandles {
     startBtn?.blur();
     startBtn?.setAttribute('disabled', '');
     startGate.setAttribute('aria-hidden', 'true');
+    // Drive CSS exit length from the same constant as the VO / timers.
+    startGate.style.setProperty('--jarvis-exit-dur', `${START_EXIT_MS}ms`);
     // Retrigger exit animation cleanly if class was stuck
     startGate.classList.remove('is-exiting', 'is-hidden');
     void startGate.offsetWidth;
