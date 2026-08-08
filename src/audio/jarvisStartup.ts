@@ -9,4 +9,4 @@ export const JARVIS_STARTUP_VOICE_ID = 'jarvis-startup';
  * Wall-clock length of `public/sounds/jarvis-startup.mp3` (ffprobe).
  * Keep in sync when the asset is replaced.
  */
-export const JARVIS_STARTUP_SEC = 4.989;
+export const JARVIS_STARTUP_SEC = 1.829;
