@@ -83,6 +83,13 @@ type ActiveVoice = {
  */
 export function createAudioEngine() {
   const active = new Map<string, ActiveVoice>();
+  /**
+   * Pre-decoded elements keyed by catalog file / URL. Taking one out for
+   * play() means INITIATE one-shots can call play() while already HAVE_FUTURE_DATA,
+   * which avoids the intermittent NotAllowedError that happens when a cold
+   * element defers play until canplay (outside the user-gesture window).
+   */
+  const warmPool = new Map<string, HTMLAudioElement>();
   let muted = false;
   let masterVolume = 1;
   let unlocked = false;
@@ -100,12 +107,48 @@ export function createAudioEngine() {
     if (voice.fadeRaf) cancelAnimationFrame(voice.fadeRaf);
     try {
       voice.audio.pause();
-      voice.audio.removeAttribute('src');
-      voice.audio.load();
+      const src = voice.audio.currentSrc || voice.audio.src;
+      // Blob URLs must be released; catalog files stay warm for the next hit.
+      if (src.startsWith('blob:')) {
+        voice.audio.removeAttribute('src');
+        voice.audio.load();
+      } else {
+        try {
+          voice.audio.currentTime = 0;
+        } catch {
+          /* ignore */
+        }
+      }
     } catch {
       /* ignore teardown errors */
     }
     active.delete(voice.id);
+  };
+
+  const makeAudio = (file: string): HTMLAudioElement => {
+    const a = new Audio();
+    a.preload = 'auto';
+    a.src = resolveSrc(file);
+    return a;
+  };
+
+  /**
+   * Take a warmed element if ready; otherwise allocate a fresh one.
+   * Fresh elements are more likely to miss autoplay if data is not loaded.
+   */
+  const acquireAudio = (file: string): HTMLAudioElement => {
+    const warmed = warmPool.get(file);
+    if (warmed && warmed.readyState >= 2 /* HAVE_CURRENT_DATA */) {
+      warmPool.delete(file);
+      try {
+        warmed.pause();
+        warmed.currentTime = 0;
+      } catch {
+        /* ignore */
+      }
+      return warmed;
+    }
+    return makeAudio(file);
   };
 
   const stop = (id?: string) => {
@@ -170,13 +213,60 @@ export function createAudioEngine() {
 
   /** Best-effort warm so first cues aren't racing the network on cold deploys. */
   const preload = (file: string): void => {
-    try {
-      const a = new Audio();
-      a.preload = 'auto';
-      a.src = resolveSrc(file);
-    } catch {
-      /* ignore */
+    void warm(file);
+  };
+
+  /**
+   * Fully buffer a clip to canplaythrough and keep the element in the warm
+   * pool. Await this before showing INITIATE so the VO play() is synchronous
+   * and stays inside the user-gesture window.
+   */
+  const warm = (file: string): Promise<void> => {
+    const existing = warmPool.get(file);
+    if (existing && existing.readyState >= 3 /* HAVE_FUTURE_DATA */) {
+      return Promise.resolve();
     }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (el?: HTMLAudioElement) => {
+        if (settled) return;
+        settled = true;
+        if (el) warmPool.set(file, el);
+        resolve();
+      };
+
+      try {
+        const a = makeAudio(file);
+        if (a.readyState >= 3) {
+          finish(a);
+          return;
+        }
+        a.addEventListener(
+          'canplaythrough',
+          () => {
+            finish(a);
+          },
+          { once: true },
+        );
+        a.addEventListener(
+          'error',
+          () => {
+            finish();
+          },
+          { once: true },
+        );
+        try {
+          a.load();
+        } catch {
+          finish(a);
+        }
+        // Don't block boot forever on a hung decode
+        window.setTimeout(() => finish(a), 4000);
+      } catch {
+        finish();
+      }
+    });
   };
 
   // Capture any early interaction so late-scheduled SFX still play on Vercel.
@@ -213,9 +303,8 @@ export function createAudioEngine() {
     // Wall-clock length of this voice (pitch speeds up / slows media time)
     const wallDur = mediaDur / pitch;
 
-    const audio = new Audio();
-    audio.preload = 'auto';
-    audio.src = resolveSrc(req.file);
+    // Prefer a pre-warmed element so play() is not deferred past the gesture.
+    const audio = acquireAudio(req.file);
     audio.playbackRate = pitch;
     // Keep pitch shift when browser would otherwise preserve pitch on rate change
     try {
@@ -300,19 +389,31 @@ export function createAudioEngine() {
           err && typeof err === 'object' && 'name' in err
             ? String((err as { name?: string }).name)
             : '';
-        // Autoplay still blocked — one unlock retry (helps if gesture was late)
-        if (attempt < 1 && (name === 'NotAllowedError' || !unlocked)) {
-          void unlock().then(() => tryPlay(attempt + 1));
-          return;
-        }
-        // Not ready yet — wait for data then retry once
-        if (attempt < 2 && audio.readyState < 2) {
+        // Media not buffered yet — wait for data, then retry. This can lose
+        // the user-gesture token on some browsers; prefer warm() beforehand.
+        if (
+          attempt < 2 &&
+          (name === 'AbortError' ||
+            name === 'NotSupportedError' ||
+            audio.readyState < 2)
+        ) {
           audio.addEventListener(
             'canplay',
             () => tryPlay(attempt + 1),
             { once: true },
           );
+          try {
+            audio.load();
+          } catch {
+            /* ignore */
+          }
           return;
+        }
+        // Autoplay policy: only useful if we can still unlock in-gesture.
+        // Async unlock().then(play) is outside the gesture and usually fails —
+        // kick unlock for future SFX and drop this voice.
+        if (name === 'NotAllowedError') {
+          void unlock();
         }
         failVoice();
       });
@@ -438,13 +539,14 @@ export function createAudioEngine() {
     stopAllExcept,
     unlock,
     preload,
+    warm,
     isUnlocked: () => unlocked,
+    isMuted: () => muted,
     setMuted: (m: boolean) => {
       muted = m;
       // Mute kills everything, including one-shots.
       if (m) stop();
     },
-    isMuted: () => muted,
     setMasterVolume: (v: number) => {
       masterVolume = Math.min(1, Math.max(0, v));
       for (const voice of active.values()) {

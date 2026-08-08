@@ -196,15 +196,19 @@ async function boot(): Promise<void> {
   // orb exit, and browsers drop autoplay permission across setTimeout.
   //
   // JARVIS startup VO is a one-shot on INITIATE (not the director timeline).
+  // Fully warm the element before the gate appears so play() is not deferred
+  // to canplay (which runs outside the user-gesture window and is intermittent).
   let jarvisStartupDur = JARVIS_STARTUP_SEC;
-  audioTimeline.engine.preload(JARVIS_STARTUP_FILE);
-  void audioTimeline.engine.probeDuration(JARVIS_STARTUP_FILE).then((d) => {
-    if (d > 0.05) jarvisStartupDur = d;
-  });
+  await Promise.all([
+    audioTimeline.engine.warm(JARVIS_STARTUP_FILE),
+    audioTimeline.engine.probeDuration(JARVIS_STARTUP_FILE).then((d) => {
+      if (d > 0.05) jarvisStartupDur = d;
+    }),
+  ]);
 
   ui.onStartGesture(() => {
+    // Both calls stay synchronous in the gesture turn (no await).
     void audioTimeline.engine.unlock();
-    // Same gesture turn as unlock so autoplay policies allow the VO.
     audioTimeline.engine.play({
       id: JARVIS_STARTUP_VOICE_ID,
       file: JARVIS_STARTUP_FILE,
