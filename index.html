@@ -53,37 +53,216 @@
         box-shadow: none;
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
         text-align: center;
+        color: #e8e4d9;
       }
       #loading .loading-inner {
+        position: relative;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 1.25rem;
-        width: 320px;
-        max-width: 80vw;
+        gap: 1.1rem;
+        width: min(22rem, 86vw);
+        padding: 1.35rem 1.4rem 1.25rem;
+        box-sizing: border-box;
+        background: rgba(6, 12, 22, 0.55);
+        border: 1px solid rgba(126, 232, 255, 0.18);
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.35) inset,
+          0 12px 40px rgba(0, 0, 0, 0.35),
+          0 0 48px rgba(40, 140, 200, 0.08);
       }
-      #loading .loading-mark {
+      #loading .loading-corner {
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        border-color: rgba(126, 232, 255, 0.75);
+        border-style: solid;
+        border-width: 0;
+        pointer-events: none;
+      }
+      #loading .loading-corner-tl {
+        top: -1px;
+        left: -1px;
+        border-top-width: 2px;
+        border-left-width: 2px;
+      }
+      #loading .loading-corner-tr {
+        top: -1px;
+        right: -1px;
+        border-top-width: 2px;
+        border-right-width: 2px;
+      }
+      #loading .loading-corner-bl {
+        bottom: -1px;
+        left: -1px;
+        border-bottom-width: 2px;
+        border-left-width: 2px;
+      }
+      #loading .loading-corner-br {
+        bottom: -1px;
+        right: -1px;
+        border-bottom-width: 2px;
+        border-right-width: 2px;
+      }
+      #loading .loading-brand {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        width: 100%;
+        gap: 0.75rem;
+      }
+      #loading .loading-brand-mk {
+        font-size: 0.62rem;
+        font-weight: 600;
+        letter-spacing: 0.28em;
         color: #c9a227;
-        font-size: 1.75rem;
-        line-height: 1;
+      }
+      #loading .loading-brand-sub {
+        font-size: 0.48rem;
+        letter-spacing: 0.22em;
+        color: rgba(232, 228, 217, 0.4);
+      }
+      #loading .loading-reactor {
+        position: relative;
+        width: 4.5rem;
+        height: 4.5rem;
+        margin: 0.15rem 0 0.1rem;
+      }
+      #loading .loading-reactor-glow {
+        position: absolute;
+        inset: 8%;
+        border-radius: 50%;
+        background: radial-gradient(
+          circle,
+          rgba(90, 210, 255, 0.28) 0%,
+          rgba(40, 150, 210, 0.1) 45%,
+          transparent 72%
+        );
+      }
+      #loading .loading-reactor-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        border: 1.5px solid rgba(126, 232, 255, 0.55);
+        box-shadow:
+          0 0 10px rgba(80, 210, 255, 0.35),
+          inset 0 0 8px rgba(126, 232, 255, 0.12);
+        border-top-color: rgba(184, 244, 255, 0.95);
+        border-right-color: rgba(126, 232, 255, 0.25);
+        animation: loading-spin 1.1s linear infinite;
+      }
+      #loading .loading-reactor-ring-mid {
+        inset: 18%;
+        border-width: 1px;
+        border-color: rgba(126, 232, 255, 0.28);
+        border-bottom-color: rgba(184, 244, 255, 0.7);
+        border-left-color: rgba(126, 232, 255, 0.15);
+        animation: loading-spin-rev 1.8s linear infinite;
+        box-shadow: none;
+      }
+      #loading .loading-reactor-core {
+        position: absolute;
+        inset: 34%;
+        border-radius: 50%;
+        background: radial-gradient(
+          circle at 40% 35%,
+          #b8f4ff 0%,
+          #3eb8e8 45%,
+          #0a4a6a 100%
+        );
+        box-shadow:
+          0 0 10px rgba(126, 232, 255, 0.85),
+          0 0 22px rgba(80, 210, 255, 0.45);
+      }
+      #loading .loading-tag {
+        margin: 0;
+        font-size: 0.48rem;
+        letter-spacing: 0.32em;
+        color: rgba(126, 232, 255, 0.7);
       }
       #loading .loading-label {
         margin: 0;
-        font-size: 0.7rem;
-        letter-spacing: 0.28em;
-        color: rgba(232, 228, 217, 0.55);
+        font-size: 0.68rem;
+        letter-spacing: 0.22em;
+        color: rgba(232, 228, 217, 0.72);
         white-space: nowrap;
       }
-      #loading .loading-bar {
+      #loading .loading-progress-row {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
         width: 100%;
-        height: 2px;
-        background: rgba(201, 162, 39, 0.15);
+      }
+      #loading .loading-bar-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        font-size: 0.48rem;
+        letter-spacing: 0.18em;
+        color: rgba(232, 228, 217, 0.38);
+      }
+      #loading .loading-pct {
+        font-variant-numeric: tabular-nums;
+        color: #7ee8ff;
+        letter-spacing: 0.12em;
+      }
+      #loading .loading-bar {
+        position: relative;
+        width: 100%;
+        height: 3px;
+        background: rgba(126, 232, 255, 0.1);
         overflow: hidden;
       }
       #loading .loading-fill {
         height: 100%;
         width: 0%;
-        background: linear-gradient(90deg, #b01020, #e8c547);
+        background: linear-gradient(
+          90deg,
+          #b01020 0%,
+          #c9a227 45%,
+          #7ee8ff 100%
+        );
+        box-shadow: 0 0 10px rgba(126, 232, 255, 0.45);
+      }
+      #loading .loading-stages {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        gap: 0.35rem;
+        margin-top: 0.15rem;
+      }
+      #loading .loading-stage {
+        flex: 1;
+        font-size: 0.42rem;
+        letter-spacing: 0.14em;
+        color: rgba(232, 228, 217, 0.28);
+        text-align: center;
+        padding-top: 0.35rem;
+        border-top: 1px solid rgba(126, 232, 255, 0.12);
+      }
+      #loading .loading-stage.is-active {
+        color: #7ee8ff;
+        border-top-color: rgba(126, 232, 255, 0.55);
+      }
+      #loading .loading-stage.is-done {
+        color: rgba(201, 162, 39, 0.75);
+        border-top-color: rgba(201, 162, 39, 0.4);
+      }
+      @keyframes loading-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes loading-spin-rev {
+        to {
+          transform: rotate(-360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #loading .loading-reactor-ring,
+        #loading .loading-reactor-ring-mid {
+          animation: none;
+        }
       }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -94,13 +273,44 @@
     />
   </head>
   <body>
-    <!-- Content-sized loader only (no full-screen fill = no gray block) -->
-    <div id="loading" role="status" aria-live="polite">
+    <!-- Content-sized JARVIS boot panel (no full-screen fill = no gray block) -->
+    <div id="loading" role="status" aria-live="polite" aria-busy="true">
       <div class="loading-inner">
-        <div class="loading-mark" aria-hidden="true">◆</div>
-        <p class="loading-label">LOADING SUIT SYSTEMS…</p>
-        <div class="loading-bar" aria-hidden="true">
-          <div id="loading-fill" class="loading-fill"></div>
+        <span class="loading-corner loading-corner-tl" aria-hidden="true"></span>
+        <span class="loading-corner loading-corner-tr" aria-hidden="true"></span>
+        <span class="loading-corner loading-corner-bl" aria-hidden="true"></span>
+        <span class="loading-corner loading-corner-br" aria-hidden="true"></span>
+
+        <div class="loading-brand">
+          <span class="loading-brand-mk">MK III</span>
+          <span class="loading-brand-sub">STARK INDUSTRIES</span>
+        </div>
+
+        <div class="loading-reactor" aria-hidden="true">
+          <span class="loading-reactor-glow"></span>
+          <span class="loading-reactor-ring"></span>
+          <span class="loading-reactor-ring loading-reactor-ring-mid"></span>
+          <span class="loading-reactor-core"></span>
+        </div>
+
+        <p class="loading-tag">J.A.R.V.I.S. // BOOT</p>
+        <p id="loading-label" class="loading-label">INITIALIZING CORE…</p>
+
+        <div class="loading-progress-row">
+          <div class="loading-bar-meta">
+            <span>INTEGRITY</span>
+            <span id="loading-pct" class="loading-pct">0%</span>
+          </div>
+          <div class="loading-bar" aria-hidden="true">
+            <div id="loading-fill" class="loading-fill"></div>
+          </div>
+        </div>
+
+        <div class="loading-stages" aria-hidden="true">
+          <span class="loading-stage" data-stage="core">CORE</span>
+          <span class="loading-stage" data-stage="mesh">MESH</span>
+          <span class="loading-stage" data-stage="hangar">HANGAR</span>
+          <span class="loading-stage" data-stage="hud">HUD</span>
         </div>
       </div>
     </div>

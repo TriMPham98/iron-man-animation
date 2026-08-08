@@ -29,7 +29,6 @@ async function boot(): Promise<void> {
 
   const ui = createOverlay();
   ui.setLoadingProgress(0.05);
-  ui.setStatus('LOADING SUIT MESH…');
 
   const reducedMotion = prefersReducedMotion();
   if (reducedMotion) {
@@ -205,6 +204,14 @@ boot().catch((err) => {
   console.error(err);
   const loading = document.getElementById('loading');
   if (loading) {
-    loading.innerHTML = `<p style="color:#c9a227;font-family:monospace;letter-spacing:0.15em">FAILED TO INIT — SEE CONSOLE</p>`;
+    loading.setAttribute('aria-busy', 'false');
+    const label = document.getElementById('loading-label');
+    if (label) {
+      label.textContent = 'FAILED TO INIT — SEE CONSOLE';
+      label.classList.add('is-ready');
+    } else {
+      loading.innerHTML =
+        '<p style="color:#c9a227;font-family:monospace;letter-spacing:0.15em">FAILED TO INIT — SEE CONSOLE</p>';
+    }
   }
 });

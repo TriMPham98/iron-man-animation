@@ -141,9 +141,35 @@ function elOptional<T extends HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null;
 }
 
+/** Boot stages for the content-sized JARVIS loader (progress thresholds). */
+const LOADING_STAGES: readonly {
+  id: string;
+  at: number;
+  label: string;
+}[] = [
+  { id: 'core', at: 0, label: 'INITIALIZING CORE…' },
+  { id: 'mesh', at: 0.08, label: 'LOADING SUIT MESH…' },
+  { id: 'hangar', at: 0.82, label: 'BUILDING HANGAR…' },
+  { id: 'hud', at: 0.93, label: 'CALIBRATING HUD…' },
+];
+
+function loadingLabelFor(p: number): string {
+  if (p >= 0.999) return 'SYSTEMS READY';
+  let label = LOADING_STAGES[0]!.label;
+  for (const stage of LOADING_STAGES) {
+    if (p >= stage.at) label = stage.label;
+  }
+  return label;
+}
+
 export function createOverlay(): OverlayHandles {
   const loading = el<HTMLDivElement>('loading');
   const loadingFill = el<HTMLDivElement>('loading-fill');
+  const loadingPct = elOptional<HTMLSpanElement>('loading-pct');
+  const loadingLabel = elOptional<HTMLParagraphElement>('loading-label');
+  const loadingStages = [
+    ...loading.querySelectorAll<HTMLElement>('.loading-stage'),
+  ];
   const hudTop = el<HTMLElement>('hud-top');
   const hudCenter = el<HTMLDivElement>('hud-center');
   const hudFrame = el<HTMLDivElement>('hud-frame');
@@ -888,9 +914,32 @@ export function createOverlay(): OverlayHandles {
 
   return {
     setLoadingProgress: (p: number) => {
-      loadingFill.style.width = `${Math.round(Math.min(1, Math.max(0, p)) * 100)}%`;
+      const clamped = Math.min(1, Math.max(0, p));
+      const pct = Math.round(clamped * 100);
+      loadingFill.style.width = `${pct}%`;
+      if (loadingPct) loadingPct.textContent = `${pct}%`;
+
+      const label = loadingLabelFor(clamped);
+      if (loadingLabel && loadingLabel.textContent !== label) {
+        loadingLabel.textContent = label;
+        loadingLabel.classList.toggle('is-ready', clamped >= 0.999);
+      }
+
+      // Stage chips: done | active | upcoming
+      let activeIdx = 0;
+      for (let i = 0; i < LOADING_STAGES.length; i++) {
+        if (clamped >= LOADING_STAGES[i]!.at) activeIdx = i;
+      }
+      for (const node of loadingStages) {
+        const idx = LOADING_STAGES.findIndex((s) => s.id === node.dataset.stage);
+        if (idx < 0) continue;
+        const complete = clamped >= 0.999;
+        node.classList.toggle('is-active', !complete && idx === activeIdx);
+        node.classList.toggle('is-done', complete || idx < activeIdx);
+      }
     },
     hideLoading: () => {
+      loading.setAttribute('aria-busy', 'false');
       loading.classList.add('fade-out');
     },
     showHud: () => {
