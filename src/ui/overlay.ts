@@ -735,16 +735,30 @@ export function createOverlay(): OverlayHandles {
    */
   const START_EXIT_MS = JARVIS_STARTUP_EXIT_MS;
   const START_ASSEMBLY_AT_MS = JARVIS_STARTUP_ASSEMBLY_AT_MS;
+  /** Loader chrome → reactor dissolve (matches --loading-handoff-dur). */
+  const LOADING_HANDOFF_MS = 780;
+  /** Orb grow-from-reactor (matches --jarvis-enter-dur). */
+  const START_ENTER_MS = 880;
+  /**
+   * Fire decode after the orb is large enough that fitHackerLabel sees the
+   * final nucleus width (mid-late enter, not while still scaled down).
+   */
+  const HACKER_TEXT_AT_MS = Math.round(START_ENTER_MS * 0.72);
 
   let startExitTimer = 0;
   let startAssemblyTimer = 0;
+  let startEnterTimer = 0;
+  let hackerTextTimer = 0;
+  let loadingHandoffTimer = 0;
 
   const hideStartGate = () => {
     startGateVisible = false;
     window.clearTimeout(startExitTimer);
     window.clearTimeout(startAssemblyTimer);
+    window.clearTimeout(startEnterTimer);
+    window.clearTimeout(hackerTextTimer);
     if (!startGate) return;
-    startGate.classList.remove('is-exiting');
+    startGate.classList.remove('is-exiting', 'is-entering');
     startGate.classList.add('is-hidden');
     startGate.setAttribute('aria-hidden', 'true');
     startBtn?.removeAttribute('disabled');
@@ -765,34 +779,97 @@ export function createOverlay(): OverlayHandles {
     refitStartLabel();
   });
 
+  const beginLoadingHandoff = () => {
+    loading.setAttribute('aria-busy', 'false');
+    if (loading.classList.contains('is-handing-off') || loading.classList.contains('fade-out')) {
+      return;
+    }
+    // Force reflow so transitions run from the idle state.
+    void loading.offsetWidth;
+    loading.classList.add('is-handing-off');
+    window.clearTimeout(loadingHandoffTimer);
+    loadingHandoffTimer = window.setTimeout(() => {
+      loading.classList.add('fade-out');
+    }, reducedMotion() ? 0 : LOADING_HANDOFF_MS);
+  };
+
+  const playInitiateHackerText = () => {
+    if (!startGateVisible || !startLabel || startConsumed) return;
+    cancelHackerText?.();
+    cancelHackerText = null;
+    // Final size is locked once enter has largely settled.
+    fitHackerLabel(startLabel);
+    cancelHackerText = playHackerText(startLabel);
+  };
+
   const showStartGate = () => {
     // Never re-open after initiate (e.g. R started assembly during load)
     if (startConsumed || !startGate) return;
     startGateVisible = true;
+
+    // Overlap loader dissolve with orb enter (same viewport center).
+    beginLoadingHandoff();
+
     startGate.classList.remove('is-hidden', 'is-exiting');
     startGate.setAttribute('aria-hidden', 'false');
-    startBtn?.removeAttribute('disabled');
+    startBtn?.setAttribute('disabled', '');
 
-    // One-shot decode when load finishes and INITIATE appears (not on hover).
-    // Wait for Michroma so fit measures the real HUD face, not a fallback.
-    cancelHackerText?.();
-    cancelHackerText = null;
-    void ensureJarvisFont().then(() => {
-      if (!startGateVisible || !startLabel || startConsumed) return;
-      // Double rAF: wait until the un-hidden gate has a real nucleus box.
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          if (!startGateVisible || !startLabel || startConsumed) return;
-          cancelHackerText?.();
-          cancelHackerText = playHackerText(startLabel);
-        });
-      });
-    });
+    // Seed label state before enter paints (no scramble while scaled down).
+    if (startLabel) {
+      cancelHackerText?.();
+      cancelHackerText = null;
+      const finalText = (
+        startLabel.dataset.value ??
+        startLabel.textContent ??
+        'INITIATE'
+      )
+        .trim()
+        .toUpperCase();
+      startLabel.dataset.value = finalText;
+      startLabel.textContent = finalText;
+    }
 
-    // Focus after HUD boot so Tab/Enter land on the CTA
-    window.requestAnimationFrame(() => {
+    const finishEnter = () => {
+      if (!startGateVisible || startConsumed || !startGate) return;
+      startGate.classList.remove('is-entering');
+      startBtn?.removeAttribute('disabled');
       if (startGateVisible) startBtn?.focus({ preventScroll: true });
+    };
+
+    window.clearTimeout(startEnterTimer);
+    window.clearTimeout(hackerTextTimer);
+
+    if (reducedMotion()) {
+      startGate.classList.remove('is-entering');
+      void ensureJarvisFont().then(() => {
+        if (!startGateVisible || startConsumed) return;
+        playInitiateHackerText();
+        finishEnter();
+      });
+      return;
+    }
+
+    // Retrigger enter animation cleanly
+    startGate.classList.remove('is-entering');
+    void startGate.offsetWidth;
+    startGate.classList.add('is-entering');
+    startGate.style.setProperty('--jarvis-enter-dur', `${START_ENTER_MS}ms`);
+
+    // Decode once the nucleus is near final size (fitHackerLabel needs layout).
+    void ensureJarvisFont().then(() => {
+      if (!startGateVisible || startConsumed) return;
+      window.clearTimeout(hackerTextTimer);
+      hackerTextTimer = window.setTimeout(() => {
+        // Double rAF: ensure enter transform has applied final-ish box metrics.
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            playInitiateHackerText();
+          });
+        });
+      }, HACKER_TEXT_AT_MS);
     });
+
+    startEnterTimer = window.setTimeout(finishEnter, START_ENTER_MS);
   };
 
   const fireStart = () => {
@@ -804,6 +881,8 @@ export function createOverlay(): OverlayHandles {
     // Snap label to final text if scramble is still running
     cancelHackerText?.();
     cancelHackerText = null;
+    window.clearTimeout(startEnterTimer);
+    window.clearTimeout(hackerTextTimer);
 
     // Must run in the gesture turn (autoplay unlock, etc.)
     startGestureHandler?.();
@@ -824,8 +903,8 @@ export function createOverlay(): OverlayHandles {
     startGate.setAttribute('aria-hidden', 'true');
     // Drive CSS exit length from the same constant as the VO / timers.
     startGate.style.setProperty('--jarvis-exit-dur', `${START_EXIT_MS}ms`);
-    // Retrigger exit animation cleanly if class was stuck
-    startGate.classList.remove('is-exiting', 'is-hidden');
+    // Drop enter mid-flight, then play exit from full size
+    startGate.classList.remove('is-exiting', 'is-hidden', 'is-entering');
     void startGate.offsetWidth;
     startGate.classList.add('is-exiting');
 
@@ -945,8 +1024,8 @@ export function createOverlay(): OverlayHandles {
       }
     },
     hideLoading: () => {
-      loading.setAttribute('aria-busy', 'false');
-      loading.classList.add('fade-out');
+      // Soft dissolve into INITIATE when the gate follows; hard fade if alone.
+      beginLoadingHandoff();
     },
     showHud: () => {
       hudTop.classList.remove('hidden');

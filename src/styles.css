@@ -106,15 +106,21 @@ body.scene-ready #app {
 }
 
 /*
-  Loader: content-sized JARVIS boot panel only — NEVER a full-screen fill.
-  (Full-screen #loading background was the dark-gray load-screen block.)
+  Loader: centered JARVIS boot — reactor sits on the same viewport center
+  as the INITIATE orb. Never a full-screen fill (that was the gray block).
+  Handoff: chrome dissolves, reactor crossfades into the growing orb.
 */
 #loading {
+  --loading-reactor-size: 4.75rem;
+  /* Match .start-btn.jarvis-orb --orb-size so enter scale is exact */
+  --loading-orb-size: min(19rem, 68vw, 62vh);
+  --loading-handoff-dur: 0.78s;
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  inset: 0;
   z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0;
   padding: 0;
   background: none;
@@ -123,13 +129,22 @@ body.scene-ready #app {
   text-align: center;
   font-family: var(--mono);
   color: var(--text);
-  transition: opacity 0.5s cubic-bezier(0.22, 1, 0.36, 1), visibility 0.5s;
+  pointer-events: none;
+  transition:
+    opacity 0.42s cubic-bezier(0.22, 1, 0.36, 1) 0.28s,
+    visibility 0.42s 0.28s;
 }
 
-#loading.fade-out {
+#loading.fade-out,
+#loading.is-handing-off {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
+}
+
+#loading.is-handing-off {
+  /* Stay above the gate briefly so the reactor covers the orb seed */
+  z-index: 30;
 }
 
 .loading-inner {
@@ -137,10 +152,21 @@ body.scene-ready #app {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1.1rem;
+  justify-content: center;
+  gap: 0;
   width: min(22rem, 86vw);
-  padding: 1.35rem 1.4rem 1.25rem;
+  padding: 0;
   box-sizing: border-box;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+/* Frosted plate behind chrome + reactor (absolute so reactor stays centered) */
+.loading-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   background: linear-gradient(
     165deg,
     rgba(10, 18, 32, 0.72) 0%,
@@ -153,10 +179,15 @@ body.scene-ready #app {
     0 0 48px rgba(40, 140, 200, 0.1),
     0 0 1px rgba(126, 232, 255, 0.2);
   backdrop-filter: blur(10px);
+  transition:
+    opacity 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.55s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.35s ease,
+    box-shadow 0.35s ease;
+  transform-origin: center center;
 }
 
-/* Thin scanline wash inside the panel */
-.loading-inner::before {
+.loading-panel::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -169,6 +200,14 @@ body.scene-ready #app {
     rgba(0, 0, 0, 0.85) 2px,
     rgba(0, 0, 0, 0.85) 3px
   );
+}
+
+#loading.is-handing-off .loading-panel {
+  opacity: 0;
+  transform: scale(0.92);
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .loading-corner {
@@ -211,6 +250,50 @@ body.scene-ready #app {
   border-right-width: 2px;
 }
 
+/*
+  Equal-height chrome rails pin the reactor on the true vertical center of
+  both the panel and the viewport (panel itself is flex-centered on #loading).
+*/
+.loading-chrome {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  /* Match the taller rail (label + bar + stages) so both sides balance */
+  min-height: 6.75rem;
+  transition:
+    opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.35s ease;
+}
+
+.loading-chrome-top {
+  gap: 0.55rem;
+  padding: 1.2rem 1.4rem 0.9rem;
+  justify-content: flex-end;
+}
+
+.loading-chrome-bottom {
+  gap: 0.75rem;
+  padding: 0.9rem 1.4rem 1.25rem;
+  justify-content: flex-start;
+}
+
+#loading.is-handing-off .loading-chrome-top {
+  opacity: 0;
+  transform: translateY(-0.55rem);
+  filter: blur(2px);
+}
+
+#loading.is-handing-off .loading-chrome-bottom {
+  opacity: 0;
+  transform: translateY(0.55rem);
+  filter: blur(2px);
+}
+
 .loading-brand {
   display: flex;
   align-items: baseline;
@@ -235,13 +318,27 @@ body.scene-ready #app {
   color: rgba(232, 228, 217, 0.4);
 }
 
-/* Mini arc-reactor spinner */
+/* Mini arc-reactor — same center as INITIATE orb */
 .loading-reactor {
   position: relative;
-  width: 4.75rem;
-  height: 4.75rem;
-  margin: 0.2rem 0 0.05rem;
-  z-index: 1;
+  z-index: 2;
+  width: var(--loading-reactor-size);
+  height: var(--loading-reactor-size);
+  flex: 0 0 auto;
+  margin: 0;
+  transform-origin: center center;
+  transition:
+    transform var(--loading-handoff-dur) cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.4s cubic-bezier(0.33, 0, 0.2, 1) 0.22s,
+    filter 0.4s ease;
+  will-change: transform, opacity;
+}
+
+#loading.is-handing-off .loading-reactor {
+  /* Soft grow + dissolve while the real orb enters underneath at the same center */
+  transform: scale(1.85);
+  opacity: 0;
+  filter: blur(1.5px) brightness(1.4);
 }
 
 .loading-reactor-glow {
@@ -475,8 +572,15 @@ body.scene-ready #app {
 /*
   Start gate — cyan holographic ring CTA only (no chip/readout chrome).
   Hangar stays visible behind a soft vignette.
+  Enter: grow from loading-reactor scale at the same center, then decode label.
 */
 .start-gate {
+  --jarvis-enter-dur: 0.88s;
+  /*
+    Grow from roughly the loading reactor size (~4.75rem) toward --orb-size.
+    Fixed unitless ratio stays valid across browsers (rem/min() division is flaky).
+  */
+  --orb-enter-from: 0.26;
   position: absolute;
   inset: 0;
   z-index: 20;
@@ -498,6 +602,35 @@ body.scene-ready #app {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
+}
+
+/* Reveal: vignette fades in while the orb grows from the loader core */
+.start-gate.is-entering {
+  opacity: 1;
+  visibility: visible;
+  animation: start-gate-vignette-in var(--jarvis-enter-dur)
+    cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.start-gate.is-entering .start-btn.jarvis-orb {
+  pointer-events: none;
+  animation: jarvis-orb-enter var(--jarvis-enter-dur)
+    cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+
+.start-gate.is-entering .jarvis-orb-label {
+  /* Label stays quiet until enter settles — then hackerText decodes */
+  opacity: 0;
+  animation: jarvis-orb-label-in 0.35s ease-out calc(var(--jarvis-enter-dur) * 0.55)
+    both;
+}
+
+.start-gate.is-entering .jarvis-orb-glow,
+.start-gate.is-entering .jarvis-orb-halo {
+  animation: jarvis-orb-enter-glow var(--jarvis-enter-dur)
+    cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /*
@@ -1123,6 +1256,63 @@ body.scene-ready #app {
   ease-out shrink/fade through the decrescendo (no stepped mid-stops).
   Scale + opacity only — filter animation is skipped (choppy on many GPUs).
 */
+/* Loader reactor → full INITIATE orb (shared center) */
+@keyframes jarvis-orb-enter {
+  0% {
+    transform: scale(var(--orb-enter-from, 0.25));
+    opacity: 0.55;
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes start-gate-vignette-in {
+  0% {
+    opacity: 0;
+    background: radial-gradient(
+      circle at center,
+      rgba(4, 14, 26, 0.15) 0%,
+      transparent 55%
+    );
+  }
+  100% {
+    opacity: 1;
+    background: radial-gradient(
+      circle at center,
+      rgba(4, 14, 26, 0.58) 0%,
+      rgba(4, 10, 18, 0.3) 40%,
+      transparent 70%
+    );
+  }
+}
+
+@keyframes jarvis-orb-label-in {
+  0% {
+    opacity: 0;
+    filter: brightness(1.6);
+  }
+  100% {
+    opacity: 1;
+    filter: brightness(1);
+  }
+}
+
+@keyframes jarvis-orb-enter-glow {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @keyframes jarvis-orb-exit {
   0% {
     transform: scale(1);
@@ -3135,6 +3325,11 @@ body.director-mode .audio-timeline:not(.hidden) {
   .start-gate.is-exiting .jarvis-orb-halo,
   .start-gate.is-exiting .jarvis-orb-label,
   .start-gate.is-exiting .jarvis-orb-core,
+  .start-gate.is-entering,
+  .start-gate.is-entering .start-btn.jarvis-orb,
+  .start-gate.is-entering .jarvis-orb-glow,
+  .start-gate.is-entering .jarvis-orb-halo,
+  .start-gate.is-entering .jarvis-orb-label,
   .hud-frame.is-online-flash .hud-corner {
     animation: none !important;
   }
@@ -3161,6 +3356,9 @@ body.director-mode .audio-timeline:not(.hidden) {
   }
 
   #loading,
+  #loading .loading-panel,
+  #loading .loading-chrome,
+  #loading .loading-reactor,
   .reclass-panel,
   .audio-timeline,
   .jarvis-panel,
@@ -3168,6 +3366,18 @@ body.director-mode .audio-timeline:not(.hidden) {
   .jarvis-progress-fill.is-draining,
   .start-gate {
     transition: none !important;
+  }
+
+  #loading.is-handing-off,
+  #loading.fade-out {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .start-gate.is-entering .start-btn.jarvis-orb,
+  .start-gate.is-entering .jarvis-orb-label {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -3205,8 +3415,25 @@ body.reduced-motion .start-gate.is-exiting .jarvis-orb-glow,
 body.reduced-motion .start-gate.is-exiting .jarvis-orb-halo,
 body.reduced-motion .start-gate.is-exiting .jarvis-orb-label,
 body.reduced-motion .start-gate.is-exiting .jarvis-orb-core,
+body.reduced-motion .start-gate.is-entering,
+body.reduced-motion .start-gate.is-entering .start-btn.jarvis-orb,
+body.reduced-motion .start-gate.is-entering .jarvis-orb-glow,
+body.reduced-motion .start-gate.is-entering .jarvis-orb-halo,
+body.reduced-motion .start-gate.is-entering .jarvis-orb-label,
 body.reduced-motion .hud-frame.is-online-flash .hud-corner {
   animation: none !important;
+}
+
+body.reduced-motion #loading .loading-panel,
+body.reduced-motion #loading .loading-chrome,
+body.reduced-motion #loading .loading-reactor {
+  transition: none !important;
+}
+
+body.reduced-motion .start-gate.is-entering .start-btn.jarvis-orb,
+body.reduced-motion .start-gate.is-entering .jarvis-orb-label {
+  opacity: 1;
+  transform: none;
 }
 
 body.reduced-motion .hud-frame.is-booted .hud-corner,

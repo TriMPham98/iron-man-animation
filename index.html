@@ -42,10 +42,11 @@
       }
       #loading {
         position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
+        inset: 0;
         z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         margin: 0;
         padding: 0;
         background: none;
@@ -54,22 +55,50 @@
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
         text-align: center;
         color: #e8e4d9;
+        pointer-events: none;
       }
       #loading .loading-inner {
         position: relative;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 1.1rem;
+        justify-content: center;
+        gap: 0;
         width: min(22rem, 86vw);
-        padding: 1.35rem 1.4rem 1.25rem;
+        padding: 0;
         box-sizing: border-box;
+        background: none;
+        border: none;
+        box-shadow: none;
+      }
+      #loading .loading-chrome {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 6.75rem;
+      }
+      #loading .loading-chrome-top {
+        gap: 0.55rem;
+        padding: 1.15rem 1.4rem 0.85rem;
+        justify-content: flex-end;
+      }
+      #loading .loading-chrome-bottom {
+        gap: 0.75rem;
+        padding: 0.85rem 1.4rem 1.2rem;
+        justify-content: flex-start;
+      }
+      #loading .loading-panel {
+        position: absolute;
+        inset: 0;
         background: rgba(6, 12, 22, 0.55);
         border: 1px solid rgba(126, 232, 255, 0.18);
         box-shadow:
           0 0 0 1px rgba(0, 0, 0, 0.35) inset,
           0 12px 40px rgba(0, 0, 0, 0.35),
           0 0 48px rgba(40, 140, 200, 0.08);
+        pointer-events: none;
       }
       #loading .loading-corner {
         position: absolute;
@@ -273,17 +302,25 @@
     />
   </head>
   <body>
-    <!-- Content-sized JARVIS boot panel (no full-screen fill = no gray block) -->
+    <!--
+      Centered JARVIS boot: reactor sits on the same viewport center as INITIATE.
+      Chrome above/below fades during handoff while the core scales into the orb.
+    -->
     <div id="loading" role="status" aria-live="polite" aria-busy="true">
       <div class="loading-inner">
-        <span class="loading-corner loading-corner-tl" aria-hidden="true"></span>
-        <span class="loading-corner loading-corner-tr" aria-hidden="true"></span>
-        <span class="loading-corner loading-corner-bl" aria-hidden="true"></span>
-        <span class="loading-corner loading-corner-br" aria-hidden="true"></span>
+        <div class="loading-panel" aria-hidden="true">
+          <span class="loading-corner loading-corner-tl"></span>
+          <span class="loading-corner loading-corner-tr"></span>
+          <span class="loading-corner loading-corner-bl"></span>
+          <span class="loading-corner loading-corner-br"></span>
+        </div>
 
-        <div class="loading-brand">
-          <span class="loading-brand-mk">MK III</span>
-          <span class="loading-brand-sub">STARK INDUSTRIES</span>
+        <div class="loading-chrome loading-chrome-top">
+          <div class="loading-brand">
+            <span class="loading-brand-mk">MK III</span>
+            <span class="loading-brand-sub">STARK INDUSTRIES</span>
+          </div>
+          <p class="loading-tag">J.A.R.V.I.S. // BOOT</p>
         </div>
 
         <div class="loading-reactor" aria-hidden="true">
@@ -293,24 +330,25 @@
           <span class="loading-reactor-core"></span>
         </div>
 
-        <p class="loading-tag">J.A.R.V.I.S. // BOOT</p>
-        <p id="loading-label" class="loading-label">INITIALIZING CORE…</p>
+        <div class="loading-chrome loading-chrome-bottom">
+          <p id="loading-label" class="loading-label">INITIALIZING CORE…</p>
 
-        <div class="loading-progress-row">
-          <div class="loading-bar-meta">
-            <span>INTEGRITY</span>
-            <span id="loading-pct" class="loading-pct">0%</span>
+          <div class="loading-progress-row">
+            <div class="loading-bar-meta">
+              <span>INTEGRITY</span>
+              <span id="loading-pct" class="loading-pct">0%</span>
+            </div>
+            <div class="loading-bar" aria-hidden="true">
+              <div id="loading-fill" class="loading-fill"></div>
+            </div>
           </div>
-          <div class="loading-bar" aria-hidden="true">
-            <div id="loading-fill" class="loading-fill"></div>
-          </div>
-        </div>
 
-        <div class="loading-stages" aria-hidden="true">
-          <span class="loading-stage" data-stage="core">CORE</span>
-          <span class="loading-stage" data-stage="mesh">MESH</span>
-          <span class="loading-stage" data-stage="hangar">HANGAR</span>
-          <span class="loading-stage" data-stage="hud">HUD</span>
+          <div class="loading-stages" aria-hidden="true">
+            <span class="loading-stage" data-stage="core">CORE</span>
+            <span class="loading-stage" data-stage="mesh">MESH</span>
+            <span class="loading-stage" data-stage="hangar">HANGAR</span>
+            <span class="loading-stage" data-stage="hud">HUD</span>
+          </div>
         </div>
       </div>
     </div>

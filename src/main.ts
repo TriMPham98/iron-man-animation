@@ -177,18 +177,16 @@ async function boot(): Promise<void> {
 
   ui.setLoadingProgress(1);
 
-  // ── Phase 3: crossfade HTML loader → scene ───────────────────────
+  // ── Phase 3: scene ready, keep loader until INITIATE handoff ─────
   // Pre-render one frame while #app is still hidden so the first visible
-  // frame is complete, then reveal and fade the loader.
+  // frame is complete. Loader stays up (centered reactor) while we warm
+  // JARVIS VO, then dissolves into the growing INITIATE orb.
   post.render();
 
   document.body.classList.add('scene-ready');
-  ui.hideLoading();
   ui.showHud();
   ui.syncDirectorChrome();
   session.refreshHintCopy();
-
-  await new Promise((r) => setTimeout(r, reducedMotion ? 80 : 200));
 
   // Hangar idle until the user initiates (JARVIS cyan CTA).
   // Space / Enter / R / click all fire once; later loops use auto-replay.
@@ -223,6 +221,8 @@ async function boot(): Promise<void> {
     session.setClockStart(clock.getElapsedTime());
     session.startSequence();
   });
+  // Coordinated handoff: loader chrome collapses, reactor → large INITIATE.
+  // (showStartGate also calls hideLoading’s dissolve path.)
   ui.showStartGate();
   loop();
 }
