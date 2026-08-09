@@ -553,6 +553,7 @@ export function createAudioEngine() {
         applyVoiceVolume(voice);
       }
     },
+    getMasterVolume: () => masterVolume,
     probeDuration,
     activeCount: () => active.size,
   };

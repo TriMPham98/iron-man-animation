@@ -141,6 +141,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const btnPause = el<HTMLButtonElement>('atl-pause');
   const btnLoop = el<HTMLButtonElement>('atl-loop');
   const btnMute = el<HTMLButtonElement>('atl-mute');
+  const masterVolInput = el<HTMLInputElement>('atl-master-vol');
+  const masterVolReadout = el<HTMLElement>('atl-master-vol-readout');
   const btnClear = el<HTMLButtonElement>('atl-clear');
   const btnCopy = el<HTMLButtonElement>('atl-copy');
   const btnDelete = el<HTMLButtonElement>('atl-delete');
@@ -155,6 +157,7 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const LOOP_STORAGE_KEY = 'mark-suit-audio-loop';
   const SNAP_STORAGE_KEY = 'mark-suit-audio-snap';
   const MUTE_STORAGE_KEY = 'mark-suit-audio-mute';
+  const MASTER_VOL_STORAGE_KEY = 'mark-suit-audio-master-vol';
 
   const engine = createAudioEngine();
   const seedChoreVersion =
@@ -167,7 +170,8 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
    * - Seed from repo is written on first visit / when choreVersion advances.
    * - Director edits rewrite storage; Vercel ships the committed seed so
    *   production matches the authoring mix once the seed is updated.
-   * - Loop / snap / mute toolbar toggles also persist across reloads.
+   * - Loop / snap / mute / master volume toolbar toggles also persist
+   *   across reloads.
    */
   let clips: TimelineClip[] = initTimelineClips(
     (choreSeed as { clips?: unknown }).clips,
@@ -187,6 +191,17 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
     muted = window.localStorage.getItem(MUTE_STORAGE_KEY) === '1';
   } catch {
     muted = false;
+  }
+  /** Master gain 0–1 (multiplies every clip envelope). Default full. */
+  let masterVolume = 1;
+  try {
+    const raw = window.localStorage.getItem(MASTER_VOL_STORAGE_KEY);
+    if (raw != null) {
+      const n = Number(raw);
+      if (Number.isFinite(n)) masterVolume = Math.min(1, Math.max(0, n));
+    }
+  } catch {
+    masterVolume = 1;
   }
   let loopEnabled = false;
   try {
@@ -1272,6 +1287,27 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
       : 'Mute assembly SFX (M)';
   };
 
+  const applyMasterVolumeVisual = () => {
+    const pct = Math.round(masterVolume * 100);
+    masterVolInput.value = String(pct);
+    masterVolReadout.textContent = `${pct}%`;
+    engine.setMasterVolume(masterVolume);
+  };
+
+  const setMasterVolumeState = (v: number): number => {
+    masterVolume = Math.min(1, Math.max(0, v));
+    try {
+      window.localStorage.setItem(
+        MASTER_VOL_STORAGE_KEY,
+        String(masterVolume),
+      );
+    } catch {
+      /* private mode */
+    }
+    applyMasterVolumeVisual();
+    return masterVolume;
+  };
+
   /**
    * Drop pending delayedCalls while muted (transport stays “live” via
    * playingFrom). Assigned after the transport block initializes.
@@ -1300,9 +1336,17 @@ export function createAudioTimelinePanel(): AudioTimelinePanel {
   const toggleMute = (): boolean => setMutedState(!muted);
 
   applyMuteVisual();
+  applyMasterVolumeVisual();
 
   btnMute.addEventListener('click', () => {
     toggleMute();
+  });
+
+  masterVolInput.addEventListener('input', () => {
+    const n = Number(masterVolInput.value);
+    if (Number.isNaN(n)) return;
+    // Live fader — write engine + readout immediately; persist on same path.
+    setMasterVolumeState(n / 100);
   });
 
   const applySnapVisual = () => {

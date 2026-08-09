@@ -18,9 +18,16 @@ export type JarvisCursorMode =
 
 const FINE_POINTER_MQ = '(hover: hover) and (pointer: fine)';
 
+/**
+ * Idle timeout before the reticle fades out (cinematic auto-hide).
+ * Long enough that light pauses don't flicker; short enough the HUD
+ * clears during orbit / showcase watching.
+ */
+const IDLE_FADE_MS = 2500;
+
 /** Elements that should lock-on (clickable HUD chrome). */
 const POINTER_SEL =
-  'button, a, summary, label, select, [role="button"], [role="link"], [role="tab"], [role="menuitem"], .start-btn, .director-btn, .atl-btn, .atl-chip, .atl-field-vol input[type="range"], .atl-field-pitch input[type="range"]';
+  'button, a, summary, label, select, [role="button"], [role="link"], [role="tab"], [role="menuitem"], .start-btn, .director-btn, .atl-btn, .atl-chip, .atl-field-vol input[type="range"], .atl-field-pitch input[type="range"], .atl-master-vol input[type="range"]';
 
 /** Clip edge / ruler / playhead scrub (checked before grab so handles win). */
 const EW_HANDLE_SEL =
@@ -116,11 +123,33 @@ export function installJarvisCursor(): () => void {
   let visible = false;
   let pointerDown = false;
   let mode: JarvisCursorMode = 'idle';
+  let idleTimer = 0;
 
   const setVisible = (next: boolean) => {
     if (visible === next) return;
     visible = next;
     el.classList.toggle('is-visible', next);
+  };
+
+  const clearIdleTimer = () => {
+    if (idleTimer) {
+      window.clearTimeout(idleTimer);
+      idleTimer = 0;
+    }
+  };
+
+  /**
+   * Show the reticle and (re)arm the idle fade. While a button is held we
+   * keep it visible so grab/scrub doesn't vanish mid-gesture.
+   */
+  const bumpActivity = () => {
+    setVisible(true);
+    clearIdleTimer();
+    if (pointerDown) return;
+    idleTimer = window.setTimeout(() => {
+      idleTimer = 0;
+      if (!pointerDown) setVisible(false);
+    }, IDLE_FADE_MS);
   };
 
   const setMode = (next: JarvisCursorMode) => {
@@ -141,7 +170,7 @@ export function installJarvisCursor(): () => void {
   const onPointerMove = (e: PointerEvent) => {
     if (e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
     place(e.clientX, e.clientY);
-    setVisible(true);
+    bumpActivity();
     setMode(resolveMode(e.target, pointerDown));
   };
 
@@ -149,6 +178,7 @@ export function installJarvisCursor(): () => void {
     if (e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
     pointerDown = true;
     place(e.clientX, e.clientY);
+    bumpActivity();
     setMode(resolveMode(e.target, true));
   };
 
@@ -156,16 +186,19 @@ export function installJarvisCursor(): () => void {
     if (e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
     pointerDown = false;
     place(e.clientX, e.clientY);
+    bumpActivity();
     setMode(resolveMode(e.target, false));
   };
 
   const onPointerLeave = () => {
+    clearIdleTimer();
     setVisible(false);
     pointerDown = false;
   };
 
   const onVisibility = () => {
     if (document.visibilityState === 'hidden') {
+      clearIdleTimer();
       setVisible(false);
       pointerDown = false;
     }
@@ -176,6 +209,7 @@ export function installJarvisCursor(): () => void {
   const motionMq = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   const teardown = () => {
+    clearIdleTimer();
     document.body.classList.remove('jarvis-cursor-active');
     el.remove();
     window.removeEventListener('pointermove', onPointerMove);

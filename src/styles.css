@@ -2417,6 +2417,47 @@ body.director-mode .audio-timeline:not(.hidden) {
   box-shadow: 0 0 10px rgba(126, 232, 255, 0.15);
 }
 
+/* Master volume — toolbar fader next to MUTE */
+.atl-master-vol {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  height: 1.35rem;
+  padding: 0 0.35rem 0 0.4rem;
+  background: rgba(12, 16, 28, 0.45);
+  border: 1px solid rgba(126, 232, 255, 0.22);
+  cursor: default;
+  user-select: none;
+}
+
+.atl-master-vol-label {
+  font-size: 0.42rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgba(126, 232, 255, 0.85);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.atl-master-vol-label em {
+  font-style: normal;
+  margin-left: 0.15rem;
+  color: #7ee8ff;
+  font-variant-numeric: tabular-nums;
+}
+
+.atl-master-vol input[type='range'] {
+  width: 4.2rem;
+  height: 1rem;
+  margin: 0;
+  padding: 0;
+  accent-color: #7ee8ff;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  vertical-align: middle;
+}
+
 .atl-body {
   display: flex;
   flex-direction: column;
@@ -3203,15 +3244,19 @@ body.jarvis-cursor-active * {
   opacity: 0;
   visibility: hidden;
   will-change: transform;
+  /* Idle hide uses a softer fade; appear snaps back a touch faster. */
   transition:
-    opacity 0.18s ease,
-    visibility 0.18s ease;
+    opacity 0.4s ease,
+    visibility 0.4s ease;
   /* Scale is applied on children so translate stays crisp */
 }
 
 .jarvis-cursor.is-visible {
   opacity: 1;
   visibility: visible;
+  transition:
+    opacity 0.16s ease,
+    visibility 0.16s ease;
 }
 
 .jarvis-cursor-glow,

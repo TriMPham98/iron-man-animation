@@ -546,6 +546,18 @@
             <button id="atl-zoom-out" type="button" class="atl-btn" title="Zoom out">−</button>
             <button id="atl-zoom-in" type="button" class="atl-btn" title="Zoom in">+</button>
             <button id="atl-mute" type="button" class="atl-btn" aria-pressed="false">MUTE</button>
+            <label class="atl-master-vol" title="Master volume (all assembly SFX)">
+              <span class="atl-master-vol-label">MST <em id="atl-master-vol-readout">100%</em></span>
+              <input
+                id="atl-master-vol"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value="100"
+                aria-label="Master volume"
+              />
+            </label>
             <button id="atl-delete" type="button" class="atl-btn" disabled title="Delete selected">DEL</button>
             <button id="atl-clear" type="button" class="atl-btn atl-btn-ghost">CLEAR</button>
             <button id="atl-copy" type="button" class="atl-btn atl-btn-primary" title="Copy pasteable card">
