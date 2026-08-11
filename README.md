@@ -2,7 +2,7 @@
 
 A polished browser demo of an **Iron Man MK III–inspired suit assembly** animation, built with **Three.js**, **GSAP**, and **Vite**.
 
-Armor plates fly in from off-screen, lock onto a core figure, the arc reactor and eye slots ignite, then you can orbit the finished suit and replay the sequence.
+Armor plates fly in from off-screen, lock onto a core figure, the arc reactor and eye slots ignite, then you can orbit the finished suit. On replay, JARVIS runs a **wireframe diagnostic** while the camera eases — then the plates explode and the sequence restarts.
 
 ## Quick start
 
@@ -72,6 +72,16 @@ JARVIS **is** the assembly loading UI — it replaces the old title / status / i
 - Reappears on replay (`R`); brief corner flash on online
 
 Decorative motion respects reduced-motion preferences.
+
+### Diagnostic scan (showcase orbit ease-out)
+
+During the finished-suit idle 360°, when the orbit **starts to slow** (`SPIN_EASE_OUT_RAD` window):
+
+1. Wireframe diagnostic runs on the solid suit — progress 0→1 as remaining yaw → 0  
+2. Status: `STRUCTURAL` → `POWER GRID` → `SYSTEMS` → `DIAGNOSTIC COMPLETE // NOMINAL`  
+3. Scan finishes with the ease; then reverse-cascade explode + hangar pull + next assembly  
+
+Silent (no dedicated SFX). Skipped under reduced motion / free-look cancel / `R` before ease-out.
 
 ### Accessibility
 

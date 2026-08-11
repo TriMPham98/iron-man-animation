@@ -28,6 +28,8 @@ export function createRenderer(
   // High enough to read dark metal; low enough that gold doesn't clip white
   renderer.toneMappingExposure = 1.7;
   renderer.shadowMap.enabled = false;
+  // JARVIS diagnostic wireframe uses material clippingPlanes for the reveal.
+  renderer.localClippingEnabled = true;
 
   const setSize = () => {
     const w = window.innerWidth;

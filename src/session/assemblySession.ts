@@ -8,6 +8,7 @@ import {
   type AssemblyController,
 } from '../animation/assemblyTimeline';
 import type { Suit } from '../suit/Suit';
+import { diagnosticStatusForProgress } from '../suit/diagnosticScan';
 import { statusForIntegrityProgress } from '../suit/waves';
 import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
@@ -24,7 +25,11 @@ import { isSystemsOnlineStatus } from '../ui/jarvisHud';
  * ~28s matches “just under 40s” with headroom and the pre-tier snappy loop.
  */
 const SHOWCASE_ORBIT_SEC = 28;
-/** When remaining yaw is under this, ease spin to a stop (≈ half prior). */
+/**
+ * When remaining yaw is under this, ease spin to a stop.
+ * The wireframe diagnostic starts here and hits 1.0 as remaining → 0
+ * (same window as the orbit ease-out).
+ */
 const SPIN_EASE_OUT_RAD = 0.275;
 /** Plates burst outward (reverse cascade) — slow, linear flight (no ease-out coast). */
 const HANDOFF_EXPLODE_SEC = 3.12;
@@ -130,6 +135,13 @@ export function createAssemblySession(
   let completeSpinAccum = 0;
   /** True when Space froze showcase spin (not a free-look cancel). */
   let showcaseSpinPaused = false;
+  /**
+   * Wireframe diagnostic armed for the current showcase orbit ease-out.
+   * Starts when remaining yaw enters {@link SPIN_EASE_OUT_RAD}; ends with
+   * the orbit (progress 1 as remaining → 0).
+   */
+  let orbitScanArmed = false;
+  let lastOrbitScanStatus = '';
   /** GSAP handoff: dematerialize + hangar pull before rebuild. */
   let handoffTween: gsap.core.Timeline | null = null;
   const _spinOffset = new THREE.Vector3();
@@ -138,6 +150,41 @@ export function createAssemblySession(
   const killHandoff = () => {
     handoffTween?.kill();
     handoffTween = null;
+    suit.stopDiagnosticScan();
+  };
+
+  const stopOrbitDiagnostic = () => {
+    orbitScanArmed = false;
+    lastOrbitScanStatus = '';
+    suit.stopDiagnosticScan();
+  };
+
+  /**
+   * Drive scan 0→1 over the spin ease-out window.
+   * `remainingRad` is yaw left in the 360° (ease begins at SPIN_EASE_OUT_RAD).
+   * Geometry is prebuilt at orbit start — arming only toggles visibility.
+   */
+  const updateOrbitDiagnostic = (remainingRad: number) => {
+    if (reducedMotion) return;
+    const span = SPIN_EASE_OUT_RAD;
+    if (remainingRad > span + 1e-6) {
+      // Still full-speed orbit — no scan yet
+      return;
+    }
+    if (!orbitScanArmed) {
+      orbitScanArmed = true;
+      // Prebuilt at showcase start — show only (no EdgesGeometry hitch)
+      suit.startDiagnosticScan();
+      lastOrbitScanStatus = '';
+    }
+    // remaining: span → 0  ⇒  progress: 0 → 1 (finishes with the ease)
+    const t = THREE.MathUtils.clamp(1 - remainingRad / span, 0, 1);
+    suit.setDiagnosticScanProgress(t);
+    const line = diagnosticStatusForProgress(t);
+    if (line !== lastOrbitScanStatus) {
+      lastOrbitScanStatus = line;
+      ui.setStatus(line, false);
+    }
   };
 
   const stopCompleteSpinTracking = () => {
@@ -154,10 +201,13 @@ export function createAssemblySession(
       stopCompleteSpinTracking();
       return;
     }
+    stopOrbitDiagnostic();
     completeSpinActive = true;
     completeSpinAccum = 0;
     showcaseSpinPaused = false;
     controls.autoRotate = false;
+    // Warm wireframe while the long full-speed orbit runs so ease-out is free
+    suit.prepareDiagnosticScan();
   };
 
   /** Freeze finished-suit orbit in place (Space while complete). */
@@ -292,6 +342,7 @@ export function createAssemblySession(
   const applyCompleteUi = (opts?: { preserveCamera?: boolean }) => {
     assemblyComplete = true;
     markCompleteClock();
+    suit.stopDiagnosticScan();
     suit.showFinal(); // seamless mesh — no grid-shard square blooms
     // Preserve free-look framing (no idle auto-rotate snap)
     const preserve = opts?.preserveCamera || assembly.userOwnsCamera();
@@ -307,8 +358,8 @@ export function createAssemblySession(
     ui.setHintVisible(true);
     ui.fadeTitle(true);
     ui.setIntegrity('INTEGRITY 100%');
-    // Status may already be SYSTEMS ONLINE from assemblyEndTime — avoid a
-    // second cyan flash; setSystemsOnline is edge-triggered either way.
+    // Status may already be SYSTEMS ONLINE / DIAGNOSTIC COMPLETE from the
+    // timeline — avoid a second cyan flash; setSystemsOnline is edge-triggered.
     ui.setStatus('SYSTEMS ONLINE', true);
     ui.setDebugProgress(1);
     audioStop();
@@ -322,6 +373,7 @@ export function createAssemblySession(
     assemblyComplete = false;
     clearCompleteClock();
     stopCompleteSpinTracking();
+    suit.stopDiagnosticScan();
     // Keep orbit live so a mid-play drag can override the cinematic path
     setOrbitMode('free', { preserveTarget: opts?.preserveTarget });
     ui.setReplayEnabled(false);
@@ -410,12 +462,14 @@ export function createAssemblySession(
 
   /**
    * After the finished-suit idle 360° (or R from complete):
+   * Diagnostic already ran over the orbit ease-out (if the full spin played).
    * 1) Plates explode outward (reverse cascade — helmet first)
    * 2) Pull camera to hangar open over the empty pad
    * 3) Drain integrity + restart assembly
    */
   const softRestartFromShowcase = () => {
     killHandoff();
+    stopOrbitDiagnostic();
     stopCompleteSpinTracking();
     controls.autoRotate = false;
     clearPick();
@@ -589,6 +643,7 @@ export function createAssemblySession(
   const parkScrubAtEnd = () => {
     assemblyComplete = true;
     markCompleteClock();
+    suit.stopDiagnosticScan();
     suit.showFinal();
     stopCompleteSpinTracking();
     // Keep the cinematic end pose; only reseed pivot for the next free-look.
@@ -752,6 +807,11 @@ export function createAssemblySession(
   /**
    * Manually yaws the camera around the suit for {@link SHOWCASE_ORBIT_SEC},
    * then soft-restarts. (Disabled while AUDIO LOOP is on.)
+   *
+   * Wireframe diagnostic starts when remaining yaw enters
+   * {@link SPIN_EASE_OUT_RAD} (spin slowdown) and reaches 1 as the orbit
+   * ease ends — same window, no separate post-orbit scan phase.
+   *
    * @returns true if this frame owned the camera (caller should skip controls.update).
    */
   const update = (deltaSec: number): boolean => {
@@ -760,10 +820,12 @@ export function createAssemblySession(
     if (!completeSpinActive || !assemblyComplete) return false;
 
     // Space pause: freeze accum mid-turn; do not treat as free-look cancel.
+    // Scan holds at the current progress (still armed).
     if (showcaseSpinPaused) return false;
 
     // User drag claimed free-look — stay on finished suit, no auto-replay.
     if (assembly.userOwnsCamera()) {
+      stopOrbitDiagnostic();
       stopCompleteSpinTracking();
       return false;
     }
@@ -782,6 +844,9 @@ export function createAssemblySession(
       speedMul = Math.max(0.12, ease);
     }
 
+    // Diagnostic locked to the same ease-out window as speedMul
+    updateOrbitDiagnostic(remaining);
+
     // Same sign as OrbitControls._rotateLeft (theta decreases → CW from above)
     const angle = (-(Math.PI * 2) / SHOWCASE_ORBIT_SEC) * dt * speedMul;
 
@@ -796,6 +861,8 @@ export function createAssemblySession(
     completeSpinAccum += Math.abs(angle);
 
     if (completeSpinAccum >= Math.PI * 2 - 1e-3) {
+      // Land scan at 1 as the ease ends, then dematerialize
+      updateOrbitDiagnostic(0);
       stopCompleteSpinTracking();
       softRestartFromShowcase();
       return false;

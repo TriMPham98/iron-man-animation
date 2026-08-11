@@ -12,6 +12,10 @@ import {
   type SystemPowers,
 } from './systemsGlow';
 import { hashSeed } from '../utils/easeHelpers';
+import {
+  createDiagnosticScan,
+  type DiagnosticScan,
+} from './diagnosticScan';
 
 /** Arc-reactor height after model normalize — radial explode origin. */
 const EXPLODE_ORIGIN = new THREE.Vector3(0, 1.15, 0);
@@ -23,6 +27,7 @@ export class Suit {
   private glowMaterials: GlowMaterial[] = [];
   private powers: SystemPowers = { reactor: 0, eyes: 0, repulsors: 0 };
   private assemblyMode = true;
+  private diagnostic: DiagnosticScan | null = null;
   private readonly _explodeEnd = new THREE.Vector3();
   private readonly _explodeDir = new THREE.Vector3();
   private readonly _explodeRadial = new THREE.Vector3();
@@ -86,6 +91,7 @@ export class Suit {
   showAssembly(): void {
     this.assemblyMode = true;
     this.explodeCache = null;
+    this.stopDiagnosticScan();
     if (this.finalModel) this.finalModel.visible = false;
     for (const p of this.pieces) {
       p.mesh.visible = false;
@@ -98,6 +104,7 @@ export class Suit {
    */
   resumeAssemblyVisuals(): void {
     this.assemblyMode = true;
+    this.stopDiagnosticScan();
     if (this.finalModel) this.finalModel.visible = false;
   }
 
@@ -116,11 +123,54 @@ export class Suit {
   }
 
   /**
+   * Build wireframe geometry once while still hidden.
+   * Call at showcase-orbit start so the ease-out scan has no first-frame hitch.
+   */
+  prepareDiagnosticScan(): void {
+    if (!this.finalModel) return;
+    if (!this.diagnostic) {
+      this.diagnostic = createDiagnosticScan(this.finalModel);
+    }
+    this.diagnostic.setProgress(0);
+    this.diagnostic.setVisible(false);
+  }
+
+  /**
+   * Ensure the wireframe overlay exists and is visible.
+   * Does **not** reset progress — use {@link setDiagnosticScanProgress}.
+   */
+  startDiagnosticScan(): void {
+    if (!this.finalModel) return;
+    this.finalModel.visible = true;
+    if (!this.diagnostic) {
+      this.diagnostic = createDiagnosticScan(this.finalModel);
+    }
+    this.diagnostic.setVisible(true);
+  }
+
+  /** Drive diagnostic reveal 0–1 (no-op if scan was never started). */
+  setDiagnosticScanProgress(amount: number): void {
+    this.diagnostic?.setProgress(amount);
+  }
+
+  /** Hide overlay; keeps the built wireframe for the next pass. */
+  stopDiagnosticScan(): void {
+    if (!this.diagnostic) return;
+    this.diagnostic.setProgress(0);
+    this.diagnostic.setVisible(false);
+  }
+
+  isDiagnosticScanActive(): boolean {
+    return !!this.diagnostic?.group.visible;
+  }
+
+  /**
    * Swap seamless mesh → all plates seated at rest, ready for a reverse
    * explode (post-showcase soft restart). Systems stay lit for the burst.
    */
   armExplosionFromFinal(): void {
     this.assemblyMode = true;
+    this.stopDiagnosticScan();
     if (this.finalModel) {
       this.finalModel.visible = false;
       this.finalModel.scale.set(1, 1, 1);
@@ -318,6 +368,8 @@ export class Suit {
   }
 
   dispose(): void {
+    this.diagnostic?.dispose();
+    this.diagnostic = null;
     this.group.traverse((obj) => {
       if ((obj as THREE.Mesh).isMesh) {
         const mesh = obj as THREE.Mesh;
