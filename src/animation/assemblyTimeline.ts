@@ -12,6 +12,7 @@ import {
   WAVE_STATUS,
   type ArmorPiece,
 } from '../suit/waves';
+import { SUIT_GROUND_CLEARANCE } from '../suit/loadSuitModel';
 import {
   flightPathKeysFrom,
   isFaceplateRest,
@@ -19,6 +20,13 @@ import {
   mirrorPathAroundRest,
   type MagneticPath,
 } from '../utils/easeHelpers';
+
+/**
+ * Lift camera Y / look-at Y to match suit feet clearance above the pad.
+ * Author poses assume feet-on-pad; apply once so every shot tracks the lift.
+ */
+const G = SUIT_GROUND_CLEARANCE;
+const gy = (y: number) => y + G;
 
 /** A plate currently mid-flight (between launch and lock). */
 export interface ActivePieceInfo {
@@ -130,10 +138,10 @@ export const BASE_CAM_FOV = 34;
  */
 export const HERO_END_CAM = {
   x: 1.15,
-  y: 1.2,
+  y: gy(1.2),
   z: 3.35,
   lx: 0,
-  ly: 0.95,
+  ly: gy(0.95),
   lz: 0,
   fov: BASE_CAM_FOV,
 } as const;
@@ -145,10 +153,10 @@ export const HERO_END_CAM = {
  */
 export const OPEN_WIDE_CAM = {
   x: 2.15,
-  y: 1.55,
+  y: gy(1.55),
   z: 4.85,
   lx: 0,
-  ly: 0.88,
+  ly: gy(0.88),
   lz: 0,
   fov: BASE_CAM_FOV + 3.5,
 } as const;
@@ -525,10 +533,10 @@ export function createAssemblyTimeline(
     const OPEN_WIDE = { ...OPEN_WIDE_CAM };
     const OPEN_CAM = {
       x: 1.85,
-      y: 1.35,
+      y: gy(1.35),
       z: 4.15,
       lx: 0,
-      ly: 0.95,
+      ly: gy(0.95),
       lz: 0,
       fov: BASE_FOV,
     };
@@ -1066,10 +1074,10 @@ export function createAssemblyTimeline(
       cameraProxy,
       {
         x: 0.78,
-        y: 0.78,
+        y: gy(0.78),
         z: 2.85,
         lx: 0,
-        ly: 0.52,
+        ly: gy(0.52),
         lz: 0,
         fov: LOWER_FOV,
         duration: 2.35,
@@ -1090,10 +1098,10 @@ export function createAssemblyTimeline(
       cameraProxy,
       {
         x: 0.72,
-        y: 0.98,
+        y: gy(0.98),
         z: 2.72,
         lx: 0,
-        ly: 0.88,
+        ly: gy(0.88),
         lz: 0,
         fov: LOWER_FOV,
         duration: THIGHS_CAM_DUR,
@@ -1122,10 +1130,10 @@ export function createAssemblyTimeline(
       cameraProxy,
       {
         x: 0.1,
-        y: 1.2,
+        y: gy(1.2),
         z: 2.18,
         lx: 0,
-        ly: 1.18,
+        ly: gy(1.18),
         lz: 0.05,
         fov: CHEST_FOV,
         duration: chestCraneDur,
@@ -1146,10 +1154,10 @@ export function createAssemblyTimeline(
         cameraProxy,
         {
           x: 0.06,
-          y: 1.18,
+          y: gy(1.18),
           z: 2.02,
           lx: 0,
-          ly: 1.18,
+          ly: gy(1.18),
           lz: 0.06,
           fov: CHEST_FOV - 1,
           duration: chestPushDur,
@@ -1163,9 +1171,9 @@ export function createAssemblyTimeline(
       cameraProxy,
       {
         x: 0.28,
-        y: 1.5,
+        y: gy(1.5),
         z: 2.25,
-        ly: 1.52,
+        ly: gy(1.52),
         lx: 0,
         lz: 0,
         fov: BASE_FOV,
@@ -1185,9 +1193,9 @@ export function createAssemblyTimeline(
         cameraProxy,
         {
           x: 0.18,
-          y: 1.58,
+          y: gy(1.58),
           z: 2.05,
-          ly: 1.58,
+          ly: gy(1.58),
           lx: 0.02,
           lz: 0.04,
           fov: FACEPLATE_FOV + 1,
@@ -1202,9 +1210,9 @@ export function createAssemblyTimeline(
         cameraProxy,
         {
           x: 0.1,
-          y: 1.6,
+          y: gy(1.6),
           z: 1.92,
-          ly: 1.62,
+          ly: gy(1.62),
           lx: 0,
           lz: 0.05,
           fov: FACEPLATE_FOV,
@@ -1219,9 +1227,9 @@ export function createAssemblyTimeline(
         cameraProxy,
         {
           x: 0.08,
-          y: 1.61,
+          y: gy(1.61),
           z: 1.88,
-          ly: 1.63,
+          ly: gy(1.63),
           lx: 0,
           lz: 0.05,
           fov: FACEPLATE_FOV - 0.5,

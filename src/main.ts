@@ -9,6 +9,7 @@ import { createRenderer } from './scene/createRenderer';
 import { applyStudioEnvironment } from './scene/createStudioEnv';
 import { createAssemblySession } from './session/assemblySession';
 import { Suit } from './suit/Suit';
+import { SUIT_GROUND_CLEARANCE } from './suit/loadSuitModel';
 import { bindInput } from './ui/bindInput';
 import { installButtonFocusRelease } from './ui/blurButtons';
 import { cueAtSeedTime } from './audio/binaryInterfaceCues';
@@ -55,7 +56,8 @@ async function boot(): Promise<void> {
   const renderer = createRenderer(canvas, { maxPixelRatio: 1.75 });
   const scene = new THREE.Scene();
   const camera = createCamera();
-  const lookTarget = new THREE.Vector3(0, 0.95, 0);
+  // Match suit feet clearance + HERO_END / OPEN_WIDE look height
+  const lookTarget = new THREE.Vector3(0, 0.95 + SUIT_GROUND_CLEARANCE, 0);
 
   createEnvironment(scene);
   const lights = createLights();

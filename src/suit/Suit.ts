@@ -5,7 +5,11 @@ import {
   type WaveOrderResult,
 } from './assemblyOrder';
 import { WAVE_ORDER, type ArmorPiece, type PieceWave } from './waves';
-import { loadSuitModel, type GlowMaterial } from './loadSuitModel';
+import {
+  loadSuitModel,
+  SUIT_GROUND_CLEARANCE,
+  type GlowMaterial,
+} from './loadSuitModel';
 import {
   applySystemUniforms,
   type SuitSystem,
@@ -18,7 +22,7 @@ import {
 } from './diagnosticScan';
 
 /** Arc-reactor height after model normalize — radial explode origin. */
-const EXPLODE_ORIGIN = new THREE.Vector3(0, 1.15, 0);
+const EXPLODE_ORIGIN = new THREE.Vector3(0, 1.15 + SUIT_GROUND_CLEARANCE, 0);
 
 export class Suit {
   readonly group = new THREE.Group();

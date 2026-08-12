@@ -465,7 +465,15 @@ function prepareGlowMaterials(root: THREE.Object3D): GlowMaterial[] {
 }
 
 /**
- * Normalize model orientation/scale so it stands ~1.85m on y=0, facing camera.
+ * Feet sit this far above hangar pad y=0 so the diagnostic scan disc
+ * ({@link SCAN_RING_PAD_CLEARANCE} ≈ 0.028) can pass under the boots
+ * without intersecting armor.
+ */
+export const SUIT_GROUND_CLEARANCE = 0.05;
+
+/**
+ * Normalize model orientation/scale so it stands ~1.85m, facing camera,
+ * with feet just above the pad / scan-ring plane.
  */
 function normalizeModel(root: THREE.Object3D): void {
   root.updateMatrixWorld(true);
@@ -494,7 +502,9 @@ function normalizeModel(root: THREE.Object3D): void {
   const center = box.getCenter(new THREE.Vector3());
   root.position.x -= center.x;
   root.position.z -= center.z;
+  // Plant on pad, then lift so boots clear the holographic scan ring
   root.position.y -= box.min.y;
+  root.position.y += SUIT_GROUND_CLEARANCE;
   root.updateMatrixWorld(true);
 }
 

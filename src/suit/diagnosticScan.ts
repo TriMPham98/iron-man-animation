@@ -77,7 +77,8 @@ const RING_RADIUS = 0.78;
 
 /**
  * Hangar pad sits at y=0 with decorative rings at ~0.01–0.013.
- * Keep the scan disc clearly above so it never z-fights or sinks through.
+ * Keep the scan disc clearly above the pad, and below suit feet
+ * ({@link SUIT_GROUND_CLEARANCE} = 0.05 in loadSuitModel).
  */
 export const SCAN_RING_PAD_CLEARANCE = 0.028;
 
