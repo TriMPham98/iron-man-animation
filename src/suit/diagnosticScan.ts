@@ -23,9 +23,9 @@ export interface DiagnosticScan {
 }
 
 /**
- * Map overall progress to the scan front Y (feet → head).
- * Starts immediately (no lead-in hold) so orbit ease-out has no dead beat;
- * soft-lands at the head for the last ~10%.
+ * Map overall progress to the scan front Y (**head → feet**).
+ * End-of-assembly close-out: starts at the crown and settles to the pad.
+ * Full height by t=0.9; holds at feet through opacity fade-out.
  */
 export function scanFrontY(
   progress01: number,
@@ -33,11 +33,14 @@ export function scanFrontY(
   maxY: number,
 ): number {
   const t = THREE.MathUtils.clamp(progress01, 0, 1);
-  // Full height by t=0.9; hold at head through opacity fade-out
+  // Full descent by t=0.9; hold at feet through opacity fade-out
   const u = THREE.MathUtils.clamp(t / 0.9, 0, 1);
   // Slight ease-in-out so the band doesn't race mid-torso
   const e = u * u * (3 - 2 * u);
-  return THREE.MathUtils.lerp(minY - 0.04, maxY + 0.06, e);
+  // Don't drive the front below the pad plane — ring clearance is applied
+  // separately when positioning the disc mesh.
+  const floorY = Math.max(minY, SCAN_RING_PAD_CLEARANCE);
+  return THREE.MathUtils.lerp(maxY + 0.06, floorY, e);
 }
 
 /**
@@ -71,6 +74,12 @@ export function diagnosticStatusForProgress(progress01: number): string {
 
 /** Outer radius of the holographic scan disc (finalModel local units). */
 const RING_RADIUS = 0.78;
+
+/**
+ * Hangar pad sits at y=0 with decorative rings at ~0.01–0.013.
+ * Keep the scan disc clearly above so it never z-fights or sinks through.
+ */
+export const SCAN_RING_PAD_CLEARANCE = 0.028;
 
 /**
  * Angular speeds (rad/s) — exit CTA spins ~14–18 rad/s; we crawl like the
@@ -283,9 +292,15 @@ function discMesh(
     opacity,
     side: THREE.DoubleSide,
     depthWrite: false,
+    // depthTest true so the disc occludes behind the suit, but pad clearance
+    // keeps it from sinking into the hangar floor.
     depthTest: true,
     toneMapped: false,
     blending: THREE.AdditiveBlending,
+    // Prefer drawing above coplanar pad fragments when y is tight
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
   });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.x = -Math.PI / 2;
@@ -398,6 +413,9 @@ function createScanRingStack(parent: THREE.Group): {
       depthTest: true,
       toneMapped: false,
       blending: THREE.AdditiveBlending,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = -Math.PI / 2;
@@ -408,8 +426,10 @@ function createScanRingStack(parent: THREE.Group): {
   }
 
   const setY = (y: number) => {
+    // Always float above the hangar pad (env ground at y=0)
+    const yy = Math.max(y, SCAN_RING_PAD_CLEARANCE);
     for (const layer of layers) {
-      layer.mesh.position.y = y;
+      layer.mesh.position.y = yy;
     }
   };
 
@@ -461,9 +481,9 @@ export function createDiagnosticScan(
   group.visible = false;
   finalModel.add(group);
 
-  // Clip: keep geometry with y <= scanY (reveal upward). World-space planes.
-  // distance = -y + scanY < 0  ⇒  y > scanY  clipped.
-  const revealPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+  // Clip: keep geometry with y >= scanY (reveal head → feet as front falls).
+  // distance = y - scanY < 0  ⇒  y < scanY  clipped.
+  const revealPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const bandTop = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
   const bandBottom = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
@@ -581,8 +601,9 @@ export function createDiagnosticScan(
     finalModel.updateWorldMatrix(true, false);
     const mw = finalModel.matrixWorld;
 
-    // Local: keep y ≤ scanY  (normal 0,-1,0 · p + y = -py + y)
-    _localReveal.set(_nDown, y);
+    // Local: keep y ≥ scanY  (head→feet reveal as front descends)
+    // normal (0,1,0), constant = -y  ⇒  distance = py - y
+    _localReveal.set(_nUp, -y);
     _localReveal.applyMatrix4(mw);
     revealPlane.copy(_localReveal);
 

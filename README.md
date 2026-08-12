@@ -77,9 +77,9 @@ Decorative motion respects reduced-motion preferences.
 
 During the finished-suit idle 360°, when the orbit **starts to slow** (`SPIN_EASE_OUT_RAD` window):
 
-1. Wireframe diagnostic runs on the solid suit — progress 0→1 as remaining yaw → 0  
+1. Wireframe diagnostic runs **head → feet** on the solid suit (end-of-assembly close-out)  
 2. Status: `STRUCTURAL` → `POWER GRID` → `SYSTEMS` → `DIAGNOSTIC COMPLETE // NOMINAL`  
-3. Scan finishes with the ease; then reverse-cascade explode + hangar pull + next assembly  
+3. Scan finishes with the ease; camera seals on hero framing → reverse explode + hangar pull to open-wide → next assembly (seamless loop)  
 
 Silent (no dedicated SFX). Skipped under reduced motion / free-look cancel / `R` before ease-out.
 

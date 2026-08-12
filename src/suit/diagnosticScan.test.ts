@@ -1,29 +1,33 @@
 import { describe, expect, it } from 'vitest';
 import {
   diagnosticStatusForProgress,
+  SCAN_RING_PAD_CLEARANCE,
   scanBandOpacity,
   scanFrontY,
   scanWireOpacity,
 } from './diagnosticScan';
 
 describe('scanFrontY', () => {
-  it('starts at feet immediately (no lead-in hold)', () => {
+  it('starts at head immediately (head → feet close-out)', () => {
     const y0 = scanFrontY(0, 0, 2);
-    expect(y0).toBeCloseTo(-0.04, 5);
-    // First frames already climb — no dead zone at t≈0
-    expect(scanFrontY(0.05, 0, 2)).toBeGreaterThan(y0);
+    expect(y0).toBeCloseTo(2.06, 5);
+    // First frames already descend — no dead zone at t≈0
+    expect(scanFrontY(0.05, 0, 2)).toBeLessThan(y0);
   });
 
-  it('reaches head by end of sweep', () => {
-    expect(scanFrontY(0.9, 0, 2)).toBeCloseTo(2.06, 5);
-    expect(scanFrontY(1, 0, 2)).toBeCloseTo(2.06, 5);
+  it('settles at pad clearance, never below the hangar floor', () => {
+    expect(scanFrontY(0.9, 0, 2)).toBeCloseTo(SCAN_RING_PAD_CLEARANCE, 5);
+    expect(scanFrontY(1, 0, 2)).toBeCloseTo(SCAN_RING_PAD_CLEARANCE, 5);
+    expect(scanFrontY(1, -0.2, 2)).toBeGreaterThanOrEqual(
+      SCAN_RING_PAD_CLEARANCE - 1e-9,
+    );
   });
 
-  it('is monotonic through the sweep window', () => {
+  it('is monotonically decreasing through the sweep window', () => {
     let prev = scanFrontY(0, 0, 2);
     for (let t = 0.05; t <= 0.9; t += 0.05) {
       const y = scanFrontY(t, 0, 2);
-      expect(y).toBeGreaterThanOrEqual(prev - 1e-9);
+      expect(y).toBeLessThanOrEqual(prev + 1e-9);
       prev = y;
     }
   });

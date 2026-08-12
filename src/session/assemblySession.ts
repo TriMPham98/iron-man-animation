@@ -4,6 +4,7 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 import {
   audioTimelineOffset,
   createAssemblyTimeline,
+  HERO_END_CAM,
   OPEN_WIDE_CAM,
   type AssemblyController,
 } from '../animation/assemblyTimeline';
@@ -33,8 +34,12 @@ const SHOWCASE_ORBIT_SEC = 28;
 const SPIN_EASE_OUT_RAD = 0.275;
 /** Plates burst outward (reverse cascade) — slow, linear flight (no ease-out coast). */
 const HANDOFF_EXPLODE_SEC = 3.12;
-/** Hangar pull (final ease) — snappy; ends with the last plates. */
-const HANDOFF_CAM_SEC = 0.6;
+/**
+ * Hangar pull hero → open wide. Long enough to read as continuous cinema
+ * after the orbit settle; ends with the last plates so assembly t=0 has no
+ * empty-pad hold.
+ */
+const HANDOFF_CAM_SEC = 1.85;
 /** Pull while debris is still in flight so empty-pad time is near zero. */
 const HANDOFF_CAM_DELAY = HANDOFF_EXPLODE_SEC - HANDOFF_CAM_SEC;
 
@@ -146,11 +151,63 @@ export function createAssemblySession(
   let handoffTween: gsap.core.Timeline | null = null;
   const _spinOffset = new THREE.Vector3();
   const _spinAxis = new THREE.Vector3(0, 1, 0);
+  const _heroLook = new THREE.Vector3(
+    HERO_END_CAM.lx,
+    HERO_END_CAM.ly,
+    HERO_END_CAM.lz,
+  );
+  const _heroPos = new THREE.Vector3(
+    HERO_END_CAM.x,
+    HERO_END_CAM.y,
+    HERO_END_CAM.z,
+  );
+  const _openWidePos = new THREE.Vector3(
+    OPEN_WIDE_CAM.x,
+    OPEN_WIDE_CAM.y,
+    OPEN_WIDE_CAM.z,
+  );
+  const _openWideLook = new THREE.Vector3(
+    OPEN_WIDE_CAM.lx,
+    OPEN_WIDE_CAM.ly,
+    OPEN_WIDE_CAM.lz,
+  );
+  const _idealOffset = new THREE.Vector3();
+  const _curOffset = new THREE.Vector3();
 
   const killHandoff = () => {
     handoffTween?.kill();
     handoffTween = null;
     suit.stopDiagnosticScan();
+  };
+
+  /**
+   * Lock camera + look + FOV to the authored hero end pose so the loop always
+   * exits orbit from a known frame (no FP drift into the hangar pull).
+   */
+  const applyHeroEndCam = () => {
+    camera.position.copy(_heroPos);
+    lookTarget.copy(_heroLook);
+    controls.target.copy(lookTarget);
+    if (Math.abs(camera.fov - HERO_END_CAM.fov) > 1e-4) {
+      camera.fov = HERO_END_CAM.fov;
+      camera.updateProjectionMatrix();
+    }
+    camera.lookAt(lookTarget);
+  };
+
+  /**
+   * Lock to hangar open framing — same pose assembly t=0 sets — so rebuild
+   * never hard-snaps the lens.
+   */
+  const applyOpenWideCam = () => {
+    camera.position.copy(_openWidePos);
+    lookTarget.copy(_openWideLook);
+    controls.target.copy(lookTarget);
+    if (Math.abs(camera.fov - OPEN_WIDE_CAM.fov) > 1e-4) {
+      camera.fov = OPEN_WIDE_CAM.fov;
+      camera.updateProjectionMatrix();
+    }
+    camera.lookAt(lookTarget);
   };
 
   const stopOrbitDiagnostic = () => {
@@ -492,14 +549,17 @@ export function createAssemblySession(
     // Seamless → seated shards for the reverse burst
     suit.armExplosionFromFinal();
 
+    // Always pull from authored hero end (orbit seals this pose) so the
+    // hangar open ease is a clean, repeatable loop join.
+    applyHeroEndCam();
     const proxy = {
-      x: camera.position.x,
-      y: camera.position.y,
-      z: camera.position.z,
-      lx: lookTarget.x,
-      ly: lookTarget.y,
-      lz: lookTarget.z,
-      fov: camera.fov,
+      x: HERO_END_CAM.x,
+      y: HERO_END_CAM.y,
+      z: HERO_END_CAM.z,
+      lx: HERO_END_CAM.lx,
+      ly: HERO_END_CAM.ly,
+      lz: HERO_END_CAM.lz,
+      fov: HERO_END_CAM.fov,
     };
 
     const applyHandoffCam = () => {
@@ -520,7 +580,8 @@ export function createAssemblySession(
     handoffTween = gsap.timeline({
       onComplete: () => {
         handoffTween = null;
-        applyHandoffCam();
+        // Exact open-wide lock so assembly t=0 OPEN_WIDE is invisible
+        applyOpenWideCam();
         suit.showAssembly();
         // Soft UI already applied — skip a second panel flash / drain
         clearCompleteClock();
@@ -552,7 +613,8 @@ export function createAssemblySession(
       0,
     );
 
-    // 2) Hangar pull ends with the last plates → next cycle starts immediately
+    // 2) Hangar pull ends with the last plates → next cycle starts immediately.
+    // Longer + power3 so hero settle → open wide reads as one continuous shot.
     handoffTween.to(
       proxy,
       {
@@ -564,7 +626,7 @@ export function createAssemblySession(
         lz: OPEN_WIDE_CAM.lz,
         fov: OPEN_WIDE_CAM.fov,
         duration: HANDOFF_CAM_SEC,
-        ease: 'power2.inOut',
+        ease: 'power3.inOut',
         onUpdate: applyHandoffCam,
       },
       HANDOFF_CAM_DELAY,
@@ -834,18 +896,24 @@ export function createAssemblySession(
     const dt = Math.min(0.05, Math.max(0, deltaSec));
     if (dt <= 0) return true;
 
-    // Ease spin down as the turn completes so the handoff doesn’t cut hard
+    // Ease spin down as the turn completes so the handoff doesn’t cut hard.
+    // Tiny floor so we always finish the last degrees (never stall at ease=0).
     const remaining = Math.PI * 2 - completeSpinAccum;
     let speedMul = 1;
+    let easeU = 0; // 0 = full speed, 1 = fully settled
     if (remaining < SPIN_EASE_OUT_RAD && remaining > 0) {
       const t = remaining / SPIN_EASE_OUT_RAD;
-      // Smoothstep ease-out
+      // Smoothstep ease-out of angular speed
       const ease = t * t * (3 - 2 * t);
-      speedMul = Math.max(0.12, ease);
+      speedMul = Math.max(0.045, ease);
+      easeU = 1 - t;
+    } else if (remaining <= 0) {
+      speedMul = 0;
+      easeU = 1;
     }
 
     // Diagnostic locked to the same ease-out window as speedMul
-    updateOrbitDiagnostic(remaining);
+    updateOrbitDiagnostic(Math.max(0, remaining));
 
     // Same sign as OrbitControls._rotateLeft (theta decreases → CW from above)
     const angle = (-(Math.PI * 2) / SHOWCASE_ORBIT_SEC) * dt * speedMul;
@@ -856,13 +924,46 @@ export function createAssemblySession(
     _spinOffset.copy(camera.position).sub(pivot);
     _spinOffset.applyAxisAngle(_spinAxis, angle);
     camera.position.copy(pivot).add(_spinOffset);
-    camera.lookAt(pivot);
+
+    // During ease-out, blend look + FOV toward authored hero end so the
+    // hangar pull always starts from HERO_END_CAM (seamless loop join).
+    if (easeU > 0) {
+      const blend = easeU * easeU * (3 - 2 * easeU);
+      lookTarget.lerp(_heroLook, blend * 0.35);
+      camera.fov = THREE.MathUtils.lerp(
+        camera.fov,
+        HERO_END_CAM.fov,
+        blend * 0.35,
+      );
+      camera.updateProjectionMatrix();
+      // Softly restore orbit radius toward hero distance (drift-proof)
+      _idealOffset.copy(_heroPos).sub(_heroLook);
+      const idealLen = _idealOffset.length();
+      if (idealLen > 1e-4) {
+        _curOffset.copy(camera.position).sub(lookTarget);
+        const curLen = _curOffset.length();
+        if (curLen > 1e-4) {
+          const targetLen = THREE.MathUtils.lerp(
+            curLen,
+            idealLen,
+            blend * 0.25,
+          );
+          _curOffset.multiplyScalar(targetLen / curLen);
+          camera.position.copy(lookTarget).add(_curOffset);
+        }
+      }
+    }
+
+    camera.lookAt(lookTarget);
+    controls.target.copy(lookTarget);
 
     completeSpinAccum += Math.abs(angle);
 
-    if (completeSpinAccum >= Math.PI * 2 - 1e-3) {
-      // Land scan at 1 as the ease ends, then dematerialize
+    // Finish when full turn is done, or last ~1° of ease (avoids infinite crawl)
+    if (completeSpinAccum >= Math.PI * 2 - 1e-3 || remaining <= 0.02) {
+      // Land scan at 1, seal hero framing, then dematerialize → hangar open
       updateOrbitDiagnostic(0);
+      applyHeroEndCam();
       stopCompleteSpinTracking();
       softRestartFromShowcase();
       return false;
