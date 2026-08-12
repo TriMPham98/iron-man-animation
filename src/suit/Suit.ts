@@ -21,8 +21,8 @@ import {
   type DiagnosticScan,
 } from './diagnosticScan';
 
-/** Arc-reactor height after model normalize — radial explode origin. */
-const EXPLODE_ORIGIN = new THREE.Vector3(0, 1.15 + SUIT_GROUND_CLEARANCE, 0);
+/** Arc-reactor height after model normalize — radial explode origin (local). */
+const EXPLODE_ORIGIN = new THREE.Vector3(0, 1.15, 0);
 
 export class Suit {
   readonly group = new THREE.Group();
@@ -62,6 +62,9 @@ export class Suit {
     suit.finalModel = loaded.finalModel;
     suit.glowMaterials = loaded.glowMaterials;
 
+    // Lift whole rig in world space only — plate rest Y / wave classify stay
+    // as normalized (feet at local 0). Keeps assembly sequence stable.
+    suit.group.position.y = SUIT_GROUND_CLEARANCE;
     // Slight heroic lean
     suit.group.rotation.x = -0.03;
     return suit;

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { COLORS } from '../utils/colors';
+import { SUIT_GROUND_CLEARANCE } from './loadSuitModel';
 
 /** Wall-clock length of the post-assembly diagnostic pass. */
 export const DIAGNOSTIC_SCAN_SEC = 4.35;
@@ -29,7 +30,7 @@ export interface DiagnosticScan {
  */
 export function scanFrontY(
   progress01: number,
-  minY: number,
+  _minY: number,
   maxY: number,
 ): number {
   const t = THREE.MathUtils.clamp(progress01, 0, 1);
@@ -37,9 +38,10 @@ export function scanFrontY(
   const u = THREE.MathUtils.clamp(t / 0.9, 0, 1);
   // Slight ease-in-out so the band doesn't race mid-torso
   const e = u * u * (3 - 2 * u);
-  // Don't drive the front below the pad plane — ring clearance is applied
-  // separately when positioning the disc mesh.
-  const floorY = Math.max(minY, SCAN_RING_PAD_CLEARANCE);
+  // Suit group is lifted in world space; scan lives in suit-local coords.
+  // End under the boots (local floor can be slightly below plant y=0).
+  // Ring floor = pad clearance − group lift (not mesh minY).
+  const floorY = scanRingLocalFloorY();
   return THREE.MathUtils.lerp(maxY + 0.06, floorY, e);
 }
 
@@ -76,11 +78,18 @@ export function diagnosticStatusForProgress(progress01: number): string {
 const RING_RADIUS = 0.78;
 
 /**
- * Hangar pad sits at y=0 with decorative rings at ~0.01–0.013.
- * Keep the scan disc clearly above the pad, and below suit feet
- * ({@link SUIT_GROUND_CLEARANCE} = 0.05 in loadSuitModel).
+ * Hangar pad sits at world y=0 with decorative rings at ~0.01–0.013.
+ * World-space floor for the scan disc (must stay above the pad).
  */
 export const SCAN_RING_PAD_CLEARANCE = 0.028;
+
+/**
+ * Suit-local Y for the ring floor when the rig is lifted by
+ * {@link SUIT_GROUND_CLEARANCE} (world ring = local + group.y).
+ */
+export function scanRingLocalFloorY(): number {
+  return SCAN_RING_PAD_CLEARANCE - SUIT_GROUND_CLEARANCE;
+}
 
 /**
  * Angular speeds (rad/s) — exit CTA spins ~14–18 rad/s; we crawl like the
@@ -427,8 +436,8 @@ function createScanRingStack(parent: THREE.Group): {
   }
 
   const setY = (y: number) => {
-    // Always float above the hangar pad (env ground at y=0)
-    const yy = Math.max(y, SCAN_RING_PAD_CLEARANCE);
+    // Suit-local floor: under boots, world position still above pad
+    const yy = Math.max(y, scanRingLocalFloorY());
     for (const layer of layers) {
       layer.mesh.position.y = yy;
     }

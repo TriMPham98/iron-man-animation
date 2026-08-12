@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   diagnosticStatusForProgress,
-  SCAN_RING_PAD_CLEARANCE,
   scanBandOpacity,
   scanFrontY,
+  scanRingLocalFloorY,
   scanWireOpacity,
 } from './diagnosticScan';
 
@@ -15,12 +15,12 @@ describe('scanFrontY', () => {
     expect(scanFrontY(0.05, 0, 2)).toBeLessThan(y0);
   });
 
-  it('settles at pad clearance, never below the hangar floor', () => {
-    expect(scanFrontY(0.9, 0, 2)).toBeCloseTo(SCAN_RING_PAD_CLEARANCE, 5);
-    expect(scanFrontY(1, 0, 2)).toBeCloseTo(SCAN_RING_PAD_CLEARANCE, 5);
-    expect(scanFrontY(1, -0.2, 2)).toBeGreaterThanOrEqual(
-      SCAN_RING_PAD_CLEARANCE - 1e-9,
-    );
+  it('settles at suit-local ring floor (under boots, above world pad)', () => {
+    const floor = scanRingLocalFloorY();
+    expect(scanFrontY(0.9, 0, 2)).toBeCloseTo(floor, 5);
+    expect(scanFrontY(1, 0, 2)).toBeCloseTo(floor, 5);
+    // Local floor is below plant Y=0 when the group is lifted
+    expect(floor).toBeLessThan(0);
   });
 
   it('is monotonically decreasing through the sweep window', () => {
