@@ -655,8 +655,12 @@ export function createAssemblySession(
     killHandoff();
     clearPick();
     audioStop();
-    assembly.seek(1);
-    applyCompleteUi();
+    // Integrity seek(1) only parks at systems-online / finalSwap cam — not the
+    // authored hero end composition. Jump to full GSAP end, then seal HERO_END
+    // so free-look / mid-path framing never sticks after S.
+    assembly.seekTime(fullDuration(), { preserveCamera: false });
+    applyHeroEndCam();
+    applyCompleteUi({ preserveCamera: false });
   };
 
   const togglePause = () => {
