@@ -3,6 +3,7 @@ import { ARM_DIMS, ROBOT_RING_RADIUS } from './fittingProgram';
 import { RobotArm } from './robotArm';
 import type { RobotMaterials } from './robotMaterials';
 import { boltCircle, drum, lathe } from './robotParts';
+import { buildToolWall } from './wallTools';
 import { PLATFORM_RADIUS, PLATFORM_TOP, ROOM_RADIUS } from './workshopEnvironment';
 
 /**
@@ -41,7 +42,7 @@ function labelTexture(text: string): THREE.Texture {
 }
 
 /** Pegboard with tool silhouettes. */
-function pegboardTexture(seed: number): THREE.Texture {
+function pegboardTexture(): THREE.Texture {
   if (typeof document === 'undefined') return new THREE.DataTexture(new Uint8Array([40, 44, 50, 255]), 1, 1);
   const W = 1024;
   const H = 640;
@@ -53,51 +54,6 @@ function pegboardTexture(seed: number): THREE.Texture {
   g.fillRect(0, 0, W, H);
   g.fillStyle = '#16191e';
   for (let y = 16; y < H; y += 32) for (let x = 16; x < W; x += 32) g.fillRect(x - 3, y - 3, 6, 6);
-  let r = seed * 9301 + 49297;
-  const rnd = () => ((r = (r * 9301 + 49297) % 233280) / 233280);
-  const tool = (x: number, y: number, kind: number, len: number) => {
-    g.save();
-    g.translate(x, y);
-    g.fillStyle = kind % 3 === 0 ? '#c9a227' : kind % 3 === 1 ? '#8c1018' : '#b8bec6';
-    g.strokeStyle = 'rgba(0,0,0,0.5)';
-    g.lineWidth = 2;
-    switch (kind % 5) {
-      case 0: // wrench
-        g.fillRect(-7, 0, 14, len);
-        g.beginPath();
-        g.arc(0, 0, 18, 0, Math.PI * 2);
-        g.fill();
-        g.fillStyle = '#2a2e35';
-        g.fillRect(-7, -20, 14, 18);
-        break;
-      case 1: // screwdriver
-        g.fillRect(-10, 0, 20, len * 0.45);
-        g.fillStyle = '#b8bec6';
-        g.fillRect(-3, len * 0.45, 6, len * 0.55);
-        break;
-      case 2: // hammer
-        g.fillRect(-5, 0, 10, len);
-        g.fillStyle = '#b8bec6';
-        g.fillRect(-26, -8, 52, 18);
-        break;
-      case 3: // pliers
-        g.rotate(-0.15);
-        g.fillRect(-12, 0, 8, len);
-        g.rotate(0.3);
-        g.fillRect(4, 0, 8, len);
-        break;
-      default: // calipers / ruler
-        g.fillRect(-6, 0, 12, len);
-        g.fillRect(-6, 0, 40, 10);
-    }
-    g.restore();
-  };
-  let x = 60;
-  let k = Math.floor(rnd() * 5);
-  while (x < W - 40) {
-    tool(x, 70 + rnd() * 60, k++, 160 + rnd() * 140);
-    x += 70 + rnd() * 50;
-  }
   // Outline shadow board stripe
   g.fillStyle = 'rgba(201,162,39,0.8)';
   g.fillRect(0, H - 26, W, 8);
@@ -105,6 +61,64 @@ function pegboardTexture(seed: number): THREE.Texture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
   return t;
+}
+
+/**
+ * Vertex-clustering decimation for the display suits (seen from across the
+ * shop): snap vertices to a `cell`-sized grid, merge each cell to its mean,
+ * drop collapsed triangles. Runs once in a few ms.
+ */
+function decimate(src: THREE.BufferGeometry, cell: number): THREE.BufferGeometry {
+  const pos = src.getAttribute('position');
+  const nor = src.getAttribute('normal');
+  const index = src.index ? src.index.array : Array.from({ length: pos.count }, (_, i) => i);
+  const map = new Int32Array(pos.count);
+  const keys = new Map<string, number>();
+  const sums: number[] = [];
+  const counts: number[] = [];
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    // Split clusters by facing so thin plates keep both skins
+    const n = nor ? `${Math.round(nor.getX(i))}${Math.round(nor.getY(i))}${Math.round(nor.getZ(i))}` : '';
+    const key = `${Math.floor(x / cell)},${Math.floor(y / cell)},${Math.floor(z / cell)},${n}`;
+    let id = keys.get(key);
+    if (id === undefined) {
+      id = counts.length;
+      keys.set(key, id);
+      sums.push(0, 0, 0);
+      counts.push(0);
+    }
+    sums[id * 3] += x;
+    sums[id * 3 + 1] += y;
+    sums[id * 3 + 2] += z;
+    counts[id]++;
+    map[i] = id;
+  }
+  const out = new Float32Array(counts.length * 3);
+  for (let i = 0; i < counts.length; i++) {
+    out[i * 3] = sums[i * 3] / counts[i];
+    out[i * 3 + 1] = sums[i * 3 + 1] / counts[i];
+    out[i * 3 + 2] = sums[i * 3 + 2] / counts[i];
+  }
+  const idx: number[] = [];
+  const seen = new Set<string>();
+  for (let t = 0; t < index.length; t += 3) {
+    const a = map[index[t]];
+    const b = map[index[t + 1]];
+    const c = map[index[t + 2]];
+    if (a === b || b === c || a === c) continue;
+    const k = [a, b, c].sort((p, q) => p - q).join(',');
+    if (seen.has(k)) continue;
+    seen.add(k);
+    idx.push(a, b, c);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(out, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
 }
 
 export function createWorkshopDetail(suitGeometry: THREE.BufferGeometry, mats: RobotMaterials): WorkshopDetail {
@@ -136,6 +150,8 @@ export function createWorkshopDetail(suitGeometry: THREE.BufferGeometry, mats: R
       mat: new THREE.MeshStandardMaterial({ color: 0xd8dde3, metalness: 1, roughness: 0.18 }),
     },
   ];
+  // Display suits are metres away: a clustered copy at ~1/3 the triangles
+  const displayGeo = decimate(suitGeometry, 0.011);
   for (const d of displays) {
     const g = new THREE.Group();
     g.position.set(d.x, 0, d.z);
@@ -154,7 +170,7 @@ export function createWorkshopDetail(suitGeometry: THREE.BufferGeometry, mats: R
     down.rotation.x = Math.PI / 2;
     down.position.y = 2.198;
     g.add(down);
-    const suit = new THREE.Mesh(suitGeometry, d.mat);
+    const suit = new THREE.Mesh(displayGeo, d.mat);
     suit.position.y = 0.16;
     g.add(suit);
     const plate = new THREE.Mesh(
@@ -212,7 +228,7 @@ export function createWorkshopDetail(suitGeometry: THREE.BufferGeometry, mats: R
   ] as const) {
     const board = new THREE.Mesh(
       new THREE.PlaneGeometry(2.6, 1.6),
-      new THREE.MeshStandardMaterial({ map: pegboardTexture(seed), metalness: 0.35, roughness: 0.7 }),
+      new THREE.MeshStandardMaterial({ map: pegboardTexture(), metalness: 0.35, roughness: 0.7 }),
     );
     const r = WALL - 0.08;
     board.position.set(Math.sin(a) * r, 1.75, Math.cos(a) * r);
@@ -222,6 +238,10 @@ export function createWorkshopDetail(suitGeometry: THREE.BufferGeometry, mats: R
     frame.position.copy(board.position).addScaledVector(board.position.clone().setY(0).normalize(), 0.025);
     frame.lookAt(0, 1.75, 0);
     group.add(frame);
+    const tools = buildToolWall(seed);
+    tools.position.copy(board.position);
+    tools.lookAt(0, 1.75, 0);
+    group.add(tools);
   }
 
   // ── Platform trim: bolted lip, LED ring, hatch bolts ────────────────

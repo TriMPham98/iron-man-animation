@@ -117,11 +117,17 @@ export class CradleStands {
     const pitGeo = new THREE.CylinderGeometry(P, P, 1.4, 32, 1, true);
     const trimGeo = new THREE.RingGeometry(P, P + 0.016, 40);
 
+    // Pits + trims of every port share one static group (merged to a
+    // couple of draw calls); only the moving parts live per port
+    const statics = new THREE.Group();
+    statics.name = 'cradle-ports';
+    this.group.add(statics);
     for (const task of cradleTasks()) {
       const c = cradleFor(task);
       const { bottom, top } = bounds(task);
       const hanging = hangs(task);
       const port = new THREE.Group();
+      port.name = `port-${task.id}`;
       port.position.set(c[0], 0, c[2]);
       this.group.add(port);
 
@@ -129,12 +135,12 @@ export class CradleStands {
         const h = Math.max(0.1, bottom - 0.005);
         // Port: pit + flush trim ring
         const pit = new THREE.Mesh(pitGeo, pitMat);
-        pit.position.y = -0.7;
-        port.add(pit);
+        pit.position.set(c[0], -0.7, c[2]);
+        statics.add(pit);
         const trim = new THREE.Mesh(trimGeo, trimMat);
         trim.rotation.x = -Math.PI / 2;
-        trim.position.y = 0.0015;
-        port.add(trim);
+        trim.position.set(c[0], 0.0015, c[2]);
+        statics.add(trim);
 
         // Sleeve (rides half the stroke) + chrome ram + cradle head
         const sleeve = new THREE.Group();
@@ -186,8 +192,8 @@ export class CradleStands {
         port.position.y = ceilingY;
         const trim = new THREE.Mesh(trimGeo, trimMat);
         trim.rotation.x = Math.PI / 2;
-        trim.position.y = -0.0015;
-        port.add(trim);
+        trim.position.set(c[0], ceilingY - 0.0015, c[2]);
+        statics.add(trim);
         const iris = new THREE.Mesh(new THREE.CircleGeometry(P, 32), mats.dark);
         iris.rotation.x = Math.PI / 2;
         iris.position.y = -0.002;

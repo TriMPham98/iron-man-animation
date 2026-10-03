@@ -50,8 +50,6 @@ export class FlightFx {
   private readonly _q = new THREE.Quaternion();
   private readonly jets: THREE.Mesh[] = [];
   private readonly cores: THREE.Mesh[] = [];
-  /** Thruster wash light (always in the scene so programs never recompile). */
-  readonly light = new THREE.PointLight(0x8fd0ff, 0, 2.6, 2);
   private readonly pools: THREE.Mesh[] = [];
   private lastPuff = -1;
   private readonly _m = new THREE.Matrix4();
@@ -120,8 +118,6 @@ export class FlightFx {
       });
     const poolGeo = new THREE.CircleGeometry(0.26, 40);
     poolGeo.rotateX(-Math.PI / 2);
-    this.light.position.set(0, 0.2, 0);
-    this.group.add(this.light);
     for (let i = 0; i < SOLES.length; i++) {
       const jet = new THREE.Mesh(jetGeo, plume(0x7fc4ff, 1.6));
       // Palm thrust: same plume, smaller, along the palm normal
@@ -187,9 +183,6 @@ export class FlightFx {
     const burn = f.thrusters;
     const flicker = 0.88 + 0.12 * Math.sin(t * 61) * Math.sin(t * 37);
     const puff = Math.floor(t * 12);
-    let lx = 0;
-    let ly = 0;
-    let lz = 0;
     SOLES.forEach((p, i) => {
       const jet = this.jets[i];
       const core = this.cores[i];
@@ -198,9 +191,6 @@ export class FlightFx {
       jet.visible = core.visible = pool.visible = on;
       if (!on) return;
       const nozzle = this.carried(rig, modelInv, p.bone, p.at, this._v);
-      lx += nozzle.x / 2;
-      ly += nozzle.y / 2;
-      lz += nozzle.z / 2;
       // Plume reaches the deck (model y 0) and splashes; capped when high
       const h = Math.max(0, nozzle.y);
       const len = Math.min(0.7, h + 0.05) * (0.6 + 0.4 * burn);
@@ -227,12 +217,9 @@ export class FlightFx {
       }
     });
     if (burn > 0.45) this.lastPuff = puff;
-    this.light.position.set(lx, Math.max(0.03, ly - 0.08), lz);
-    this.light.intensity = burn > 0.01 ? 7 * burn * flicker : 0;
   }
 
   hide(): void {
     for (const o of [...this.palms, ...this.palmJets, ...this.palmCores, ...this.jets, ...this.cores, ...this.pools]) o.visible = false;
-    this.light.intensity = 0;
   }
 }

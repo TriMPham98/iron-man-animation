@@ -120,6 +120,7 @@ export class Workshop {
     );
     this.group.add(this.env.group);
     this.detail = createWorkshopDetail(suit.finalGeometry, this.mats);
+    mergeStaticTree(this.detail.group);
     this.group.add(this.detail.group);
 
     for (const st of ROBOTS) {

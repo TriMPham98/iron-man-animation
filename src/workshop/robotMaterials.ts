@@ -40,12 +40,7 @@ export interface Weathering {
   scale: number;
 }
 
-const NOISE_GLSL = /* glsl */ `
-  varying vec3 vObjPos;
-  uniform float uGrime;
-  uniform float uScratch;
-  uniform float uChip;
-  uniform float uScale;
+export const NOISE_FUNCS = /* glsl */ `
   float rHash(vec3 p) {
     p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
     p *= 17.0;
@@ -62,16 +57,19 @@ const NOISE_GLSL = /* glsl */ `
           mix(rHash(i + vec3(0, 1, 1)), rHash(i + vec3(1, 1, 1)), f.x), f.y),
       f.z);
   }
+  // Three octaves read the same as four at shop distances, at 3/4 the cost
   float rFbm(vec3 p) {
-    float s = 0.0;
-    float a = 0.5;
-    for (int i = 0; i < 4; i++) {
-      s += a * rNoise(p);
-      p *= 2.03;
-      a *= 0.5;
-    }
-    return s;
+    return 0.5 * rNoise(p) + 0.25 * rNoise(p * 2.03) + 0.143 * rNoise(p * 4.12);
   }
+`;
+
+const NOISE_GLSL = /* glsl */ `
+  varying vec3 vObjPos;
+  uniform float uGrime;
+  uniform float uScratch;
+  uniform float uChip;
+  uniform float uScale;
+  ${NOISE_FUNCS}
 `;
 
 export function weather<M extends THREE.MeshStandardMaterial>(mat: M, w: Weathering, key: string): M {
@@ -80,6 +78,9 @@ export function weather<M extends THREE.MeshStandardMaterial>(mat: M, w: Weather
     shader.uniforms.uScratch = { value: w.scratch };
     shader.uniforms.uChip = { value: w.chip };
     shader.uniforms.uScale = { value: w.scale };
+    // Only the layers this finish uses are compiled in
+    const defs = `${w.chip > 0 ? '#define R_CHIP\n' : ''}${w.scratch > 0 ? '#define R_SCRATCH\n' : ''}`;
+    shader.fragmentShader = defs + shader.fragmentShader;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjPos = position;');
@@ -91,8 +92,13 @@ export function weather<M extends THREE.MeshStandardMaterial>(mat: M, w: Weather
         #include <map_fragment>
         vec3 rp = vObjPos * uScale;
         float rGrime = rFbm(rp);
-        float rChipN = rFbm(rp * 6.3 + 7.0);
-        float rChip = smoothstep(0.72, 0.75, rChipN) * uChip;
+        #ifdef R_CHIP
+          // Chips are small hard-edged shapes: two octaves are plenty
+          vec3 cp = rp * 6.3 + 7.0;
+          float rChip = smoothstep(0.76, 0.79, 0.64 * rNoise(cp) + 0.36 * rNoise(cp * 2.1)) * uChip;
+        #else
+          float rChip = 0.0;
+        #endif
         diffuseColor.rgb *= mix(1.0, 0.7 + 0.3 * rGrime, uGrime);
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.28, 0.29, 0.31), rChip);
         `,
@@ -101,8 +107,11 @@ export function weather<M extends THREE.MeshStandardMaterial>(mat: M, w: Weather
         '#include <roughnessmap_fragment>',
         /* glsl */ `
         #include <roughnessmap_fragment>
-        float rScr = rNoise(vObjPos * vec3(260.0, 9.0, 260.0));
-        rScr = smoothstep(0.72, 0.98, rScr) * uScratch;
+        #ifdef R_SCRATCH
+          float rScr = smoothstep(0.72, 0.98, rNoise(vObjPos * vec3(260.0, 9.0, 260.0))) * uScratch;
+        #else
+          float rScr = 0.0;
+        #endif
         // Grime only ever dulls the finish; scratches catch thin highlights
         roughnessFactor = clamp(roughnessFactor + rGrime * 0.3 * uGrime - rScr * 0.12, 0.08, 1.0);
         `,
@@ -116,6 +125,8 @@ export function weather<M extends THREE.MeshStandardMaterial>(mat: M, w: Weather
       );
   };
   mat.customProgramCacheKey = () => `robot-${key}`;
+  // Recorded so static merging can bake the finish into vertex attributes
+  mat.userData.wear = w;
   return mat;
 }
 

@@ -5,6 +5,7 @@ import { createCamera, updateCameraAspect } from './scene/createCamera';
 import { createEnvironment } from './scene/createEnvironment';
 import { createLights } from './scene/createLights';
 import { createPostProcessing } from './scene/postProcessing';
+import { createAdaptiveResolution } from './scene/adaptiveResolution';
 import { createRenderer } from './scene/createRenderer';
 import { applyStudioEnvironment } from './scene/createStudioEnv';
 import { createAssemblySession } from './session/assemblySession';
@@ -87,7 +88,8 @@ async function boot(): Promise<void> {
 
   const pick = createPickHighlight(scene);
 
-  const post = createPostProcessing(renderer, scene, camera);
+  // Half-res bloom mips: same soft glint, a fraction of the fill cost
+  const post = createPostProcessing(renderer, scene, camera, { halfResBloom: true });
 
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
@@ -143,6 +145,8 @@ async function boot(): Promise<void> {
     post.resize(w, h);
   };
   window.addEventListener('resize', onResize);
+  // Trim / restore pixel ratio with the measured frame time
+  const adaptive = createAdaptiveResolution(renderer, () => post.resize(window.innerWidth, window.innerHeight));
 
   let raf = 0;
   let visible = true;
@@ -162,6 +166,7 @@ async function boot(): Promise<void> {
     raf = requestAnimationFrame(loop);
 
     const delta = clock.getDelta();
+    adaptive.update(delta);
 
     // Showcase orbit owns the camera on those frames — skip OrbitControls
     // so damping / spherical rebuild cannot fight or dilute the yaw.

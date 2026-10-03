@@ -200,7 +200,7 @@ export class WeaponsFx {
     const b = flap.bounds;
     // A touch inside the panel outline so the lifted panel overhangs it like a lid
     // Flat front face for the rocket rack (outline clipped at z ≤ face)
-    const raw = footprint(flap.mesh.geometry, -0.012);
+    const raw = footprint(flap.mesh.geometry, -0.02);
     const face = Math.max(...raw.map((q) => q[1])) - 0.012;
     const foot = clipZ(raw, face);
     // Top tucks halfway into the panel; the exposed band is SILO_RISE tall
@@ -215,8 +215,10 @@ export class WeaponsFx {
     // Front face: bezel plate and the rocket rack, aimed forward (+Z)
     // Rack sits on the silo's own front face
     const front = Math.max(...foot.map((q) => q[1]));
-    const cx = (b.min.x + b.max.x) / 2;
-    const w = Math.min(0.06, (b.max.x - b.min.x) * 0.7);
+    const cx = foot.filter((q) => q[1] > front - 0.003).reduce((a, q, _i, arr) => a + q[0] / arr.length, 0);
+    // Rack spans the silo's own front face (never wider than the silo)
+    const fx = foot.filter((q) => q[1] > front - 0.003).map((q) => q[0]);
+    const w = Math.min(0.055, (Math.max(...fx) - Math.min(...fx)) * 0.82);
     const bezel = box(w, 0.032, 0.006, m.gun, cx, -0.021, front + 0.001);
     rig.add(bezel);
     const rockets: THREE.Object3D[] = [];
@@ -233,40 +235,46 @@ export class WeaponsFx {
       }
     }
     // Hinge pins + sensor
-    for (const dx of [-1, 1]) rig.add(tube(0.003, 0.003, -H, -0.004, m.steel, 8).translateX(cx + dx * w * 0.55).translateZ(front - 0.02));
     rig.add(box(0.008, 0.005, 0.003, m.lens, cx + s * w * 0.42, -0.006, front + 0.0045));
     return { ...this.mount('chest', flap, bind, rig), rockets, front };
   }
 
   /**
-   * Flare dispenser under the hip side plate: a cartridge block facing out
-   * of the hip with a 3 × 2 grid of flare cells.
+   * Flare dispenser under the round hip plate: a concentric drum the same
+   * shape as the hip disc — gold bezel ring, dark face, a ring of six flare
+   * cells round a centre cell.
    */
   private makeDispenser(s: number, flap: Flap, m: ReturnType<typeof mats>) {
     const b = flap.bounds;
     const c = b.getCenter(new THREE.Vector3());
     const outX = s > 0 ? b.max.x : b.min.x;
     const bind = new THREE.Matrix4().makeTranslation(outX - s * 0.004, c.y, c.z);
+    const r = Math.max(0.026, Math.min(b.max.y - b.min.y, b.max.z - b.min.z) * 0.42);
     const rig = new THREE.Group();
-    const dh = Math.max(0.05, (b.max.y - b.min.y) * 0.75);
-    const dd = Math.max(0.05, (b.max.z - b.min.z) * 0.75);
-    rig.add(box(0.026, dh, dd, m.gun, -s * 0.013, 0, 0));
-    rig.add(box(0.003, dh + 0.006, dd + 0.006, m.gold, -s * 0.001, 0, 0));
+    // Drum axis along X (out of the hip)
+    const axisX = (mesh: THREE.Mesh, x: number) => {
+      mesh.rotation.z = -s * (Math.PI / 2);
+      mesh.position.x = x;
+      return mesh;
+    };
+    rig.add(axisX(tube(r, r, -0.026, 0, m.gun, 40), 0));
+    rig.add(axisX(tube(r * 1.04, r * 1.04, -0.004, 0.0015, m.gold, 40), 0));
+    rig.add(axisX(tube(r * 0.9, r * 0.9, 0, 0.002, m.gun, 40), 0));
+    rig.add(axisX(tube(r * 0.42, r * 0.42, 0, 0.0028, m.red, 32), 0));
     const cells: THREE.Vector3[] = [];
-    for (let i = 0; i < 3; i++) {
-      for (let j = 0; j < 2; j++) {
-        const y = (j - 0.5) * dh * 0.45;
-        const z = (i - 1) * dd * 0.3;
-        const cell = tube(0.0075, 0.0075, 0, 0.003, m.gun, 14);
-        cell.rotation.z = -s * (Math.PI / 2);
-        cell.position.set(0, y, z);
-        rig.add(cell);
-        const cap = tube(0.0058, 0.0058, 0, 0.0035, m.gold, 12);
-        cap.rotation.z = -s * (Math.PI / 2);
-        cap.position.set(s * 0.0005, y, z);
-        rig.add(cap);
-        cells.push(new THREE.Vector3(s * 0.004, y, z));
-      }
+    const cellAt = (y: number, z: number) => {
+      const cell = axisX(tube(0.0062, 0.0062, 0, 0.0035, m.steel, 14), 0);
+      cell.position.set(0, y, z);
+      rig.add(cell);
+      const cap = axisX(tube(0.0046, 0.0046, 0, 0.0042, m.gold, 12), 0);
+      cap.position.set(0, y, z);
+      rig.add(cap);
+      cells.push(new THREE.Vector3(s * 0.005, y, z));
+    };
+    cellAt(0, 0);
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      cellAt(Math.sin(a) * r * 0.64, Math.cos(a) * r * 0.64);
     }
     return { ...this.mount('hips', flap, bind, rig), cells, side: s };
   }
