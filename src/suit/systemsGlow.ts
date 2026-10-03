@@ -318,9 +318,17 @@ export function packSystemsEmissiveMap(
   }
 }
 
+/** Per-material fitting FX: bind-height dissolve cut. */
+export interface FitFx {
+  /** Fragments above this bind-space height are cut away (99 = none). */
+  cutY: number;
+}
+
 /**
  * Inject per-system uniforms so reactor / eyes / repulsors can ramp independently.
  * Powers live on material.userData so values set before first compile still apply.
+ *
+ * Also adds a height cut with a glowing front, used by the reset dissolve.
  */
 export function attachSystemsShader(
   material: THREE.MeshStandardMaterial,
@@ -332,13 +340,32 @@ export function attachSystemsShader(
     eyes: 0,
     repulsors: 0,
   } satisfies SystemPowers;
+  material.userData.fitFx = { cutY: 99 } satisfies FitFx;
 
   material.onBeforeCompile = (shader) => {
     const p = material.userData.systemPowers as SystemPowers;
+    const fx = material.userData.fitFx as FitFx;
     shader.uniforms.uReactor = { value: p.reactor };
     shader.uniforms.uEyes = { value: p.eyes };
     shader.uniforms.uRepulsors = { value: p.repulsors };
+    shader.uniforms.uCutY = { value: fx.cutY };
     material.userData.shader = shader;
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        /* glsl */ `
+        #include <common>
+        varying float vBindY;
+        `,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        /* glsl */ `
+        #include <begin_vertex>
+        vBindY = position.y;
+        `,
+      );
 
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -348,6 +375,15 @@ export function attachSystemsShader(
         uniform float uReactor;
         uniform float uEyes;
         uniform float uRepulsors;
+        uniform float uCutY;
+        varying float vBindY;
+        `,
+      )
+      .replace(
+        '#include <clipping_planes_fragment>',
+        /* glsl */ `
+        #include <clipping_planes_fragment>
+        if (vBindY > uCutY) discard;
         `,
       )
       .replace(
@@ -364,11 +400,36 @@ export function attachSystemsShader(
             vec3(1.0, 0.94, 0.72) * eyesM;
           totalEmissiveRadiance = sysTint * emissive;
         #endif
+        // Dissolve front
+        float front = 1.0 - smoothstep(0.0, 0.03, uCutY - vBindY);
+        totalEmissiveRadiance += vec3(0.35, 0.85, 1.0) * front * step(uCutY, 50.0) * 2.5;
         `,
       );
   };
 
-  material.customProgramCacheKey = () => 'ironman-systems-glow-v1';
+  material.customProgramCacheKey = () => 'ironman-systems-glow-v3';
+}
+
+/** Set a material's dissolve height (before or after first compile). */
+export function setFitFx(material: THREE.Material, cutY: number): void {
+  const fx = material.userData.fitFx as FitFx | undefined;
+  if (!fx) return;
+  fx.cutY = cutY;
+  const shader = material.userData.shader as
+    | { uniforms: Record<string, { value: number }> }
+    | undefined;
+  if (shader?.uniforms.uCutY) shader.uniforms.uCutY.value = cutY;
+}
+
+/**
+ * Per-part material sharing maps and the compiled program with `base`, so
+ * the dissolve can differ per part. Draw calls already differ per
+ * mesh; a distinct material makes three re-upload uniforms per draw.
+ */
+export function cloneGlowMaterial(base: THREE.MeshStandardMaterial): THREE.MeshStandardMaterial {
+  const m = base.clone();
+  attachSystemsShader(m);
+  return m;
 }
 
 export function applySystemUniforms(

@@ -13,7 +13,7 @@ export interface BindInputOptions {
   controls: OrbitControls;
   pick: {
     clear: () => void;
-    apply: (root: THREE.Object3D, piece?: ArmorPiece | null) => void;
+    apply: (root: THREE.Object3D, path?: THREE.Vector3[] | null) => void;
   };
   session: {
     startSequence: () => void;
@@ -27,6 +27,8 @@ export interface BindInputOptions {
       setUserOwnsCamera: (owns: boolean) => void;
       getProgress: () => number;
       getTime?: () => number;
+      /** World-space carry path of a piece (director pick). */
+      samplePiecePath?: (id: string) => THREE.Vector3[];
     };
   };
   /** Assembly SFX mute (M) + full-cycle loop (L) hotkeys. */
@@ -261,7 +263,8 @@ export function bindInput(options: BindInputOptions): void {
       return;
     }
 
-    pick.apply(piece.mesh, piece);
+    const path = session.assembly?.samplePiecePath?.(piece.id) ?? null;
+    pick.apply(piece.mesh, path);
     ui.setReclassPick(piece);
     ui.setDebugPickedPiece({
       id: piece.id,
@@ -273,9 +276,7 @@ export function bindInput(options: BindInputOptions): void {
         y: piece.restPosition.y,
         z: piece.restPosition.z,
       },
-      note: piece.mesh.userData.flightPathKeys
-        ? 'flight path shown'
-        : undefined,
+      note: path && path.length > 1 ? `${piece.label} · carry path shown` : piece.label,
     });
   });
 }

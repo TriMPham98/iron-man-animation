@@ -9,6 +9,8 @@ import {
   type AssemblyController,
 } from '../animation/assemblyTimeline';
 import type { Suit } from '../suit/Suit';
+import type { SuitUpPlan } from '../animation/suitUpChoreography';
+import type { Workshop } from '../workshop/Workshop';
 import { diagnosticStatusForProgress } from '../suit/diagnosticScan';
 import { statusForIntegrityProgress } from '../suit/waves';
 import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
@@ -59,6 +61,9 @@ export interface AssemblySessionOptions {
   onClearPick: () => void;
   /** Optional director audio timeline (playhead + transport sync). */
   audioTimeline?: AudioTimelinePanel | null;
+  /** Robot cell driven alongside the suit. */
+  workshop?: Workshop | null;
+  plan?: SuitUpPlan;
 }
 
 export interface AssemblySession {
@@ -111,6 +116,8 @@ export function createAssemblySession(
     reducedMotion,
     onClearPick,
     audioTimeline = null,
+    workshop = null,
+    plan,
   } = options;
 
   let assemblyComplete = false;
@@ -468,7 +475,7 @@ export function createAssemblySession(
       }
       applyCompleteUi({ preserveCamera: assembly.userOwnsCamera() });
     },
-  });
+  }, { plan, workshop });
 
   syncAudioDuration();
 
@@ -608,6 +615,8 @@ export function createAssemblySession(
         ease: 'none',
         onUpdate: () => {
           suit.setExplosionProgress(explode.t);
+          // Arms ride their elevators back up for the next cycle
+          workshop?.setRedeployProgress(explode.t);
         },
       },
       0,

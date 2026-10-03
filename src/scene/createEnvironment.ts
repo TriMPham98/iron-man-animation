@@ -7,10 +7,16 @@ export interface EnvironmentHandles {
 }
 
 /**
- * Hangar pad only: detailed metal disc + rings in a cool void.
+ * Workshop floor: detailed metal disc + rings in a cool void.
  * Full-fidelity textures and geometry (no quality tiers).
+ *
+ * @param holes world (x, z, radius) cut out of the floor — the boot hatches
+ *   drop through the platform into pits below.
  */
-export function createEnvironment(scene: THREE.Scene): EnvironmentHandles {
+export function createEnvironment(
+  scene: THREE.Scene,
+  holes: Array<[number, number, number]> = [],
+): EnvironmentHandles {
   const voidColor = COLORS.bg;
   scene.background = new THREE.Color(voidColor);
   scene.fog = new THREE.FogExp2(voidColor, 0.014);
@@ -19,10 +25,11 @@ export function createEnvironment(scene: THREE.Scene): EnvironmentHandles {
   group.name = 'environment';
 
   const padDetail = 1024;
+  const GROUND_R = 5.6;
   const { colorMap, roughnessMap, alphaMap, emissiveMap } =
-    buildPadTextures(padDetail);
+    buildPadTextures(padDetail, holes, GROUND_R);
 
-  const groundGeo = new THREE.CircleGeometry(5.6, 96);
+  const groundGeo = new THREE.CircleGeometry(GROUND_R, 96);
   const groundMat = new THREE.MeshStandardMaterial({
     map: colorMap,
     roughnessMap,
@@ -97,7 +104,11 @@ function ringMesh(
  * Procedural hangar-pad maps: panel lines, concentric grooves, grit,
  * soft circular alpha falloff, and a faint reactor-aligned emissive grid.
  */
-function buildPadTextures(size: number): {
+function buildPadTextures(
+  size: number,
+  holes: Array<[number, number, number]>,
+  groundR: number,
+): {
   colorMap: THREE.CanvasTexture;
   roughnessMap: THREE.CanvasTexture;
   alphaMap: THREE.CanvasTexture;
@@ -232,6 +243,19 @@ function buildPadTextures(size: number): {
   ag.addColorStop(1, '#000000');
   actx.fillStyle = ag;
   actx.fillRect(0, 0, size, size);
+  // Hatch holes: canvas x ← world x, canvas y ← world z (flipY + −90° tilt)
+  actx.fillStyle = '#000000';
+  for (const [x, z, r] of holes) {
+    actx.beginPath();
+    actx.arc(
+      (0.5 + x / (2 * groundR)) * size,
+      (0.5 + z / (2 * groundR)) * size,
+      (r / (2 * groundR)) * size,
+      0,
+      Math.PI * 2,
+    );
+    actx.fill();
+  }
 
   // Emissive: faint concentric reactor cue + sparse radial ticks
   ectx.fillStyle = '#000000';

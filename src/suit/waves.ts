@@ -1,8 +1,10 @@
-import type { Euler, Object3D, Vector3 } from 'three';
+import type { Object3D, Vector3 } from 'three';
+import type { ArmorPieceDef, ArmorPieceId } from './armorPieces';
+import type { BoneName } from './rig';
 
 /**
- * Body-region waves for Mark III–style suit-up (bottom → top cascade).
- * Macro order: boots/legs → hips → torso → shoulders → arms → helmet → power.
+ * Body-region waves for the Mark III suit-up (bottom → top).
+ * Order: boots/legs → hips → torso → shoulders → arms → gauntlets → helmet → power.
  */
 export type PieceWave =
   | 'boots'
@@ -16,22 +18,25 @@ export type PieceWave =
   | 'helmet'
   | 'power';
 
+/** One rigged suit-up component (see {@link ArmorPieceDef}). */
 export interface ArmorPiece {
-  id: string;
+  id: ArmorPieceId;
+  label: string;
   mesh: Object3D;
   wave: PieceWave;
+  /** Bone the piece docks onto. */
+  anchor: BoneName;
+  /** Bind-pose center of the piece (model space, feet at y=0). */
   restPosition: Vector3;
-  restRotation: Euler;
-  restScale: Vector3;
-  startPosition: Vector3;
-  startRotation: Euler;
-  startScale: Vector3;
+  def: ArmorPieceDef;
 }
 
 /**
- * Mark III–style suit-up (Iron Man 2008): workshop clamp order, bottom → top.
- * Boots/legs first, then hips → torso → shoulders → arms → gauntlets → helmet.
- * Arc reactor ignites when torso seats; eyes/HUD after helmet seal.
+ * Mark III suit-up (Iron Man 2008): workshop fitting order, bottom → top.
+ * Built inside → out: boots rise from the floor, leg clamshells, hips, back
+ * plates, reactor housing then pecs (arc reactor ignites), pauldrons before
+ * the bicep plates, forearm sleeves, gauntlets, then the helmet; the
+ * faceplate slams shut and the eyes light.
  */
 export const WAVE_ORDER: PieceWave[] = [
   'boots',

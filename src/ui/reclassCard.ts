@@ -4,14 +4,14 @@ import { WAVE_ORDER } from '../suit/waves';
 
 /** One pending reclass entry for the pasteable director card. */
 export interface ReclassEntry {
-  /** Full id, e.g. shard-392-helmet */
+  /** Full id, e.g. pauldron.L */
   id: string;
-  /** Compact label, e.g. helmet#392 */
+  /** Compact label, e.g. shoulders/pauldron.L */
   short: string;
   from: PieceWave;
   to: PieceWave;
   rest: { x: number; y: number; z: number };
-  /** Max |world X| of shard vertices (laterality). */
+  /** Max |model X| of piece vertices (laterality). */
   maxAbsX: number;
   verts: number;
   bbox: {
@@ -34,8 +34,8 @@ export function shortPieceId(id: string, wave: string): string {
 }
 
 /**
- * Measure rest-local geometry → world rest-space bounds + max |x|.
- * Shard verts live relative to restPosition (mesh.position at rest).
+ * Measure bind-pose geometry → model-space bounds + max |x|.
+ * Piece geometry is authored in model space (feet at y=0).
  */
 export function measurePieceGeometry(piece: ArmorPiece): {
   maxAbsX: number;
@@ -81,9 +81,9 @@ export function measurePieceGeometry(piece: ArmorPiece): {
   let maxZ = -Infinity;
 
   for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i) + rx;
-    const y = pos.getY(i) + ry;
-    const z = pos.getZ(i) + rz;
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
     maxAbsX = Math.max(maxAbsX, Math.abs(x));
     minX = Math.min(minX, x);
     maxX = Math.max(maxX, x);

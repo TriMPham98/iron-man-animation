@@ -9,7 +9,7 @@
  * phrases. Final line holds through {@link SEQUENCE_SEED_DURATION}.
  */
 
-import { SEQUENCE_SEED_DURATION } from '../animation/assemblyTimeline';
+import { SEQUENCE_SEED_DURATION } from '../animation/sequenceClock';
 
 export type BinaryCueKind = 'beep' | 'chirp' | 'spark' | 'tick';
 export type BinaryCueIntensity = 'soft' | 'med' | 'strong';

@@ -1,17 +1,12 @@
 import * as THREE from 'three';
-import {
-  sampleFlightPathLine,
-  type FlightPathKeys,
-} from '../utils/easeHelpers';
-import type { ArmorPiece } from '../suit/waves';
 
 /**
- * Cyan edge outline + soft gold shell overlays for director plate pick.
- * Optionally draws the magnetic flight path the plate traveled.
+ * Cyan outline + soft gold shell overlays for director plate pick.
+ * Optionally draws the carry path the piece travels (world-space samples).
  */
 export function createPickHighlight(scene: THREE.Scene): {
   clear: () => void;
-  apply: (root: THREE.Object3D, piece?: ArmorPiece | null) => void;
+  apply: (root: THREE.Object3D, path?: THREE.Vector3[] | null) => void;
 } {
   const pickHighlights: THREE.Object3D[] = [];
   /** World-space flight path line (parented to scene, not the plate). */
@@ -61,15 +56,10 @@ export function createPickHighlight(scene: THREE.Scene): {
     clearFlightPath();
   };
 
-  const applyFlightPath = (piece: ArmorPiece) => {
+  const applyFlightPath = (points: THREE.Vector3[]) => {
     clearFlightPath();
+    if (points.length < 2) return;
 
-    const keys = piece.mesh.userData.flightPathKeys as
-      | FlightPathKeys
-      | undefined;
-    if (!keys?.start || !keys?.rest) return;
-
-    const points = sampleFlightPathLine(keys, 72);
     const positions = new Float32Array(points.length * 3);
     for (let i = 0; i < points.length; i++) {
       positions[i * 3] = points[i].x;
@@ -111,14 +101,36 @@ export function createPickHighlight(scene: THREE.Scene): {
     const mark = new THREE.Mesh(markGeo, markMat);
     mark.name = '__flightPathStart';
     mark.userData.isPickHighlight = true;
-    mark.position.copy(keys.start);
+    mark.position.copy(points[0]);
     mark.renderOrder = 1001;
     mark.raycast = () => {};
     scene.add(mark);
     flightStartMark = mark;
   };
 
-  const apply = (root: THREE.Object3D, piece?: ArmorPiece | null) => {
+  /**
+   * Skinned pieces need skinned overlays (same skeleton + bind) or the
+   * highlight would sit at the bind pose while the arm is raised.
+   */
+  const overlayMesh = (
+    mesh: THREE.Mesh,
+    material: THREE.Material,
+  ): THREE.Mesh => {
+    if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+      const src = mesh as THREE.SkinnedMesh;
+      const skinned = new THREE.SkinnedMesh(src.geometry, material);
+      skinned.bindMode = src.bindMode;
+      skinned.bind(src.skeleton, src.bindMatrix);
+      // Child of the piece: compose the parent's matrix only once
+      skinned.matrixAutoUpdate = false;
+      skinned.matrix.identity();
+      skinned.frustumCulled = false;
+      return skinned;
+    }
+    return new THREE.Mesh(mesh.geometry, material);
+  };
+
+  const apply = (root: THREE.Object3D, path?: THREE.Vector3[] | null) => {
     clear();
 
     // Snapshot meshes first — adding children during traverse would re-enter
@@ -132,6 +144,39 @@ export function createPickHighlight(scene: THREE.Scene): {
     });
 
     for (const mesh of targets) {
+      if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+        // Skinned: cyan wire + gold fill, both riding the skeleton
+        const wireMat = new THREE.MeshBasicMaterial({
+          color: 0x7ee8ff,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.35,
+          depthWrite: false,
+        });
+        wireMat.userData.pickOwnedMaterial = true;
+        const fillMat = new THREE.MeshBasicMaterial({
+          color: 0xe8c547,
+          transparent: true,
+          opacity: 0.28,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        });
+        fillMat.userData.pickOwnedMaterial = true;
+        for (const [m, name, order] of [
+          [wireMat, '__pickHighlight', 999],
+          [fillMat, '__pickHighlightShell', 998],
+        ] as const) {
+          const o = overlayMesh(mesh, m);
+          o.name = name;
+          o.userData.isPickHighlight = true;
+          o.renderOrder = order;
+          o.raycast = () => {};
+          mesh.add(o);
+          pickHighlights.push(o);
+        }
+        continue;
+      }
+
       // Cyan edge outline
       const edges = new THREE.EdgesGeometry(mesh.geometry, 28);
       const edgeMat = new THREE.LineBasicMaterial({
@@ -169,8 +214,8 @@ export function createPickHighlight(scene: THREE.Scene): {
       pickHighlights.push(shell);
     }
 
-    if (piece) {
-      applyFlightPath(piece);
+    if (path) {
+      applyFlightPath(path);
     }
   };
 

@@ -8,6 +8,10 @@ import { createPostProcessing } from './scene/postProcessing';
 import { createRenderer } from './scene/createRenderer';
 import { applyStudioEnvironment } from './scene/createStudioEnv';
 import { createAssemblySession } from './session/assemblySession';
+import { buildSuitUpPlan } from './animation/suitUpChoreography';
+import { Workshop } from './workshop/Workshop';
+import { FIT_TASKS, ROBOTS } from './workshop/fittingProgram';
+import { HATCH_RADIUS, WELL_RADIUS } from './workshop/workshopEnvironment';
 import { Suit } from './suit/Suit';
 import { SUIT_GROUND_CLEARANCE } from './suit/loadSuitModel';
 import { bindInput } from './ui/bindInput';
@@ -59,11 +63,27 @@ async function boot(): Promise<void> {
   // Match suit feet clearance + HERO_END / OPEN_WIDE look height
   const lookTarget = new THREE.Vector3(0, 0.95 + SUIT_GROUND_CLEARANCE, 0);
 
-  createEnvironment(scene);
+  createEnvironment(
+    scene,
+    [
+      ...FIT_TASKS.filter((t) => t.kind === 'lift').map(
+        (t) => [t.origin[0], t.origin[2], HATCH_RADIUS + 0.005] as [number, number, number],
+      ),
+      // Elevator wells the floor arms stow into
+      ...ROBOTS.filter((r) => r.mount === 'floor').map(
+        (r) => [r.base[0], r.base[2], WELL_RADIUS] as [number, number, number],
+      ),
+    ],
+  );
   const lights = createLights();
   scene.add(lights.group);
   applyStudioEnvironment(renderer, scene);
   scene.add(suit.group);
+
+  // Robot cell (arms, gantry, cradles, platform) shares the suit-up plan
+  const plan = buildSuitUpPlan();
+  const workshop = new Workshop(suit, plan);
+  scene.add(workshop.group);
 
   const pick = createPickHighlight(scene);
 
@@ -86,6 +106,7 @@ async function boot(): Promise<void> {
   ui.setLoadingProgress(0.95);
 
   const clock = new THREE.Clock();
+  const drawingBuffer = new THREE.Vector2();
 
   const audioTimeline = createAudioTimelinePanel();
 
@@ -99,7 +120,10 @@ async function boot(): Promise<void> {
     reducedMotion,
     onClearPick: () => pick.clear(),
     audioTimeline,
+    workshop,
+    plan,
   });
+
 
   bindInput({
     canvas,
@@ -163,6 +187,14 @@ async function boot(): Promise<void> {
         }
       }
     }
+
+    // Sparks / steam + hologram scanlines (pixel scale tracks lens + DPR)
+    workshop.update(delta, renderer);
+    renderer.getDrawingBufferSize(drawingBuffer);
+    suit.update(
+      delta,
+      drawingBuffer.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)),
+    );
 
     // Timeline-synced HUD clock (scrub-aware; keeps counting after complete).
     const seedSec = session.getHudElapsed();

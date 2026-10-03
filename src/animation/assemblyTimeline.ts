@@ -1,32 +1,29 @@
 import gsap from 'gsap';
 import * as THREE from 'three';
 import type { Suit } from '../suit/Suit';
+import { isSystemsOnlineStatus } from '../ui/jarvisHud';
 import {
-  applyMirroredFlightStarts,
-  planSymmetricLaunchGroups,
-} from '../suit/assemblyOrder';
+  audioTimelineOffset,
+  sequenceGsapDuration,
+} from './sequenceClock';
 import {
-  FACEPLATE_STATUS,
-  REPULSOR_STATUS,
-  WAVE_ORDER,
-  WAVE_STATUS,
-  type ArmorPiece,
-} from '../suit/waves';
-import { SUIT_GROUND_CLEARANCE } from '../suit/loadSuitModel';
-import {
-  flightPathKeysFrom,
-  isFaceplateRest,
-  magneticPath,
-  mirrorPathAroundRest,
-  type MagneticPath,
-} from '../utils/easeHelpers';
+  buildSuitUpPlan,
+  evaluateCamera,
+  evaluateSuitUp,
+  type SuitUpPlan,
+} from './suitUpChoreography';
+import type { Workshop } from '../workshop/Workshop';
 
-/**
- * Lift camera Y / look-at Y to match suit feet clearance above the pad.
- * Author poses assume feet-on-pad; apply once so every shot tracks the lift.
- */
-const G = SUIT_GROUND_CLEARANCE;
-const gy = (y: number) => y + G;
+export {
+  AUDIO_SEED_ORIGIN,
+  audioTimelineOffset,
+  BASE_CAM_FOV,
+  HERO_END_CAM,
+  OPEN_WIDE_CAM,
+  OPENING_HOLD,
+  SEQUENCE_SEED_DURATION,
+  sequenceGsapDuration,
+} from './sequenceClock';
 
 /** A plate currently mid-flight (between launch and lock). */
 export interface ActivePieceInfo {
@@ -48,6 +45,7 @@ export interface TimelineCallbacks {
 interface PieceMotionSpan {
   id: string;
   wave: string;
+  /** GSAP seconds: carry starts → clamp contact. */
   start: number;
   end: number;
 }
@@ -97,69 +95,12 @@ export interface AssemblyController {
   /** True after free-look orbit — cinematic camera writes are suppressed. */
   userOwnsCamera: () => boolean;
   setUserOwnsCamera: (owns: boolean) => void;
+  /**
+   * World-space samples of a piece's carry (appear → clamp), evaluated on
+   * the posed rig. Director pick draws this; the current frame is restored.
+   */
+  samplePiecePath: (id: string, segments?: number) => THREE.Vector3[];
 }
-
-/**
- * First-frame hangar hold before the cascade (camera push-in + JARVIS beats).
- * Boots launch at this time — must stay in sync with `audioTimelineOffset()`.
- */
-export const OPENING_HOLD = 0.88;
-
-/**
- * Boots earliest when `choreTimeline.seed.json` was authored (pre-hold).
- * SFX use this clock: audioSec = gsapTime − (OPENING_HOLD − AUDIO_SEED_ORIGIN).
- */
-export const AUDIO_SEED_ORIGIN = 0.2;
-
-/** Offset from GSAP time → seed/audio timeline seconds. */
-export function audioTimelineOffset(): number {
-  return Math.max(0, OPENING_HOLD - AUDIO_SEED_ORIGIN);
-}
-
-/**
- * Director-facing full sequence length (seed clock = HUD timer + audio ruler).
- * GSAP wall-clock end is this plus {@link audioTimelineOffset} (hangar hold).
- * Natural plate/camera work is padded with a hero hold so the tail always
- * lands here — never shortened if the cascade runs longer.
- */
-export const SEQUENCE_SEED_DURATION = 18.5;
-
-/** GSAP end time that maps to {@link SEQUENCE_SEED_DURATION} on the seed clock. */
-export function sequenceGsapDuration(): number {
-  return SEQUENCE_SEED_DURATION + audioTimelineOffset();
-}
-
-/** Base cinematic FOV (matches timeline path). */
-export const BASE_CAM_FOV = 34;
-
-/**
- * Final hero framing after the faceplate pullback (and hold through the tail).
- * Shared by the pullback tween and the duration pad so scrub stays locked on.
- */
-export const HERO_END_CAM = {
-  x: 1.15,
-  y: gy(1.2),
-  z: 3.35,
-  lx: 0,
-  ly: gy(0.95),
-  lz: 0,
-  fov: BASE_CAM_FOV,
-} as const;
-
-/**
- * Hangar establish framing at sequence t=0 (wider than hero).
- * Used by the post-showcase soft restart handoff so the camera eases
- * into the same pose the timeline opens on.
- */
-export const OPEN_WIDE_CAM = {
-  x: 2.15,
-  y: gy(1.55),
-  z: 4.85,
-  lx: 0,
-  ly: gy(0.88),
-  lz: 0,
-  fov: BASE_CAM_FOV + 3.5,
-} as const;
 
 /**
  * Integrity bar 0–1 from timeline time, paced by pipeline wave starts so the
@@ -229,148 +170,49 @@ export function timeAtIntegrityProgress(
 }
 
 /**
- * Mark III bottom→top timing — one continuous cascade.
+ * Rigged Mark III suit-up timeline.
  *
- * Root cause of “section pauses”: next wave was scheduled from previous
- * *lock end* minus a small overlap (~0.45s). With plate travel ~1.1s that
- * left ~0.7s after the last launch of a wave with nothing new starting.
- *
- * Fix: chain each wave to the previous wave’s last *launch* (+ tiny gap),
- * not its last lock. WAVE_EARLIEST is only a soft floor for boots / open
- * (boots earliest includes the opening hold).
+ * All motion is evaluated from {@link SuitUpPlan} as a pure function of time
+ * (pose, pieces, systems, FX, camera). GSAP is only the transport: it owns the
+ * playhead, status / wave callbacks and the spark / steam bursts that fire on
+ * live playback. Scrubbing re-evaluates the exact frame at the playhead.
  */
-const WAVE_EARLIEST: Record<string, number> = {
-  boots: OPENING_HOLD,
-  calves: 0,
-  thighs: 0,
-  hips: 0,
-  torso: 0,
-  shoulders: 0,
-  arms: 0,
-  gauntlets: 0,
-  helmet: 0,
-  power: 0,
-};
-
-/**
- * Seconds after the previous wave’s last plate *launches* before the next
- * wave’s first plate launches. Keep tiny so sections blend with no idle.
- */
-const WAVE_CHAIN_GAP = 0.04;
-
-/** Camera micro-shake amplitude when a wave finishes locking. */
-const WAVE_SHAKE: Partial<Record<string, number>> = {
-  boots: 0.006,
-  calves: 0.007,
-  thighs: 0.008,
-  hips: 0.01,
-  torso: 0.016,
-  shoulders: 0.012,
-  arms: 0.009,
-  gauntlets: 0.01,
-  helmet: 0.02,
-};
-
-/** Default plate travel — slightly snappier so same-wave clamps read as a burst */
-const PIECE_DURATION = 1.12;
-/** Cranial shell plates — heavy, deliberate helmet close */
-const HELMET_PIECE_DURATION = 2.05;
-/**
- * Front faceplate / mask — longer hydraulic slam after the skull seats.
- * Mark III beat: shell clamps first, then the mask drives home from +Z.
- */
-const FACEPLATE_PIECE_DURATION = 2.55;
-/** Gauntlet / finger plates — a bit longer so multi-piece hands read */
-const GAUNTLET_PIECE_DURATION = 1.38;
-
-/**
- * Seconds after the last *cranial* shell launches before the faceplate
- * begins its approach. Long enough that the skull is deep into dock /
- * nearly sealed — not a simultaneous head plop.
- */
-const FACEPLATE_AFTER_CRANIAL_LAUNCH = HELMET_PIECE_DURATION * 0.52;
-
-/**
- * Palm thruster light-up after both hands lock.
- * Brief FX only — no ECU camera beat and no helmet hold. Helmet chains
- * off the last gauntlet launch like every other wave.
- */
-/** Brief settle after hands lock before thrusters ramp. */
-const PALM_PRE_HOLD = 0.12;
-/** Cold → hot thruster ramp duration. */
-const REPULSOR_RAMP = 0.9;
-/** No post-hold gate (helmet is not blocked on thrusters). */
-const PALM_POST_HOLD = 0;
-
-/** When thruster ramp finishes given hands-lock time (for tests / tooling). */
-export function palmBeatEndFromHandsLock(handsLock: number): number {
-  return handsLock + PALM_PRE_HOLD + REPULSOR_RAMP + PALM_POST_HOLD;
-}
-
-/** Fraction of travel spent on the magnetic approach (rest is dock + clamp). */
-const APPROACH_FRAC = 0.78;
-const HELMET_APPROACH_FRAC = 0.82;
-/** Faceplate spends more time on the frontal approach before the final clamp. */
-const FACEPLATE_APPROACH_FRAC = 0.86;
-const GAUNTLET_APPROACH_FRAC = 0.8;
-
-/** True when any plate in a launch group is the front faceplate / mask. */
-export function groupHasFaceplate(group: ArmorPiece[]): boolean {
-  return group.some((p) => isFaceplateRest(p.restPosition));
-}
-
-/**
- * Split helmet launch groups into cranial shells first, faceplate last.
- * Empty faceplate (or all-faceplate) leaves order unchanged.
- */
-export function orderHelmetLaunchGroups(groups: ArmorPiece[][]): {
-  ordered: ArmorPiece[][];
-  /** Index of the first faceplate group in `ordered`, or `ordered.length`. */
-  faceplateStart: number;
-} {
-  const cranial: ArmorPiece[][] = [];
-  const faceplate: ArmorPiece[][] = [];
-  for (const g of groups) {
-    if (groupHasFaceplate(g)) faceplate.push(g);
-    else cranial.push(g);
-  }
-  if (faceplate.length === 0 || cranial.length === 0) {
-    return { ordered: groups, faceplateStart: groups.length };
-  }
-  return {
-    ordered: cranial.concat(faceplate),
-    faceplateStart: cranial.length,
-  };
-}
-
 export function createAssemblyTimeline(
   suit: Suit,
   camera: THREE.PerspectiveCamera,
   lookTarget: THREE.Vector3,
   callbacks: TimelineCallbacks = {},
+  opts: { plan?: SuitUpPlan; workshop?: Workshop | null } = {},
 ): AssemblyController {
   let tl: gsap.core.Timeline | null = null;
   let playing = false;
   /**
-   * When true, plate/system tweens still run but cinematic camera writes are
+   * When true, the suit still animates but cinematic camera writes are
    * skipped so free-look framing survives pause/resume/scrub.
    */
   let userOwnsCamera = false;
-  /** Timeline time when seamless final mesh swaps in (for scrub restore). */
-  let finalSwapTime = 0;
-  /**
-   * Timeline time when the suit is “done” for HUD integrity (systems online).
-   * Trailing camera pullback extends total duration past this — progress for
-   * the integrity bar is normalized to this mark so it hits 100% with the suit.
-   */
-  let assemblyEndTime = 1;
-  /**
-   * Start times of each wave that fires `onWave` (pipeline dots), in order.
-   * Integrity bar is paced to these so it tracks the dots, not pure wall-clock.
-   */
-  let waveStartTimes: number[] = [];
-  /** Launch→lock windows for every plate (rebuilt with the timeline). */
-  let motionSpans: PieceMotionSpan[] = [];
+
+  const plan: SuitUpPlan = opts.plan ?? buildSuitUpPlan();
+  const workshop = opts.workshop ?? null;
+  // Parts waiting on their cradles = the reset target between cycles
+  suit.setRestFrame(evaluateSuitUp(plan, plan.preRoll));
+  const offset = audioTimelineOffset();
+  const toGsap = (seedT: number) => seedT + offset;
+
+  /** Timeline time when seamless final mesh swaps in. */
+  const finalSwapTime = toGsap(plan.finalSwapAt);
+  /** Integrity 100% — eyes ignite / SYSTEMS ONLINE. */
+  const assemblyEndTime = toGsap(plan.systemsOnlineAt);
+  /** Pipeline wave starts (GSAP), in WAVE_ORDER. */
+  const waveStartTimes = plan.waves.map((w) => toGsap(w.t));
+  const motionSpans: PieceMotionSpan[] = plan.fits.flatMap((f) =>
+    f.pieces.map((id) => ({
+      id,
+      wave: f.wave,
+      start: toGsap(f.lift),
+      end: toGsap(f.contact),
+    })),
+  );
 
   /** Integrity / UI progress 0–1 (hits 1 at systems online, not camera tail). */
   const assemblyProgressAt = (timeSec: number): number =>
@@ -386,889 +228,76 @@ export function createAssemblyTimeline(
       active.push({
         id: span.id,
         wave: span.wave,
-        localProgress: THREE.MathUtils.clamp(
-          (timeSec - span.start) / dur,
-          0,
-          1,
-        ),
+        localProgress: THREE.MathUtils.clamp((timeSec - span.start) / dur, 0, 1),
       });
     }
-    // Prefer pieces further along their flight (nearest to clamp) first
     active.sort((a, b) => b.localProgress - a.localProgress);
     callbacks.onActivePieces(active);
   };
 
-  /**
-   * Launch gap between plates *within* the same body section.
-   * Kept tight so similar parts stream in as one cascade.
-   */
-  const staggerFor = (
-    count: number,
-    kind: 'default' | 'helmet' | 'gauntlets' = 'default',
-  ) => {
-    if (count <= 1) return 0;
-    if (kind === 'helmet') {
-      // Still readable as separate clamps, but not a long wait between each
-      return Math.min(0.2, Math.max(0.065, 1.15 / count));
-    }
-    if (kind === 'gauntlets') {
-      // Deliberate finger cascade — not one simultaneous plop
-      return Math.min(0.2, Math.max(0.06, 1.05 / count));
-    }
-    // Dense waves (thighs/torso/arms) fire almost as a cascade
-    return Math.min(0.1, Math.max(0.022, 0.65 / count));
-  };
-
-  /** Default cinematic FOV — matches createCamera / BASE_CAM_FOV. */
-  const BASE_FOV = BASE_CAM_FOV;
-  /**
-   * Faceplate hero FOV — tighter than base, but stays above OrbitControls
-   * minDistance (~1.8) so live play and paused scrub match. Older ECU
-   * (FOV 19–20 at z≈0.6) only read as intended while playing (controls
-   * pulled distance out); scrub kept the raw macro and felt wrong.
-   */
-  const FACEPLATE_FOV = 27;
-
-  const cameraProxy = {
-    x: camera.position.x,
-    y: camera.position.y,
-    z: camera.position.z,
-    lx: lookTarget.x,
-    ly: lookTarget.y,
-    lz: lookTarget.z,
-    fov: camera.fov,
-  };
-
-  /** Additive shake so path tweens stay stable while locks punch the frame. */
-  const shake = { x: 0, y: 0, z: 0 };
-
-  // Independent system ramps
-  const reactorProxy = { v: 0 };
-  const eyesProxy = { v: 0 };
-  const repulsorsProxy = { v: 0 };
-
-  const applyCamera = () => {
+  const applyCamera = (gsapT: number) => {
     // Free-look orbit (including mid-play takeover): never overwrite framing
     if (userOwnsCamera) return;
-    camera.position.set(
-      cameraProxy.x + shake.x,
-      cameraProxy.y + shake.y,
-      cameraProxy.z + shake.z,
-    );
-    lookTarget.set(cameraProxy.lx, cameraProxy.ly, cameraProxy.lz);
+    const pose = evaluateCamera(plan, gsapT - offset);
+    camera.position.set(pose.x, pose.y, pose.z);
+    lookTarget.set(pose.lx, pose.ly, pose.lz);
     camera.lookAt(lookTarget);
-    if (Math.abs(camera.fov - cameraProxy.fov) > 1e-4) {
-      camera.fov = cameraProxy.fov;
+    if (Math.abs(camera.fov - pose.fov) > 1e-4) {
+      camera.fov = pose.fov;
       camera.updateProjectionMatrix();
     }
   };
 
-  /** Suit emissive only — scene lights stay constant. */
-  const syncSystems = () => {
-    suit.setSystemsPower({
-      reactor: reactorProxy.v,
-      eyes: eyesProxy.v,
-      repulsors: repulsorsProxy.v,
-    });
-  };
-
-  /**
-   * Short punchy camera shake when a wave’s last plate clamps.
-   * Stronger for torso / helmet so those beats land harder.
-   */
-  const addWaveShake = (
-    timeline: gsap.core.Timeline,
-    at: number,
-    wave: string,
-  ) => {
-    const amp = WAVE_SHAKE[wave];
-    if (!amp) return;
-
-    const pulses = wave === 'helmet' || wave === 'torso' ? 4 : 3;
-    const step = 0.028;
-    for (let i = 0; i < pulses; i++) {
-      const sign = i % 2 === 0 ? 1 : -1;
-      const decay = 1 - i / (pulses + 0.5);
-      timeline.to(
-        shake,
-        {
-          x: sign * amp * decay,
-          y: -sign * amp * 0.55 * decay,
-          z: sign * amp * 0.35 * decay,
-          duration: step,
-          ease: 'power2.out',
-          onUpdate: applyCamera,
-        },
-        at + i * step,
-      );
-    }
-    timeline.to(
-      shake,
-      {
-        x: 0,
-        y: 0,
-        z: 0,
-        duration: 0.06,
-        ease: 'power3.out',
-        onUpdate: applyCamera,
-      },
-      at + pulses * step,
-    );
+  /** Evaluate + apply the whole suit-up at a GSAP time. */
+  const render = (gsapT: number) => {
+    const frame = evaluateSuitUp(plan, gsapT - offset);
+    suit.applyFrame(frame);
+    workshop?.apply(frame);
+    applyCamera(gsapT);
   };
 
   const build = (): gsap.core.Timeline => {
     suit.resetToStart();
-    reactorProxy.v = 0;
-    eyesProxy.v = 0;
-    repulsorsProxy.v = 0;
-    shake.x = 0;
-    shake.y = 0;
-    shake.z = 0;
-    motionSpans = [];
-    waveStartTimes = [];
-
-    // Opening: wider hangar establish → slow push to ¾ hero, then plates.
-    // t=0 must be a timeline.set so later FOV / look-target tweens cannot
-    // poison playhead 0 on reverse scrub / replay.
-    const OPEN_WIDE = { ...OPEN_WIDE_CAM };
-    const OPEN_CAM = {
-      x: 1.85,
-      y: gy(1.35),
-      z: 4.15,
-      lx: 0,
-      ly: gy(0.95),
-      lz: 0,
-      fov: BASE_FOV,
-    };
-    Object.assign(cameraProxy, OPEN_WIDE);
-    applyCamera();
+    const fullDur = sequenceGsapDuration();
+    const clock = { t: 0 };
 
     const timeline = gsap.timeline({
       paused: true,
       onUpdate: () => {
+        const t = timeline.time();
+        render(t);
         // Normalize to assembly end — not full timeline (camera pullback tail).
-        callbacks.onProgress?.(assemblyProgressAt(timeline.time()));
-        reportActivePieces(timeline.time());
+        callbacks.onProgress?.(assemblyProgressAt(t));
+        reportActivePieces(t);
       },
       onComplete: () => {
         playing = false;
         // SYSTEMS ONLINE already fired at assemblyEndTime (integrity 100%).
-        // Do not re-send status here — that double-triggered the cyan flash
-        // after the trailing camera pullback.
         callbacks.onProgress?.(1);
         callbacks.onActivePieces?.([]);
         callbacks.onComplete?.();
       },
     });
 
-    // Authoritative t=0 framing — wider hangar establish
-    timeline.set(cameraProxy, { ...OPEN_WIDE }, 0);
-    timeline.call(applyCamera, undefined, 0);
+    // Transport span: seed clock 0 → SEQUENCE_SEED_DURATION plus the pre-roll
+    timeline.to(clock, { t: 1, duration: fullDur, ease: 'none' }, 0);
 
-    // Slow push into hero framing over the hold (empty pad → cascade ready)
-    timeline.to(
-      cameraProxy,
-      {
-        ...OPEN_CAM,
-        duration: OPENING_HOLD * 0.92,
-        ease: 'power1.inOut',
-        onUpdate: applyCamera,
-      },
-      0,
-    );
-
-    // Staged JARVIS status during the hold
-    timeline.call(
-      () => {
-        callbacks.onStatus?.('STANDBY // HANGAR LOCK');
-      },
-      undefined,
-      0,
-    );
-    timeline.call(
-      () => {
-        callbacks.onStatus?.('J.A.R.V.I.S. ONLINE');
-      },
-      undefined,
-      OPENING_HOLD * 0.32,
-    );
-    timeline.call(
-      () => {
-        callbacks.onStatus?.('ASSEMBLY SEQUENCE INITIATED');
-      },
-      undefined,
-      OPENING_HOLD * 0.72,
-    );
-
-    /** When each wave's last plate finishes locking */
-    const waveLockEnd: Partial<Record<string, number>> = {};
-    /** Actual scheduled start per wave (after foundation gating) */
-    const waveStartAt: Partial<Record<string, number>> = {};
-    /** When the faceplate hero beat launches (0 if no faceplate split). */
-    let faceplateStartAt = 0;
-    /**
-     * All plates from completed waves — foundation stumps are selected
-     * per-wave (arms←shoulders only, helmet←collar, never gauntlets).
-     */
-    let built: typeof suit.pieces = [];
-
-    let prevLockEnd = 0;
-    /** When the previous wave’s last plate *launched* (not locked). */
-    let prevLastLaunch = 0;
-    let prevWave: string | null = null;
-
-    for (const wave of WAVE_ORDER) {
-      const { ordered: pieces } = suit.planWave(wave, built);
-      // Skip empty bands (e.g. power if unused)
-      if (pieces.length === 0 && wave !== 'power') {
-        waveLockEnd[wave] = prevLockEnd;
-        waveStartAt[wave] = prevLockEnd;
-        continue;
-      }
-
-      const earliest = WAVE_EARLIEST[wave] ?? 0;
-      // Chain off previous last *launch* so there’s no ~0.7s dead air while
-      // the final plates of a section are still mid-flight.
-      const afterPrev =
-        prevWave != null ? prevLastLaunch + WAVE_CHAIN_GAP : 0;
-      let waveStart = Math.max(earliest, afterPrev);
-
-      const isHelmet = wave === 'helmet';
-      const isGauntlets = wave === 'gauntlets';
-
-      // Helmet chains off the previous wave’s last launch (no palm-ECU hold).
-
-      waveStartAt[wave] = waveStart;
-      // Pipeline dots + integrity bar share this clock
-      waveStartTimes.push(waveStart);
-      // Paired L/R launches: stagger between *pairs*, not individual plates
-      const rawLaunchGroups = planSymmetricLaunchGroups(pieces, wave);
-      // Mirror scatter starts so paths can be geometric L↔R reflections
-      applyMirroredFlightStarts(rawLaunchGroups);
-
-      // Helmet: cranial shells cascade first; faceplate is a late hero beat
-      const helmetOrder = isHelmet
-        ? orderHelmetLaunchGroups(rawLaunchGroups)
-        : { ordered: rawLaunchGroups, faceplateStart: rawLaunchGroups.length };
-      const launchGroups = helmetOrder.ordered;
-      const faceplateStartIdx = helmetOrder.faceplateStart;
-      const hasFaceplateBeat =
-        isHelmet && faceplateStartIdx < launchGroups.length;
-      const cranialGroupCount = hasFaceplateBeat
-        ? faceplateStartIdx
-        : launchGroups.length;
-      const faceplateGroupCount = hasFaceplateBeat
-        ? launchGroups.length - faceplateStartIdx
-        : 0;
-
-      const staggerKind = isHelmet
-        ? 'helmet'
-        : isGauntlets
-          ? 'gauntlets'
-          : 'default';
-      // Stagger only the cranial cascade (faceplate timed separately)
-      const stagger = staggerFor(cranialGroupCount, staggerKind);
-      const faceplateStagger = staggerFor(faceplateGroupCount, 'helmet');
-
-      // When the faceplate phase begins (first mask launch)
-      const lastCranialLaunch =
-        cranialGroupCount > 0
-          ? waveStart + (cranialGroupCount - 1) * stagger
-          : waveStart;
-      const faceplatePhaseStart = hasFaceplateBeat
-        ? lastCranialLaunch + FACEPLATE_AFTER_CRANIAL_LAUNCH
-        : waveStart;
-      if (hasFaceplateBeat) {
-        faceplateStartAt = faceplatePhaseStart;
-      }
-
+    for (const { wave, t } of plan.waves) {
+      timeline.call(() => callbacks.onWave?.(wave), undefined, Math.max(0, toGsap(t)));
+    }
+    for (const { t, text } of plan.statuses) {
       timeline.call(
         () => {
-          callbacks.onWave?.(wave);
-          callbacks.onStatus?.(WAVE_STATUS[wave]);
+          callbacks.onStatus?.(text);
+          if (isSystemsOnlineStatus(text)) callbacks.onProgress?.(1);
         },
         undefined,
-        waveStart,
-      );
-
-      if (hasFaceplateBeat) {
-        timeline.call(
-          () => {
-            callbacks.onStatus?.(FACEPLATE_STATUS);
-          },
-          undefined,
-          faceplatePhaseStart,
-        );
-      }
-
-      let lastEnd = waveStart;
-      let lastLaunch = waveStart;
-
-      launchGroups.forEach((group, groupIndex) => {
-        const isFaceplateGroup =
-          hasFaceplateBeat && groupIndex >= faceplateStartIdx;
-        const duration = isFaceplateGroup
-          ? FACEPLATE_PIECE_DURATION
-          : isHelmet
-            ? HELMET_PIECE_DURATION
-            : isGauntlets
-              ? GAUNTLET_PIECE_DURATION
-              : PIECE_DURATION;
-        const approachFrac = isFaceplateGroup
-          ? FACEPLATE_APPROACH_FRAC
-          : isHelmet
-            ? HELMET_APPROACH_FRAC
-            : isGauntlets
-              ? GAUNTLET_APPROACH_FRAC
-              : APPROACH_FRAC;
-
-        const t = isFaceplateGroup
-          ? faceplatePhaseStart +
-            (groupIndex - faceplateStartIdx) * faceplateStagger
-          : waveStart + groupIndex * stagger;
-        lastLaunch = t;
-        lastEnd = Math.max(lastEnd, t + duration);
-
-        // Shared seed path on the left (lower rest X), then mirror for a true
-        // L/R partner. Dual-layer co-located shells (same side / centerline)
-        // keep independent paths so they are not reflected into each other.
-        const mirrorPair =
-          group.length === 2
-            ? (() => {
-                const [a, b] =
-                  group[0].restPosition.x <= group[1].restPosition.x
-                    ? group
-                    : [group[1], group[0]];
-                const ax = a.restPosition.x;
-                const bx = b.restPosition.x;
-                if (Math.abs(ax) < 0.05 || Math.abs(bx) < 0.05) return null;
-                if ((Math.sign(ax) || 1) === (Math.sign(bx) || 1)) return null;
-                return a;
-              })()
-            : null;
-        const leftOfPair = mirrorPair;
-        const pathOpts = {
-          helmet: isHelmet,
-          faceplate: isFaceplateGroup,
-        };
-        const primaryPath =
-          leftOfPair != null
-            ? magneticPath(
-                leftOfPair.startPosition,
-                leftOfPair.restPosition,
-                leftOfPair.id,
-                pathOpts,
-              )
-            : null;
-
-        for (const piece of group) {
-          const mesh = piece.mesh;
-          // Per-piece faceplate flag (dual-layer shells may co-group)
-          const pieceIsFaceplate =
-            isFaceplateGroup || isFaceplateRest(piece.restPosition);
-          motionSpans.push({
-            id: piece.id,
-            wave,
-            start: t,
-            end: t + duration,
-          });
-
-          const path: MagneticPath =
-            leftOfPair != null && primaryPath != null
-              ? piece.id === leftOfPair.id
-                ? primaryPath
-                : mirrorPathAroundRest(
-                    primaryPath,
-                    leftOfPair.restPosition,
-                    piece.restPosition,
-                  )
-              : magneticPath(
-                  piece.startPosition,
-                  piece.restPosition,
-                  piece.id,
-                  {
-                    helmet: isHelmet,
-                    faceplate: pieceIsFaceplate,
-                  },
-                );
-
-          // Director mode: click-to-inspect draws this flight curve
-          piece.mesh.userData.flightPathKeys = flightPathKeysFrom(
-            piece.startPosition,
-            piece.restPosition,
-            path,
-          );
-
-          const approachDur = duration * approachFrac;
-          const dockDur = duration - approachDur;
-          // Split dock: soft overshoot, then settle into socket
-          // Faceplate: longer settle so the hydraulic clamp reads clearly
-          const slamFrac = pieceIsFaceplate ? 0.5 : isHelmet ? 0.55 : 0.45;
-          const slamDur = dockDur * slamFrac;
-          const settleDur = dockDur - slamDur;
-
-          // Explicit false at t=0 so reverse scrub restores hidden state
-          // (GSAP set() alone does not reliably reverse booleans).
-          timeline.set(mesh, { visible: false }, 0);
-          timeline.set(mesh, { visible: true }, t);
-
-          // ── Position: magnetic arc → approach → overshoot → rest ──
-          // Phase 1a: fly toward curved waypoint (magnetic pull-in)
-          const midApproach = approachDur * (pieceIsFaceplate ? 0.58 : 0.62);
-          const nearApproach = approachDur - midApproach;
-          const heavy = isHelmet || pieceIsFaceplate;
-
-          timeline.fromTo(
-            mesh.position,
-            {
-              x: piece.startPosition.x,
-              y: piece.startPosition.y,
-              z: piece.startPosition.z,
-            },
-            {
-              x: path.waypoint.x,
-              y: path.waypoint.y,
-              z: path.waypoint.z,
-              duration: midApproach,
-              ease: heavy ? 'power2.inOut' : 'power2.in',
-            },
-            t,
-          );
-
-          // Phase 1b: curve into the near-socket approach point
-          timeline.to(
-            mesh.position,
-            {
-              x: path.approach.x,
-              y: path.approach.y,
-              z: path.approach.z,
-              duration: nearApproach,
-              ease: pieceIsFaceplate
-                ? 'power2.inOut'
-                : isHelmet
-                  ? 'power3.inOut'
-                  : 'power3.in',
-            },
-            t + midApproach,
-          );
-
-          // Phase 2a: soft overshoot past the socket
-          timeline.to(
-            mesh.position,
-            {
-              x: path.overshoot.x,
-              y: path.overshoot.y,
-              z: path.overshoot.z,
-              duration: slamDur,
-              ease: pieceIsFaceplate ? 'power3.in' : 'power2.in',
-            },
-            t + approachDur,
-          );
-
-          // Phase 2b: clamp settle into rest
-          timeline.to(
-            mesh.position,
-            {
-              x: piece.restPosition.x,
-              y: piece.restPosition.y,
-              z: piece.restPosition.z,
-              duration: settleDur,
-              ease: pieceIsFaceplate ? 'power4.out' : 'power3.out',
-            },
-            t + approachDur + slamDur,
-          );
-
-          // ── Rotation: mostly during approach, final align on dock ──
-          const travelEase = heavy ? 'power3.inOut' : 'power2.inOut';
-          timeline.fromTo(
-            mesh.rotation,
-            {
-              x: piece.startRotation.x,
-              y: piece.startRotation.y,
-              z: piece.startRotation.z,
-            },
-            {
-              x: piece.restRotation.x,
-              y: piece.restRotation.y,
-              z: piece.restRotation.z,
-              duration: approachDur + slamDur * 0.5,
-              ease: travelEase,
-            },
-            t,
-          );
-
-          // ── Scale: grow on approach, light clamp seat on lock ─────
-          const rs = piece.restScale;
-          const preLock = pieceIsFaceplate ? 0.99 : isHelmet ? 0.985 : 0.96;
-          const punch = pieceIsFaceplate ? 1.012 : isHelmet ? 1.008 : 1.02;
-
-          // Grow from tiny scatter scale → near rest during approach
-          timeline.fromTo(
-            mesh.scale,
-            {
-              x: piece.startScale.x,
-              y: piece.startScale.y,
-              z: piece.startScale.z,
-            },
-            {
-              x: rs.x * preLock,
-              y: rs.y * preLock,
-              z: rs.z * preLock,
-              duration: approachDur,
-              ease: heavy ? 'power2.inOut' : 'power2.out',
-            },
-            t,
-          );
-
-          // Lock impact: slight punch past rest scale, then seat
-          timeline.to(
-            mesh.scale,
-            {
-              x: rs.x * punch,
-              y: rs.y * punch,
-              z: rs.z * punch,
-              duration: slamDur,
-              ease: 'power2.in',
-            },
-            t + approachDur,
-          );
-          timeline.to(
-            mesh.scale,
-            {
-              x: rs.x,
-              y: rs.y,
-              z: rs.z,
-              duration: settleDur,
-              ease: 'power4.out',
-            },
-            t + approachDur + slamDur,
-          );
-        }
-      });
-
-      waveLockEnd[wave] = lastEnd;
-      prevLockEnd = lastEnd;
-      prevLastLaunch = lastLaunch;
-      prevWave = wave;
-      // Accumulate built structure for later foundation selection
-      if (pieces.length > 0) {
-        built = built.concat(pieces);
-        // Shake when the last plate of this wave clamps home
-        addWaveShake(timeline, lastEnd - 0.02, wave);
-      }
-    }
-
-    // ── Sequenced systems ──────────────────────────────────────────
-    // Reactor: when the chest / reactor housing seats — power source for
-    // the rest of the suit-up (arms + gauntlets still fly with the core
-    // already alive). Palm thrusters get their own beat after hands lock;
-    // helmet plates only launch after that beat ends. Eyes wait for seal.
-    const helmetDone = waveLockEnd.helmet ?? 16.0;
-    const torsoDone = waveLockEnd.torso ?? 7.2;
-    const reactorT = torsoDone + 0.25;
-    timeline.call(
-      () => {
-        callbacks.onStatus?.('ARC REACTOR IGNITION…');
-      },
-      undefined,
-      reactorT,
-    );
-    timeline.to(
-      reactorProxy,
-      {
-        v: 1,
-        duration: 1.45,
-        ease: 'power2.inOut',
-        onUpdate: syncSystems,
-      },
-      reactorT,
-    );
-    timeline.call(
-      () => {
-        callbacks.onStatus?.('ARC REACTOR ONLINE');
-      },
-      undefined,
-      reactorT + 1.3,
-    );
-
-    // Hand + boot thrusters once BOTH gauntlets are home (shared material).
-    // Short FX under chest framing — does not block helmet cascade.
-    const handsLock = Math.max(
-      waveLockEnd.gauntlets ?? 0,
-      waveLockEnd.arms ?? 0,
-      0.01,
-    );
-    const handsT = handsLock + PALM_PRE_HOLD;
-    timeline.call(
-      () => {
-        callbacks.onStatus?.(REPULSOR_STATUS);
-      },
-      undefined,
-      handsT,
-    );
-    timeline.to(
-      repulsorsProxy,
-      {
-        v: 1,
-        duration: REPULSOR_RAMP,
-        ease: 'power2.inOut',
-        onUpdate: syncSystems,
-      },
-      handsT,
-    );
-    timeline.call(
-      () => {
-        callbacks.onStatus?.('REPULSORS ONLINE');
-      },
-      undefined,
-      handsT + REPULSOR_RAMP - 0.05,
-    );
-
-    // Face-mask eyes after the helmet seals (reactor already online from torso)
-    const eyesT = helmetDone + 0.3;
-    const EYES_RAMP = 1.55;
-    // Initial eye ignition — top HUD SYSTEMS ONLINE + integrity 100%.
-    // Status must be the last "complete" beat (no later onStatus overwrites it).
-    assemblyEndTime = eyesT;
-    timeline.call(
-      () => {
-        callbacks.onStatus?.('SYSTEMS ONLINE');
-        callbacks.onProgress?.(1);
-      },
-      undefined,
-      eyesT,
-    );
-    timeline.to(
-      eyesProxy,
-      {
-        v: 1,
-        duration: EYES_RAMP,
-        ease: 'power2.inOut',
-        onUpdate: syncSystems,
-      },
-      eyesT,
-    );
-
-    // Seamless mesh while eyes finish ramping (no status — keeps SYSTEMS ONLINE)
-    finalSwapTime = eyesT + 1.2;
-    timeline.call(
-      () => {
-        suit.showFinal();
-      },
-      undefined,
-      finalSwapTime,
-    );
-
-    // ── Camera path ────────────────────────────────────────────────
-    // Always set lx/lz/fov on every keyframe so scrub reverse can’t leave
-    // faceplate FOV residue on the proxy.
-    //
-    // Lower body → chest crane: slight zoom without changing plate timings
-    // or total assembly duration.
-    // Boots → thighs → arc reactor (same language, rising look target).
-    const LOWER_FOV = BASE_FOV - 1.5; // mild optical zoom (~32.5°)
-    const CHEST_FOV = BASE_FOV - 2.5; // tighter on the core (~31.5°)
-
-    // Boots cascade — drop look target toward the feet after the opening hold.
-    timeline.to(
-      cameraProxy,
-      {
-        x: 0.78,
-        y: gy(0.78),
-        z: 2.85,
-        lx: 0,
-        ly: gy(0.52),
-        lz: 0,
-        fov: LOWER_FOV,
-        duration: 2.35,
-        ease: 'power2.inOut',
-        onUpdate: applyCamera,
-      },
-      OPENING_HOLD + 0.05,
-    );
-
-    // Thighs — lift framing to mid-leg. Keep this beat short so it hands off
-    // cleanly to the torso/reactor crane (no overlapping cameraProxy tweens).
-    const thighsCamStart = Math.max(
-      (waveStartAt.thighs ?? waveStartAt.calves ?? 2.6) - 0.2,
-      2.0,
-    );
-    const THIGHS_CAM_DUR = 1.85;
-    timeline.to(
-      cameraProxy,
-      {
-        x: 0.72,
-        y: gy(0.98),
-        z: 2.72,
-        lx: 0,
-        ly: gy(0.88),
-        lz: 0,
-        fov: LOWER_FOV,
-        duration: THIGHS_CAM_DUR,
-        ease: 'power2.inOut',
-        onUpdate: applyCamera,
-      },
-      thighsCamStart,
-    );
-
-    // Helmet cranial shells — scheduled after hands; used as a hard ceiling
-    // so the chest ECU cannot bleed into the head cascade.
-    const helmetCamStart = (waveStartAt.helmet ?? handsLock) - 0.15;
-
-    // Chest / arc reactor — start with the *torso wave*, not after it.
-    // Old timing (reactorT − 0.55, 2.2s + push) landed late and overlapped
-    // itself / the next shot. One continuous crane lands on the core as
-    // ignition begins, then a short push that ends before the helmet cam.
-    const chestCamStart = Math.max(
-      (waveStartAt.torso ?? torsoDone - 1.4) - 0.1,
-      thighsCamStart + THIGHS_CAM_DUR - 0.15, // slight crossfade, not a fight
-    );
-    // Arrive on the reactor just as status fires (small lead-in, not lag).
-    const chestArriveAt = reactorT + 0.05;
-    const chestCraneDur = Math.max(1.35, chestArriveAt - chestCamStart);
-    timeline.to(
-      cameraProxy,
-      {
-        x: 0.1,
-        y: gy(1.2),
-        z: 2.18,
-        lx: 0,
-        ly: gy(1.18),
-        lz: 0.05,
-        fov: CHEST_FOV,
-        duration: chestCraneDur,
-        ease: 'power2.inOut',
-        onUpdate: applyCamera,
-      },
-      chestCamStart,
-    );
-    // Soft push while the core ramps — hard-stop before helmet cam steals focus.
-    const chestPushStart = chestCamStart + chestCraneDur - 0.05;
-    const chestPushEndCap = Math.min(
-      reactorT + 1.2,
-      helmetCamStart - 0.4,
-    );
-    const chestPushDur = chestPushEndCap - chestPushStart;
-    if (chestPushDur >= 0.5) {
-      timeline.to(
-        cameraProxy,
-        {
-          x: 0.06,
-          y: gy(1.18),
-          z: 2.02,
-          lx: 0,
-          ly: gy(1.18),
-          lz: 0.06,
-          fov: CHEST_FOV - 1,
-          duration: chestPushDur,
-          ease: 'power1.inOut',
-          onUpdate: applyCamera,
-        },
-        chestPushStart,
+        Math.max(0, toGsap(t)),
       );
     }
-    timeline.to(
-      cameraProxy,
-      {
-        x: 0.28,
-        y: gy(1.5),
-        z: 2.25,
-        ly: gy(1.52),
-        lx: 0,
-        lz: 0,
-        fov: BASE_FOV,
-        duration: 2.4,
-        ease: 'power3.inOut',
-        onUpdate: applyCamera,
-      },
-      helmetCamStart,
-    );
-
-    // Faceplate hero slam — tighter portrait on the mask, not a macro ECU.
-    // Keep camera–target distance ≥ ~1.9 so paused scrub matches live play
-    // (OrbitControls minDistance is 1.8; older z≈0.6 only “worked” mid-play).
-    if (faceplateStartAt > 0) {
-      // Commit to face framing mid-approach
-      timeline.to(
-        cameraProxy,
-        {
-          x: 0.18,
-          y: gy(1.58),
-          z: 2.05,
-          ly: gy(1.58),
-          lx: 0.02,
-          lz: 0.04,
-          fov: FACEPLATE_FOV + 1,
-          duration: 1.35,
-          ease: 'power3.inOut',
-          onUpdate: applyCamera,
-        },
-        faceplateStartAt + 0.55,
-      );
-      // Push in for the clamp — mask fills the frame without under-minDistance
-      timeline.to(
-        cameraProxy,
-        {
-          x: 0.1,
-          y: gy(1.6),
-          z: 1.92,
-          ly: gy(1.62),
-          lx: 0,
-          lz: 0.05,
-          fov: FACEPLATE_FOV,
-          duration: 1.15,
-          ease: 'power3.inOut',
-          onUpdate: applyCamera,
-        },
-        faceplateStartAt + 1.65,
-      );
-      // Hold through eye ignition (tiny settle, no retreat)
-      timeline.to(
-        cameraProxy,
-        {
-          x: 0.08,
-          y: gy(1.61),
-          z: 1.88,
-          ly: gy(1.63),
-          lx: 0,
-          lz: 0.05,
-          fov: FACEPLATE_FOV - 0.5,
-          duration: 1.1,
-          ease: 'power1.out',
-          onUpdate: applyCamera,
-        },
-        faceplateStartAt + 2.55,
-      );
-    }
-
-    // Hold the tight faceplate/eyes beat, then pull back to hero
-    timeline.to(
-      cameraProxy,
-      {
-        ...HERO_END_CAM,
-        duration: 3.4,
-        ease: 'power3.inOut',
-        onUpdate: applyCamera,
-      },
-      eyesT + 1.85,
-    );
-
-    // Pad the tail so seed/HUD/audio always span SEQUENCE_SEED_DURATION (18.5s).
-    // GSAP clock = seed + hangar offset; hold final hero framing for the rest.
-    const targetGsap = sequenceGsapDuration();
-    const naturalEnd = timeline.duration();
-    const tailPad = targetGsap - naturalEnd;
-    if (tailPad > 1e-4) {
-      timeline.to(
-        cameraProxy,
-        {
-          ...HERO_END_CAM,
-          duration: tailPad,
-          ease: 'none',
-          onUpdate: applyCamera,
-        },
-        naturalEnd,
-      );
+    // Sparks / steam ride the live transport only (scrub suppresses calls)
+    for (const burst of plan.bursts) {
+      timeline.call(() => suit.emitBurst(burst), undefined, Math.max(0, toGsap(burst.t)));
     }
 
     return timeline;
@@ -1282,37 +311,16 @@ export function createAssemblyTimeline(
   const syncAfterTime = (timeSec: number, forceComplete = false) => {
     const timeline = ensureTl();
     const fullDur = Math.max(timeline.duration(), 1e-6);
-    const asmEnd = Math.max(assemblyEndTime, 1e-6);
     const t = forceComplete
-      ? Math.min(fullDur, Math.max(asmEnd, finalSwapTime, timeSec))
+      ? Math.min(fullDur, Math.max(assemblyEndTime, finalSwapTime, timeSec))
       : THREE.MathUtils.clamp(timeSec, 0, fullDur);
-    const p = THREE.MathUtils.clamp(t / fullDur, 0, 1);
-    const atEnd = forceComplete || t >= asmEnd - 1e-4;
 
-    // Suppress call()/onComplete — we own final-mesh swap + status while scrubbing.
-    if (t >= finalSwapTime - 1e-4 || atEnd) {
-      timeline.progress(p, true);
-      applyCamera();
-      syncSystems();
-      suit.showFinal();
-    } else {
-      // Leaving seamless / end state: showFinal() forced every shard
-      // invisible outside GSAP. Re-seed start pose + visible:false, then
-      // progress 0 → p so reverse scrub re-applies every fromTo/set.
-      suit.resumeAssemblyVisuals();
-      for (const piece of suit.pieces) {
-        const mesh = piece.mesh;
-        mesh.visible = false;
-        mesh.position.copy(piece.startPosition);
-        mesh.rotation.copy(piece.startRotation);
-        mesh.scale.copy(piece.startScale);
-      }
-      // Invalidate cached start values so the next render samples cleanly
-      timeline.progress(0, true);
-      timeline.progress(p, true);
-      applyCamera();
-      syncSystems();
-    }
+    // Bursts are transient — drop any in flight when the playhead jumps
+    suit.clearFx();
+    // Suppress call()s — scrub owns status / final swap via the evaluator
+    timeline.progress(t / fullDur, true);
+    if (t < finalSwapTime - 1e-4) suit.resumeAssemblyVisuals();
+    render(t);
 
     callbacks.onProgress?.(assemblyProgressAt(timeline.time()));
     reportActivePieces(timeline.time());
@@ -1320,13 +328,12 @@ export function createAssemblyTimeline(
 
   const syncAfterSeek = (progress01: number) => {
     const uiP = THREE.MathUtils.clamp(progress01, 0, 1);
-    const asmEnd = Math.max(assemblyEndTime, 1e-6);
     // Scrub 0–1 is integrity progress (wave-paced), not pure wall-clock.
     if (uiP >= 0.999) {
-      syncAfterTime(asmEnd, true);
+      syncAfterTime(assemblyEndTime, true);
       return;
     }
-    syncAfterTime(timeAtIntegrityProgress(uiP, waveStartTimes, asmEnd));
+    syncAfterTime(timeAtIntegrityProgress(uiP, waveStartTimes, assemblyEndTime));
   };
 
   tl = build();
@@ -1337,10 +344,10 @@ export function createAssemblyTimeline(
       // Fresh play-from-start reclaims the cinematic path
       userOwnsCamera = false;
       playing = true;
-      // progress(0) re-applies timeline.set OPEN_CAM before play
       timeline.pause();
       timeline.progress(0, true);
-      applyCamera();
+      suit.clearFx();
+      render(0);
       timeline.play();
     },
     pause: () => {
@@ -1355,7 +362,7 @@ export function createAssemblyTimeline(
       } else {
         // Snap back onto the path immediately (drops free-look offset)
         userOwnsCamera = false;
-        applyCamera();
+        applyCamera(timeline.time());
       }
       if (timeline.progress() >= 1) {
         // At end — restart so resume always does something useful
@@ -1382,32 +389,20 @@ export function createAssemblyTimeline(
       timeline.pause();
       playing = false;
       userOwnsCamera = !!opts?.preserveCamera;
-      // Exact wall-clock seek (camera tail included). Do not forceComplete —
-      // that snapped any t≈assemblyEnd up to systems-online and made ←/→
-      // past integrity 100% feel like a hard camera cut.
       syncAfterTime(Math.max(0, timeSec), false);
     },
     getProgress: () => {
       if (!tl) return 0;
-      // Integrity / session progress is assembly-normalized (not camera tail).
       return assemblyProgressAt(tl.time());
     },
     getDuration: () => {
       if (!tl) return 0;
-      // Expose assembly span for HUD so 100% lines up with systems online.
-      // Trailing camera still runs on the GSAP timeline past this mark.
+      // Assembly span for the HUD so 100% lines up with systems online.
       return Math.max(assemblyEndTime, 1e-6);
     },
     getFullDuration: () => {
       if (!tl) return 0;
-      // GSAP total: cascade + pullback + pad to SEQUENCE_SEED_DURATION on seed clock.
-      // Floor at the authored target so audio/HUD/scrub share one end mark.
-      return Math.max(
-        tl.duration(),
-        assemblyEndTime,
-        sequenceGsapDuration(),
-        1e-6,
-      );
+      return Math.max(tl.duration(), assemblyEndTime, sequenceGsapDuration(), 1e-6);
     },
     getTime: () => {
       if (!tl) return 0;
@@ -1428,6 +423,25 @@ export function createAssemblyTimeline(
       playing = false;
     },
     userOwnsCamera: () => userOwnsCamera,
+    samplePiecePath: (id: string, segments = 48) => {
+      const fit = plan.fits.find((f) => (f.pieces as string[]).includes(id));
+      if (!fit) return [];
+      const points: THREE.Vector3[] = [];
+      const start = fit.grasp;
+      const end = fit.contact + 0.2;
+      for (let i = 0; i <= segments; i++) {
+        const seedT = start + ((end - start) * i) / segments;
+        suit.applyFrame(evaluateSuitUp(plan, seedT));
+        const p = suit.pieceWorldPosition(fit.pieces.find((x) => x === id)!, new THREE.Vector3());
+        if (p) points.push(p);
+      }
+      // Restore the live frame without touching the camera
+      const owns = userOwnsCamera;
+      userOwnsCamera = true;
+      render(tl ? tl.time() : 0);
+      userOwnsCamera = owns;
+      return points;
+    },
     setUserOwnsCamera: (owns: boolean) => {
       userOwnsCamera = owns;
       // Releasing free-look does not by itself move the camera — callers that
