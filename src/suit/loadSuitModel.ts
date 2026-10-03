@@ -210,6 +210,16 @@ function mergeBody(root: THREE.Object3D): {
   return { geometry, material: Array.isArray(mat) ? mat[0] : mat };
 }
 
+/** Bind every vertex of a part to one bone. */
+function rigidTo(buf: PieceBuffers, bone: number): void {
+  for (let i = 0; i < buf.skinWeight.length; i += 4) {
+    buf.skinIndex[i] = bone;
+    buf.skinIndex[i + 1] = buf.skinIndex[i + 2] = buf.skinIndex[i + 3] = 0;
+    buf.skinWeight[i] = 1;
+    buf.skinWeight[i + 1] = buf.skinWeight[i + 2] = buf.skinWeight[i + 3] = 0;
+  }
+}
+
 function pieceGeometry(buf: PieceBuffers): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(buf.positions, 3));
@@ -315,6 +325,9 @@ export async function loadSuitModel(
   const pieceGeos: THREE.BufferGeometry[] = [];
   for (const buf of cut) {
     const def = armorPieceDef(buf.id);
+    // Helmet + faceplate are rigid shells on the head: skin them 100% to it
+    // so a head turn never shears the chin away from the mask
+    if (def.id === 'helmet' || def.id === 'faceplate') rigidTo(buf, boneIndex('head'));
     const geo = pieceGeometry(buf);
     pieceGeos.push(geo);
     const mesh = skinnedMesh(geo, ownMaterial(), `piece-${def.id}`);

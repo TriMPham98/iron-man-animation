@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { weather } from './robotMaterials';
 import { ROBOTS } from './fittingProgram';
 
 /**
@@ -12,15 +13,22 @@ import { ROBOTS } from './fittingProgram';
 export const PLATFORM_RADIUS = 1.05;
 /** Platform top = suit sole height (SUIT_GROUND_CLEARANCE). */
 export const PLATFORM_TOP = 0.05;
-export const HATCH_RADIUS = 0.135;
+/**
+ * One round boot hatch at the platform centre, concentric with the
+ * platform seams: two half-disc lift plates (one per boot) close into a
+ * single flush disc.
+ */
+export const FOOT_HATCH_RADIUS = 0.336;
 export const ROOM_RADIUS = 7.4;
 export const ROOM_HEIGHT = 4.6;
 
 /** Monitors: left share of the screen given to the live suit scan. */
 const SCAN_SPLIT = 0.62;
 
-/** Radius of a floor arm's elevator well (pedestal is 0.19). */
-export const WELL_RADIUS = 0.235;
+/** Radius of a floor arm's elevator well (pedestal flange is 0.205). */
+export const WELL_RADIUS = 0.215;
+/** Half-width of the concentric trench the floor arms rise from. */
+export const RING_HALF_WIDTH = 0.25;
 
 export interface WorkshopEnvironment {
   group: THREE.Group;
@@ -165,8 +173,8 @@ function screenTexture(seed: number): THREE.CanvasTexture {
   return tex(c);
 }
 
-/** Platform top decal: radial seams, hazard ring, hatch rings (holes cut out). */
-function platformDecal(hatches: Array<[number, number]>): THREE.CanvasTexture {
+/** Platform top decal: radial seams, hazard ring, centre hatch cut out. */
+function platformDecal(): THREE.CanvasTexture {
   const S = 1024;
   const [c, g] = canvas(S, S);
   const R = S / 2;
@@ -204,20 +212,13 @@ function platformDecal(hatches: Array<[number, number]>): THREE.CanvasTexture {
     g.fill();
   }
   g.restore();
-  // Hatch rings and holes (x → canvas x, −z → canvas y)
+  // Centre boot hatch: hole on the inner seam ring
   const px = (m: number) => (m / PLATFORM_RADIUS) * R;
-  for (const [x, z] of hatches) {
-    g.strokeStyle = 'rgba(200,120,42,0.9)';
-    g.lineWidth = 6;
-    g.beginPath();
-    g.arc(px(x), px(-z), px(HATCH_RADIUS + 0.02), 0, Math.PI * 2);
-    g.stroke();
-    g.globalCompositeOperation = 'destination-out';
-    g.beginPath();
-    g.arc(px(x), px(-z), px(HATCH_RADIUS), 0, Math.PI * 2);
-    g.fill();
-    g.globalCompositeOperation = 'source-over';
-  }
+  g.globalCompositeOperation = 'destination-out';
+  g.beginPath();
+  g.arc(0, 0, px(FOOT_HATCH_RADIUS), 0, Math.PI * 2);
+  g.fill();
+  g.globalCompositeOperation = 'source-over';
   const t = tex(c);
   t.flipY = false;
   return t;
@@ -270,6 +271,115 @@ function screenMaterial(
           * step(uSplit + 0.03, vUv.x) * step(vUv.x, 0.97) * step(0.03, vUv.y);
         vec3 col = c * lines + uTint * (sweep + bars * 0.8);
         col *= 0.92 + 0.08 * sin(uTime * 37.0);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+    toneMapped: false,
+  });
+}
+
+/**
+ * Bench workstation displays (everything except the main wall TV, which
+ * carries the live suit scan): code scroll, reactor schematic,
+ * oscilloscope, radar sweep and a power-grid node map — all procedural.
+ */
+function workstationMaterial(mode: number, seed: number): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: seed * 3.7 }, uMode: { value: mode }, uSeed: { value: seed } },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime;
+      uniform float uMode;
+      uniform float uSeed;
+      varying vec2 vUv;
+      const float PI = 3.14159265;
+      float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7)) + uSeed * 13.1) * 43758.5453); }
+      float line(float d, float w) { return smoothstep(w, 0.0, abs(d)); }
+      void main() {
+        vec2 uv = vUv;
+        vec3 cyan = vec3(0.35, 0.85, 1.0);
+        vec3 amber = vec3(1.0, 0.68, 0.25);
+        vec3 col = vec3(0.01, 0.03, 0.05);
+        // Header strip
+        float head = step(0.9, uv.y);
+        col += head * cyan * 0.12;
+        col += head * step(0.03, uv.x) * step(uv.x, 0.3) * step(0.93, uv.y) * step(uv.y, 0.96) * cyan * 0.6;
+        vec2 p = vec2(uv.x, uv.y / 0.9);
+        float body = 1.0 - head;
+        if (uMode < 0.5) {
+          // Code scroll: rows of tokens drifting up, a blinking cursor
+          float rows = 26.0;
+          float y = p.y * rows + uTime * 1.6;
+          float r = floor(y);
+          float fy = fract(y);
+          float indent = floor(h(vec2(r, 1.0)) * 4.0) * 0.04;
+          float len = 0.15 + h(vec2(r, 2.0)) * 0.6;
+          float tok = step(0.5, fract(p.x * 30.0 + h(vec2(r, 3.0)) * 7.0)) * 0.6 + 0.4;
+          float on = step(0.05 + indent, p.x) * step(p.x, 0.05 + indent + len) * step(0.25, fy) * step(fy, 0.7);
+          vec3 tint = mix(cyan, amber, step(0.82, h(vec2(r, 4.0))));
+          col += body * on * tok * tint * 0.75;
+        } else if (uMode < 1.5) {
+          // Reactor schematic: rotating segmented rings + spokes, side bars
+          vec2 c = (p - vec2(0.36, 0.5)) * vec2(1.6, 1.0);
+          float rr = length(c);
+          float a = atan(c.y, c.x);
+          for (int i = 0; i < 4; i++) {
+            float R = 0.12 + float(i) * 0.09;
+            float seg = step(0.35, fract((a + uTime * (0.3 - float(i) * 0.17)) / (2.0 * PI) * (6.0 + float(i) * 4.0)));
+            col += body * line(rr - R, 0.006) * seg * cyan * 0.9;
+          }
+          col += body * line(fract(a / (2.0 * PI) * 10.0) - 0.5, 0.02) * step(rr, 0.4) * step(0.1, rr) * cyan * 0.15;
+          col += body * smoothstep(0.09, 0.0, rr) * vec3(0.7, 0.95, 1.0) * (0.8 + 0.2 * sin(uTime * 4.0));
+          for (int i = 0; i < 6; i++) {
+            float y0 = 0.15 + float(i) * 0.12;
+            float v = 0.4 + 0.5 * h(vec2(float(i), floor(uTime * 2.0)));
+            col += body * step(0.7, p.x) * step(p.x, 0.7 + 0.25 * v) * step(y0, p.y) * step(p.y, y0 + 0.05) * mix(cyan, amber, step(0.85, v)) * 0.7;
+          }
+        } else if (uMode < 2.5) {
+          // Oscilloscope: three traces over a grid
+          vec2 g = abs(fract(p * vec2(10.0, 8.0)) - 0.5);
+          col += body * step(0.48, max(g.x, g.y)) * cyan * 0.12;
+          for (int i = 0; i < 3; i++) {
+            float fi = float(i);
+            float yc = 0.25 + fi * 0.25;
+            float w = sin(p.x * (14.0 + fi * 9.0) - uTime * (3.0 + fi)) * 0.06 + sin(p.x * 41.0 + uTime * 7.0) * 0.015 * fi;
+            col += body * line(p.y - yc - w, 0.008) * mix(cyan, amber, step(1.5, fi)) * 1.1;
+          }
+        } else if (uMode < 3.5) {
+          // Radar: rings, rotating sweep, fading blips
+          vec2 c = (p - 0.5) * vec2(1.7, 1.0);
+          float rr = length(c);
+          float a = atan(c.y, c.x);
+          float sweepA = mod(uTime * 1.2, 2.0 * PI);
+          float d = mod(sweepA - a + 2.0 * PI, 2.0 * PI);
+          col += body * step(rr, 0.45) * exp(-d * 3.0) * cyan * 0.45;
+          for (int i = 1; i < 4; i++) col += body * line(rr - float(i) * 0.15, 0.004) * cyan * 0.35;
+          col += body * (line(c.x, 0.003) + line(c.y, 0.003)) * step(rr, 0.45) * cyan * 0.25;
+          for (int i = 0; i < 7; i++) {
+            vec2 b = vec2(h(vec2(float(i), 5.0)) - 0.5, h(vec2(float(i), 6.0)) - 0.5) * 0.8;
+            float ba = atan(b.y, b.x);
+            float age = mod(sweepA - ba + 2.0 * PI, 2.0 * PI);
+            col += body * smoothstep(0.02, 0.0, length(c - b)) * exp(-age * 0.6) * amber * 1.4;
+          }
+        } else {
+          // Power grid: lattice of nodes, energized links, meters
+          vec2 q = p * vec2(9.0, 6.0);
+          vec2 cell = floor(q);
+          vec2 f = fract(q) - 0.5;
+          float node = smoothstep(0.12, 0.05, length(f));
+          float pulse = 0.5 + 0.5 * sin(uTime * 3.0 + h(cell) * 20.0);
+          float lx = step(0.5, h(cell + 0.3)) * line(f.y, 0.03) * step(0.0, f.x);
+          float ly = step(0.5, h(cell + 0.7)) * line(f.x, 0.03) * step(0.0, f.y);
+          float flow = 0.5 + 0.5 * sin((q.x + q.y) * 3.0 - uTime * 5.0);
+          col += body * (node * mix(cyan, amber, step(0.8, h(cell))) * (0.5 + 0.8 * pulse) + (lx + ly) * cyan * 0.35 * flow);
+        }
+        // Scanlines + slight flicker + edge vignette
+        col *= 0.9 + 0.1 * sin(vUv.y * 500.0);
+        col *= 0.95 + 0.05 * sin(uTime * 43.0);
+        col *= smoothstep(0.0, 0.04, uv.x) * smoothstep(1.0, 0.96, uv.x) * smoothstep(0.0, 0.05, uv.y);
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -444,12 +554,16 @@ export function createWorkshopEnvironment(
   };
   const animated: THREE.ShaderMaterial[] = [];
 
-  const steel = keep(new THREE.MeshStandardMaterial({ color: 0x2b3038, metalness: 0.8, roughness: 0.42 }));
-  const darkSteel = keep(new THREE.MeshStandardMaterial({ color: 0x14171c, metalness: 0.7, roughness: 0.55 }));
-  const concrete = keep(new THREE.MeshStandardMaterial({ color: 0x23262b, metalness: 0.1, roughness: 0.85 }));
-  const amber = keep(new THREE.MeshStandardMaterial({ color: 0xc8782a, metalness: 0.4, roughness: 0.45 }));
-  const red = keep(new THREE.MeshStandardMaterial({ color: 0x7a1414, metalness: 0.45, roughness: 0.4 }));
-  const pipeMat = keep(new THREE.MeshStandardMaterial({ color: 0x3a4048, metalness: 0.9, roughness: 0.3 }));
+  // Every hard surface gets the same object-space wear as the robots:
+  // grime in the crevices, scratched bare metal, chipped paint
+  const W = (m: THREE.MeshStandardMaterial, grime: number, scratch: number, chip: number, scale: number, key: string) =>
+    keep(weather(m, { grime, scratch, chip, scale }, `env-${key}`));
+  const steel = W(new THREE.MeshStandardMaterial({ color: 0x2b3038, metalness: 0.8, roughness: 0.42 }), 0.55, 0.6, 0.15, 7, 'steel');
+  const darkSteel = W(new THREE.MeshStandardMaterial({ color: 0x14171c, metalness: 0.7, roughness: 0.55 }), 0.6, 0.35, 0, 5, 'dark');
+  const concrete = W(new THREE.MeshStandardMaterial({ color: 0x23262b, metalness: 0.1, roughness: 0.85 }), 0.8, 0, 0, 3, 'concrete');
+  const amber = W(new THREE.MeshStandardMaterial({ color: 0xc8782a, metalness: 0.4, roughness: 0.45 }), 0.5, 0.15, 0.55, 10, 'amber');
+  const red = W(new THREE.MeshStandardMaterial({ color: 0x7a1414, metalness: 0.45, roughness: 0.4 }), 0.5, 0.15, 0.5, 10, 'red');
+  const pipeMat = W(new THREE.MeshStandardMaterial({ color: 0x3a4048, metalness: 0.9, roughness: 0.3 }), 0.45, 0.7, 0, 14, 'pipe');
   const lampMat = keep(new THREE.MeshBasicMaterial({ color: 0xfff2dd, toneMapped: false }));
   const glowCyan = keep(
     new THREE.MeshBasicMaterial({ color: 0x6fd8ff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }),
@@ -459,10 +573,9 @@ export function createWorkshopEnvironment(
   // ── Suit-up platform (top flush with the soles) with boot hatches ──
   const shape = new THREE.Shape();
   shape.absarc(0, 0, PLATFORM_RADIUS, 0, Math.PI * 2, false);
-  for (const [x, z] of hatches) {
+  {
     const hole = new THREE.Path();
-    // Shape lives in XY; rotated so shape +Y → world −Z
-    hole.absarc(x, -z, HATCH_RADIUS, 0, Math.PI * 2, true);
+    hole.absarc(0, 0, FOOT_HATCH_RADIUS, 0, Math.PI * 2, true);
     shape.holes.push(hole);
   }
   const platformGeo = keep(
@@ -475,7 +588,7 @@ export function createWorkshopEnvironment(
 
   const decalMat = keep(
     new THREE.MeshStandardMaterial({
-      map: keep(platformDecal(hatches)),
+      map: keep(platformDecal()),
       transparent: true,
       metalness: 0.75,
       roughness: 0.4,
@@ -493,47 +606,85 @@ export function createWorkshopEnvironment(
   rim.position.y = PLATFORM_TOP;
   group.add(rim);
 
-  // Hatch pits + boot lift plates on pistons
+  // Centre hatch pit + one half-disc lift plate per boot on its own ram
   const liftPlates: THREE.Group[] = [];
-  const pitGeo = keep(new THREE.CylinderGeometry(HATCH_RADIUS, HATCH_RADIUS, 0.85, 32, 1, true));
   const pitMat = keep(new THREE.MeshStandardMaterial({ color: 0x0b0d10, metalness: 0.5, roughness: 0.7, side: THREE.BackSide }));
-  const plateGeo = keep(new THREE.CylinderGeometry(HATCH_RADIUS - 0.006, HATCH_RADIUS - 0.006, 0.03, 32));
+  const pit = new THREE.Mesh(keep(new THREE.CylinderGeometry(FOOT_HATCH_RADIUS, FOOT_HATCH_RADIUS, 0.85, 64, 1, true)), pitMat);
+  pit.position.set(0, PLATFORM_TOP - 0.425, 0);
+  group.add(pit);
   const ramGeo = keep(new THREE.CylinderGeometry(0.035, 0.035, 0.8, 16));
   const chrome = keep(new THREE.MeshStandardMaterial({ color: 0xd8dde4, metalness: 1, roughness: 0.18 }));
-  for (const [x, z] of hatches) {
-    const pit = new THREE.Mesh(pitGeo, pitMat);
-    pit.position.set(x, PLATFORM_TOP - 0.425, z);
-    group.add(pit);
+  const seamGap = 0.003;
+  for (const [x] of hatches) {
+    const side = x >= 0 ? 1 : -1;
+    // Half disc on this boot's side (θ from +Z: 0..π is +X)
+    const half = keep(
+      new THREE.CylinderGeometry(FOOT_HATCH_RADIUS - 0.005, FOOT_HATCH_RADIUS - 0.005, 0.03, 48, 1, false, side > 0 ? 0 : Math.PI, Math.PI),
+    );
     const lift = new THREE.Group();
-    const plate = new THREE.Mesh(plateGeo, steel);
-    plate.position.y = -0.015;
+    const plate = new THREE.Mesh(half, steel);
+    plate.position.set(side * seamGap, -0.015, 0);
     lift.add(plate);
     const ram = new THREE.Mesh(ramGeo, chrome);
-    ram.position.y = -0.43;
+    ram.position.set(x, -0.43, 0);
     lift.add(ram);
-    lift.position.set(x, PLATFORM_TOP, z);
+    lift.position.set(0, PLATFORM_TOP, 0);
     group.add(lift);
     liftPlates.push(lift);
   }
 
-  // ── Robot wells (elevator pits + sliding lids) ─────────────────────
+  // ── Robot ring: one concentric trench the floor arms rise out of ────
+  // A shallow channel around the platform; each arm's elevator well opens
+  // in its floor, and a lid slides in under the platform once it stows.
+  const ringR = wells.length ? Math.hypot(wells[0].x, wells[0].z) : 1.45;
+  const r0 = ringR - RING_HALF_WIDTH;
+  const r1 = ringR + RING_HALF_WIDTH;
+  const CH = -0.012;
+  const chShape = new THREE.Shape();
+  chShape.absarc(0, 0, r1, 0, Math.PI * 2, false);
+  const inner = new THREE.Path();
+  inner.absarc(0, 0, r0, 0, Math.PI * 2, true);
+  chShape.holes.push(inner);
+  for (const w of wells) {
+    const h = new THREE.Path();
+    h.absarc(w.x, -w.z, WELL_RADIUS, 0, Math.PI * 2, true);
+    chShape.holes.push(h);
+  }
+  const channel = new THREE.Mesh(keep(new THREE.ShapeGeometry(chShape, 96)), darkSteel);
+  channel.rotation.x = -Math.PI / 2;
+  channel.position.y = CH;
+  group.add(channel);
+  const outerWall = new THREE.Mesh(keep(new THREE.CylinderGeometry(r1, r1, -CH, 128, 1, true)), darkSteel);
+  outerWall.material = keep(new THREE.MeshStandardMaterial({ color: 0x14171c, metalness: 0.7, roughness: 0.55, side: THREE.BackSide }));
+  outerWall.position.y = CH / 2;
+  group.add(outerWall);
+  const innerWall = new THREE.Mesh(keep(new THREE.CylinderGeometry(r0, r0, -CH, 128, 1, true)), darkSteel);
+  innerWall.position.y = CH / 2;
+  group.add(innerWall);
+  for (const [a0, a1] of [
+    [r0 + 0.012, r0 + 0.02],
+    [r1 - 0.02, r1 - 0.012],
+  ]) {
+    const strip = new THREE.Mesh(keep(new THREE.RingGeometry(a0, a1, 160)), glowCyan);
+    strip.rotation.x = -Math.PI / 2;
+    strip.position.y = CH + 0.0008;
+    group.add(strip);
+  }
+
   const wellPit = keep(new THREE.CylinderGeometry(WELL_RADIUS, WELL_RADIUS, 2.6, 36, 1, true));
-  const wellRing = keep(new THREE.TorusGeometry(WELL_RADIUS + 0.012, 0.012, 6, 48));
   const lidGeo = keep(new THREE.CylinderGeometry(WELL_RADIUS + 0.01, WELL_RADIUS + 0.01, 0.025, 36));
   const lids = new Map<string, { lid: THREE.Mesh; open: THREE.Vector3; closed: THREE.Vector3 }>();
   for (const w of wells) {
     const pit = new THREE.Mesh(wellPit, pitMat);
-    pit.position.set(w.x, -1.3, w.z);
+    pit.position.set(w.x, CH - 1.3, w.z);
     group.add(pit);
-    const ring = new THREE.Mesh(wellRing, amber);
-    ring.rotation.x = Math.PI / 2;
-    ring.position.set(w.x, 0.004, w.z);
-    group.add(ring);
-    const away = new THREE.Vector3(w.x, 0, w.z).normalize();
-    const lid = new THREE.Mesh(lidGeo, steel);
+    const toward = new THREE.Vector3(-w.x, 0, -w.z).normalize();
+    const lid = new THREE.Mesh(lidGeo, darkSteel);
     lid.userData.dynamic = true;
-    const open = new THREE.Vector3(w.x, 0.0125, w.z).addScaledVector(away, 0.6);
-    const closed = new THREE.Vector3(w.x, 0.0125, w.z);
+    // Flush with the channel floor; parks in under the platform
+    const y = CH - 0.002 - 0.0125;
+    const open = new THREE.Vector3(w.x, y, w.z).addScaledVector(toward, 0.5);
+    const closed = new THREE.Vector3(w.x, y, w.z);
     lid.position.copy(open);
     group.add(lid);
     lids.set(w.id, { lid, open, closed });
@@ -673,6 +824,13 @@ export function createWorkshopEnvironment(
 
   // ── Workbenches + animated JARVIS monitors ────────────────────────
   const benchGeo = keep(new THREE.BoxGeometry(2.2, 0.9, 0.8));
+  const bezelGeo = keep(new THREE.BoxGeometry(0.84, 0.5, 0.03));
+  const monArmGeo = keep(new THREE.BoxGeometry(0.05, 0.3, 0.05));
+  const worktopGeo = keep(new THREE.BoxGeometry(2.32, 0.04, 0.86));
+  const drawerGeo = keep(new THREE.BoxGeometry(0.48, 0.21, 0.012));
+  const handleGeo = keep(new THREE.BoxGeometry(0.2, 0.018, 0.02));
+  const kickGeo = keep(new THREE.BoxGeometry(2.18, 0.05, 0.01));
+  const keyboardGeo = keep(new THREE.BoxGeometry(0.46, 0.02, 0.16));
   const screenGeo = keep(new THREE.PlaneGeometry(1.1, 0.62));
   const benches: Array<[number, number]> = [
     [-Math.PI * 0.78, 6.1],
@@ -686,7 +844,9 @@ export function createWorkshopEnvironment(
     top.position.y = 0.45;
     bench.add(top);
     for (const dx of [-0.42, 0.42]) {
-      const screenMat = keep(screenMaterial(keep(screenTexture(i * 2 + (dx > 0 ? 1 : 0))), scanFeed));
+      // Only the main wall TV shows the suit; benches run other workloads
+      const k = i * 2 + (dx > 0 ? 1 : 0);
+      const screenMat = keep(workstationMaterial(k % 5, k + 1));
       animated.push(screenMat);
       const screen = new THREE.Mesh(screenGeo, screenMat);
       screen.scale.setScalar(0.72);
@@ -697,6 +857,38 @@ export function createWorkshopEnvironment(
     const stand = new THREE.Mesh(keep(new THREE.BoxGeometry(0.9, 0.04, 0.06)), steel);
     stand.position.set(0, 1.06, -0.26);
     bench.add(stand);
+    // Monitor bezels + arms, worktop, drawer bank, kick plate, keyboard
+    for (const dx of [-0.42, 0.42]) {
+      const bezel = new THREE.Mesh(bezelGeo, darkSteel);
+      // Sits behind the screen plane (rotated with it) — never coplanar
+      bezel.position.set(dx, 1.35, -0.2).add(new THREE.Vector3(0, 0, -0.022).applyEuler(new THREE.Euler(-0.12, -dx * 0.5, 0)));
+      bezel.rotation.set(-0.12, -dx * 0.5, 0);
+      bench.add(bezel);
+      const arm = new THREE.Mesh(monArmGeo, steel);
+      arm.position.set(dx * 0.85, 1.18, -0.27);
+      bench.add(arm);
+    }
+    const worktop = new THREE.Mesh(worktopGeo, steel);
+    worktop.position.y = 0.915;
+    bench.add(worktop);
+    for (let col = 0; col < 4; col++) {
+      for (let row = 0; row < 3; row++) {
+        const x = -0.78 + col * 0.52;
+        const y = 0.2 + row * 0.24;
+        const drawer = new THREE.Mesh(drawerGeo, row === 2 && col % 2 ? red : darkSteel);
+        drawer.position.set(x, y, 0.405);
+        bench.add(drawer);
+        const handle = new THREE.Mesh(handleGeo, pipeMat);
+        handle.position.set(x, y + 0.06, 0.422);
+        bench.add(handle);
+      }
+    }
+    const kick = new THREE.Mesh(kickGeo, amber);
+    kick.position.set(0, 0.03, 0.402);
+    bench.add(kick);
+    const kb = new THREE.Mesh(keyboardGeo, darkSteel);
+    kb.position.set(0, 0.945, 0.12);
+    bench.add(kb);
     // Tools on the bench
     for (let k = 0; k < 4; k++) {
       const tool = new THREE.Mesh(keep(new THREE.BoxGeometry(0.18, 0.05, 0.08)), k % 2 ? amber : steel);
@@ -774,11 +966,13 @@ export function createWorkshopEnvironment(
   // ── Flight cases, tool chests, a gas bottle rack ──────────────────
   const crateGeo = keep(new THREE.BoxGeometry(1, 1, 1));
   const caseMap = keep(caseTexture());
-  const caseMat = (m: THREE.MeshStandardMaterial) =>
-    keep(new THREE.MeshStandardMaterial({ color: m.color, map: caseMap, metalness: 0.35, roughness: 0.55 }));
-  const amberCase = caseMat(amber);
-  const redCase = caseMat(red);
-  const darkCase = caseMat(darkSteel);
+  const cornerGeo = keep(new THREE.BoxGeometry(0.075, 0.075, 0.075));
+  const crateHandleGeo = keep(new THREE.BoxGeometry(0.03, 0.04, 0.2));
+  const caseMat = (m: THREE.MeshStandardMaterial, key: string) =>
+    W(new THREE.MeshStandardMaterial({ color: m.color, map: caseMap, metalness: 0.35, roughness: 0.55 }), 0.65, 0.25, 0.45, 8, `case-${key}`);
+  const amberCase = caseMat(amber, 'amber');
+  const redCase = caseMat(red, 'red');
+  const darkCase = caseMat(darkSteel, 'dark');
   const props: Array<[number, number, number, number, number, number, THREE.Material]> = [
     // x, z, w, h, d, yaw, material
     [-5.2, -2.6, 1.1, 0.7, 0.8, 0.4, amber],
@@ -787,8 +981,8 @@ export function createWorkshopEnvironment(
     [5.3, 1.9, 1.2, 0.85, 0.6, -0.6, red],
     [5.0, 2.9, 0.7, 0.6, 0.7, -0.2, darkSteel],
     [-5.4, 2.4, 1.0, 1.25, 0.55, 0.9, red],
-    [2.0, -5.6, 1.4, 0.6, 0.8, 0.1, darkSteel],
-    [-2.2, -5.5, 0.9, 0.9, 0.9, -0.15, amber],
+    [-4.3, 4.6, 1.4, 0.6, 0.8, 0.5, darkSteel],
+    [4.4, 4.4, 0.9, 0.9, 0.9, -0.5, amber],
   ];
   for (const [x, z, w, h, d, yaw, mat] of props) {
     const crate = new THREE.Mesh(
@@ -799,11 +993,27 @@ export function createWorkshopEnvironment(
     crate.position.set(x, h / 2, z);
     crate.rotation.y = yaw;
     group.add(crate);
+    // Steel corner caps and side handles
+    const rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    for (const sx of [-1, 1]) {
+      for (const sy of [0, 1]) {
+        for (const sz of [-1, 1]) {
+          const cap = new THREE.Mesh(cornerGeo, darkSteel);
+          cap.position.set((sx * w) / 2, sy * h + (sy ? -0.03 : 0.03), (sz * d) / 2).applyQuaternion(rot).add(new THREE.Vector3(x, 0, z));
+          cap.quaternion.copy(rot);
+          group.add(cap);
+        }
+      }
+      const handle = new THREE.Mesh(crateHandleGeo, pipeMat);
+      handle.position.set((sx * (w + 0.03)) / 2, h * 0.7, 0).applyQuaternion(rot).add(new THREE.Vector3(x, 0, z));
+      handle.quaternion.copy(rot);
+      group.add(handle);
+    }
   }
   const bottleGeo = keep(new THREE.CylinderGeometry(0.11, 0.11, 1.4, 16));
   for (let k = 0; k < 4; k++) {
     const b = new THREE.Mesh(bottleGeo, k % 2 ? pipeMat : red);
-    b.position.set(-3.0 + k * 0.26, 0.7, -5.9);
+    b.position.set(-0.95 + k * 0.26, 0.7, -6.25);
     group.add(b);
   }
 
@@ -882,37 +1092,4 @@ export function createWorkshopEnvironment(
     },
     dispose: () => disposables.forEach((d) => d.dispose()),
   };
-}
-
-/** Floor stand, or a hoist rod from the ceiling, holding a parts cradle. */
-export function createCradleStand(
-  at: THREE.Vector3,
-  restBottom: number,
-  restTop: number,
-  hanging: boolean,
-  mats: { steel: THREE.Material; accent: THREE.Material },
-): THREE.Group {
-  const g = new THREE.Group();
-  if (!hanging) {
-    const h = Math.max(0.05, restBottom - 0.01);
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, h, 12), mats.steel);
-    post.position.set(at.x, h / 2, at.z);
-    g.add(post);
-    const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.03, 24), mats.steel);
-    foot.position.set(at.x, 0.015, at.z);
-    g.add(foot);
-    const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.02, 0.12), mats.accent);
-    saddle.position.set(at.x, h, at.z);
-    g.add(saddle);
-  } else {
-    const top = ROOM_HEIGHT - 0.02;
-    const h = Math.max(0.05, top - restTop - 0.01);
-    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, h, 10), mats.steel);
-    rod.position.set(at.x, top - h / 2, at.z);
-    g.add(rod);
-    const hook = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.025, 0.1), mats.accent);
-    hook.position.set(at.x, restTop + 0.012, at.z);
-    g.add(hook);
-  }
-  return g;
 }

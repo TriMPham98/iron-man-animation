@@ -16,6 +16,8 @@ export interface EnvironmentHandles {
 export function createEnvironment(
   scene: THREE.Scene,
   holes: Array<[number, number, number]> = [],
+  /** Concentric annuli (r0, r1) cut out of the floor — the robot ring. */
+  rings: Array<[number, number]> = [],
 ): EnvironmentHandles {
   const voidColor = COLORS.bg;
   scene.background = new THREE.Color(voidColor);
@@ -27,7 +29,7 @@ export function createEnvironment(
   const padDetail = 1024;
   const GROUND_R = 5.6;
   const { colorMap, roughnessMap, alphaMap, emissiveMap } =
-    buildPadTextures(padDetail, holes, GROUND_R);
+    buildPadTextures(padDetail, holes, GROUND_R, rings);
 
   const groundGeo = new THREE.CircleGeometry(GROUND_R, 96);
   const groundMat = new THREE.MeshStandardMaterial({
@@ -108,6 +110,7 @@ function buildPadTextures(
   size: number,
   holes: Array<[number, number, number]>,
   groundR: number,
+  rings: Array<[number, number]> = [],
 ): {
   colorMap: THREE.CanvasTexture;
   roughnessMap: THREE.CanvasTexture;
@@ -255,6 +258,14 @@ function buildPadTextures(
       Math.PI * 2,
     );
     actx.fill();
+  }
+  for (const [r0, r1] of rings) {
+    const c = size / 2;
+    const k = size / (2 * groundR);
+    actx.beginPath();
+    actx.arc(c, c, r1 * k, 0, Math.PI * 2);
+    actx.arc(c, c, r0 * k, 0, Math.PI * 2, true);
+    actx.fill('evenodd');
   }
 
   // Emissive: faint concentric reactor cue + sparse radial ticks

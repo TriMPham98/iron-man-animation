@@ -9,9 +9,10 @@ import { createRenderer } from './scene/createRenderer';
 import { applyStudioEnvironment } from './scene/createStudioEnv';
 import { createAssemblySession } from './session/assemblySession';
 import { buildSuitUpPlan } from './animation/suitUpChoreography';
+import { CRADLE_PORT_RADIUS, floorCradlePorts } from './workshop/cradleStands';
 import { Workshop } from './workshop/Workshop';
-import { FIT_TASKS, ROBOTS } from './workshop/fittingProgram';
-import { HATCH_RADIUS, WELL_RADIUS } from './workshop/workshopEnvironment';
+import { ROBOT_RING_RADIUS } from './workshop/fittingProgram';
+import { FOOT_HATCH_RADIUS, RING_HALF_WIDTH } from './workshop/workshopEnvironment';
 import { Suit } from './suit/Suit';
 import { SUIT_GROUND_CLEARANCE } from './suit/loadSuitModel';
 import { bindInput } from './ui/bindInput';
@@ -66,14 +67,13 @@ async function boot(): Promise<void> {
   createEnvironment(
     scene,
     [
-      ...FIT_TASKS.filter((t) => t.kind === 'lift').map(
-        (t) => [t.origin[0], t.origin[2], HATCH_RADIUS + 0.005] as [number, number, number],
-      ),
-      // Elevator wells the floor arms stow into
-      ...ROBOTS.filter((r) => r.mount === 'floor').map(
-        (r) => [r.base[0], r.base[2], WELL_RADIUS] as [number, number, number],
-      ),
+      // Centre boot hatch
+      [0, 0, FOOT_HATCH_RADIUS + 0.005],
+      // Flush ports the parts stands retract through
+      ...floorCradlePorts().map(([x, z]) => [x, z, CRADLE_PORT_RADIUS] as [number, number, number]),
     ],
+    // The concentric trench the floor arms rise from
+    [[ROBOT_RING_RADIUS - RING_HALF_WIDTH, ROBOT_RING_RADIUS + RING_HALF_WIDTH]],
   );
   const lights = createLights();
   scene.add(lights.group);

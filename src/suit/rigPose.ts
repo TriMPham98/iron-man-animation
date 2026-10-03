@@ -18,6 +18,22 @@ export interface SuitPose {
   wristR: number;
 }
 
+/**
+ * Extra channels the post-assembly flight-control check drives (absent =
+ * 0, so suit-up poses never carry them).
+ */
+export interface FlightPose extends SuitPose {
+  /** Head yaw in radians (+ = turn to the suit's left). */
+  headYaw?: number;
+  /** Whole-suit hover above the platform (m) — thruster test. */
+  lift?: number;
+  /** 0 = modelled stance (~30 cm between the boots), 1 = feet together. */
+  legsIn?: number;
+}
+
+/** Thigh adduction that brings the boots together (rad). */
+const LEGS_IN = 0.085;
+
 export const BIND_POSE: Readonly<SuitPose> = {
   stance: 0,
   chestRecoil: 0,
@@ -87,6 +103,7 @@ export function bindRig(rig: SuitRig): THREE.Skeleton {
 const _qa = new THREE.Quaternion();
 const _qb = new THREE.Quaternion();
 const _X = new THREE.Vector3(1, 0, 0);
+const _Y = new THREE.Vector3(0, 1, 0);
 const _Z = new THREE.Vector3(0, 0, 1);
 
 function setAxisAngles(
@@ -104,7 +121,7 @@ function setAxisAngles(
 }
 
 /** Write pose channels into the bone rotations (positions never change). */
-export function applyPose(rig: SuitRig, pose: SuitPose): void {
+export function applyPose(rig: SuitRig, pose: FlightPose): void {
   const b = rig.bones;
   const st = pose.stance;
 
@@ -125,10 +142,14 @@ export function applyPose(rig: SuitRig, pose: SuitPose): void {
       _Z,
       s * (WRIST_EXTENSION * wrist - STANCE_WRIST * st),
     ]);
-    setAxisAngles(b[`thigh.${side}`], [_Z, s * STANCE_LEG_SPREAD * st]);
-    setAxisAngles(b[`foot.${side}`], [_Z, -s * STANCE_LEG_SPREAD * st]);
+    const legs = STANCE_LEG_SPREAD * st - LEGS_IN * (pose.legsIn ?? 0);
+    setAxisAngles(b[`thigh.${side}`], [_Z, s * legs]);
+    // Soles stay flat on the deck
+    setAxisAngles(b[`foot.${side}`], [_Z, -s * legs]);
   }
 
   setAxisAngles(b.chest, [_X, -CHEST_RECOIL * pose.chestRecoil]);
-  setAxisAngles(b.head, [_X, pose.headPitch]);
+  setAxisAngles(b.head, [_X, pose.headPitch], [_Y, pose.headYaw ?? 0]);
+  // Root sits at the origin in the bind pose; hover moves the whole rig
+  rig.root.position.y = pose.lift ?? 0;
 }

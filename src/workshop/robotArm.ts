@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { ARM_DIMS } from './fittingProgram';
 import { mergeStaticTree } from './mergeStatic';
 import { DECAL_RECTS, decalPlane, type RobotMaterials } from './robotMaterials';
+import { block, boltCircle, cable, capsuleOutline, drum, hubX, hull, lathe, roundedRect, slabX, slabY } from './robotParts';
 
 /**
  * Six-axis industrial arm (yaw · shoulder · elbow · wrist roll/pitch/roll)
@@ -156,23 +157,6 @@ export function armForward(
 export { createRobotMaterials } from './robotMaterials';
 export type { RobotMaterials } from './robotMaterials';
 
-const box = (w: number, h: number, d: number, m: THREE.Material, y = h / 2) => {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
-  mesh.position.y = y;
-  return mesh;
-};
-/** Cylinder whose axis runs along local X (joint hubs). */
-const hub = (r: number, len: number, m: THREE.Material) => {
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 28), m);
-  mesh.rotation.z = Math.PI / 2;
-  return mesh;
-};
-const cyl = (r0: number, r1: number, h: number, m: THREE.Material, y = h / 2, seg = 28) => {
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, h, seg), m);
-  mesh.position.y = y;
-  return mesh;
-};
-
 /** Folded transport pose the arm tucks into before it stows. */
 const FOLDED: Omit<ArmJoints, 'error'> = {
   yaw: 0,
@@ -217,8 +201,8 @@ export class RobotArm {
   private readonly wrist1 = new THREE.Group();
   private readonly wrist2 = new THREE.Group();
   private readonly flange = new THREE.Group();
-  private fingerA: THREE.Mesh | null = null;
-  private fingerB: THREE.Mesh | null = null;
+  private fingerA: THREE.Object3D | null = null;
+  private fingerB: THREE.Object3D | null = null;
   private spindle: THREE.Group | null = null;
   private barrel: THREE.Group | null = null;
   /** Counterbalance cylinder (turret → upper arm). */
@@ -251,87 +235,146 @@ export class RobotArm {
     }
     this.group.quaternion.copy(q);
 
-    // Round pedestal (rides an elevator in its floor well) or mast trolley
+    // ── Mount: pedestal on its elevator (floor) or mast trolley ──────
     if (mount === 'floor' && pedestal > 0) {
-      this.group.add(cyl(0.19, 0.19, pedestal, mats.dark, -pedestal / 2, 36));
-      this.group.add(cyl(0.192, 0.192, 0.025, mats.accent, -pedestal + 0.04, 36));
-      this.group.add(cyl(0.2, 0.2, 0.02, mats.metal, -0.01, 36));
+      // Column runs on below the floor so a rising elevator never shows its foot
+      this.group.add(drum(0.18, -pedestal - 0.3, -0.03, mats.dark, 0.004, 40));
+      this.group.add(drum(0.183, -pedestal + 0.05, -pedestal + 0.075, mats.accent, 0.002, 40));
+      if (pedestal > 0.3) {
+        this.group.add(block(0.11, pedestal * 0.45, 0.03, mats.paint, 0, -pedestal * 0.5, 0.168));
+      }
+      this.group.add(
+        lathe([[0, -0.03], [0.2, -0.03], [0.205, -0.025], [0.205, -0.009], [0.2, -0.004], [0, -0.004]], mats.metal, 40),
+      );
+      this.group.add(...boltCircle(12, 0.19, [0, -0.004, 0], 'y', mats.metal, 0.008));
+      this.group.add(cable([[0, 0.03, -0.165], [0, 0.025, -0.225], [0, -0.03, -0.25], [0, -0.2, -0.25]], 0.014, mats.rubber, 16));
     } else if (mount === 'ceiling') {
-      this.group.add(cyl(0.16, 0.16, 0.12, mats.dark, -0.06, 32));
-      this.group.add(cyl(0.165, 0.165, 0.02, mats.accent, -0.1, 32));
+      this.group.add(drum(0.16, -0.13, -0.004, mats.dark, 0.006, 36));
+      this.group.add(drum(0.163, -0.1, -0.086, mats.accent, 0.002, 36));
+      this.group.add(...boltCircle(8, 0.145, [0, -0.13, 0], '-y', mats.metal, 0.007));
     }
-    this.group.add(cyl(0.17, 0.17, 0.06, mats.dark, 0.03, 32));
+    // Fixed J1 housing
+    this.group.add(
+      lathe([[0, 0], [0.17, 0], [0.175, 0.006], [0.175, 0.045], [0.165, 0.058], [0, 0.058]], mats.dark, 40),
+    );
 
-    // J1 turret
+    // ── J1 turret: carousel, shoulder yoke, A2 motor ─────────────────
+    const S = dims.shoulder;
     this.group.add(this.turret);
-    this.turret.add(cyl(0.14, 0.12, 0.26, mats.paint, 0.19, 32));
-    this.turret.add(cyl(0.145, 0.145, 0.02, mats.accent, 0.07, 32));
-    const motor = box(0.1, 0.13, 0.09, mats.dark, 0.22);
-    motor.position.z = -0.14;
-    this.turret.add(motor);
-    const motorCap = box(0.104, 0.02, 0.094, mats.metal, 0.29);
-    motorCap.position.z = -0.14;
-    this.turret.add(motorCap);
-    const led = box(0.03, 0.012, 0.006, mats.led, 0.27);
-    led.position.z = 0.125;
-    this.turret.add(led);
-    const maker = decalPlane(mats, DECAL_RECTS.axes, 0.12);
-    maker.position.set(0, 0.17, 0.142);
-    this.turret.add(maker);
-
-    // J2 shoulder + upper link
-    this.shoulderJ.position.y = dims.shoulder;
-    this.turret.add(this.shoulderJ);
-    this.shoulderJ.add(hub(0.09, 0.22, mats.paint));
-    this.shoulderJ.add(hub(0.094, 0.03, mats.accent));
-    this.shoulderJ.add(hub(0.05, 0.235, mats.metal));
-    this.shoulderJ.add(box(0.11, dims.upper, 0.095, mats.paint));
-    const upperRib = box(0.125, dims.upper * 0.62, 0.03, mats.dark, dims.upper * 0.45);
-    upperRib.position.z = -0.055;
-    this.shoulderJ.add(upperRib);
-    for (const side of [-1, 1]) {
-      const plate = decalPlane(mats, DECAL_RECTS.maker, 0.24);
-      plate.rotation.set(0, (side * Math.PI) / 2, Math.PI / 2);
-      plate.position.set(side * 0.0565, dims.upper * 0.5, 0);
-      this.shoulderJ.add(plate);
-      const warn = decalPlane(mats, DECAL_RECTS.hazard, 0.2);
-      warn.rotation.set(0, (side * Math.PI) / 2, Math.PI / 2);
-      warn.position.set(side * 0.0565, dims.upper * 0.82, 0);
-      this.shoulderJ.add(warn);
+    this.turret.add(
+      lathe([[0, 0.062], [0.155, 0.062], [0.16, 0.068], [0.16, 0.1], [0.13, 0.14], [0.115, 0.2], [0, 0.2]], mats.paint, 40),
+    );
+    this.turret.add(drum(0.163, 0.075, 0.087, mats.accent, 0.002, 40));
+    const cheekPts: Array<[number, number]> = [
+      [-0.12, 0.13],
+      [0.12, 0.13],
+    ];
+    for (let i = 0; i < 20; i++) {
+      const a = (i / 20) * Math.PI * 2;
+      cheekPts.push([Math.cos(a) * 0.095, S + Math.sin(a) * 0.095]);
     }
-    const loom = cyl(0.016, 0.016, dims.upper * 0.85, mats.rubber, dims.upper * 0.48, 10);
-    loom.position.set(0.064, 0, 0.03);
-    this.shoulderJ.add(loom);
+    const cheek = hull(cheekPts);
+    this.turret.add(slabX(cheek, 0.088, 0.118, mats.paint, 0.006));
+    this.turret.add(slabX(cheek, -0.118, -0.088, mats.paint, 0.006));
+    // A2 servo with cooling fins (+X), bearing cap (−X)
+    const atS = (m: THREE.Mesh) => {
+      m.position.y = S;
+      return m;
+    };
+    this.turret.add(atS(hubX(0.07, 0.118, 0.19, mats.dark)));
+    for (const x of [0.13, 0.145, 0.16, 0.175]) this.turret.add(atS(hubX(0.077, x, x + 0.005, mats.metal, 0.001)));
+    this.turret.add(atS(hubX(0.05, 0.19, 0.204, mats.metal, 0.003)));
+    this.turret.add(...boltCircle(6, 0.036, [0.204, S, 0], 'x', mats.metal, 0.006));
+    this.turret.add(atS(hubX(0.062, -0.134, -0.118, mats.metal, 0.003)));
+    this.turret.add(...boltCircle(6, 0.045, [-0.134, S, 0], '-x', mats.metal, 0.006));
+    // J1 servo + ram clevis at the back
+    const j1 = drum(0.04, 0.07, 0.2, mats.dark);
+    j1.position.z = -0.19;
+    this.turret.add(j1);
+    const j1Cap = drum(0.043, 0.2, 0.214, mats.metal, 0.002);
+    j1Cap.position.z = -0.19;
+    this.turret.add(j1Cap);
+    this.turret.add(block(0.05, 0.03, 0.05, mats.dark, 0, 0.2, -0.135));
+    this.turret.add(block(0.03, 0.01, 0.006, mats.led, 0, 0.18, 0.124));
+    const axes = decalPlane(mats, DECAL_RECTS.axes, 0.12);
+    axes.rotation.y = Math.PI / 2;
+    axes.position.set(0.1195, 0.24, 0);
+    this.turret.add(axes);
 
-    // J3 elbow + forearm
-    this.elbowJ.position.y = dims.upper;
+    // ── J2 shoulder + upper link: twin side plates (the forearm folds
+    // between them), axle, crossbars, covers ─────────────────────────
+    const L = dims.upper;
+    this.shoulderJ.position.y = S;
+    this.turret.add(this.shoulderJ);
+    const plate = capsuleOutline(0.085, 0, 0.068, L);
+    this.shoulderJ.add(slabX(plate, 0.05, 0.074, mats.paint, 0.006));
+    this.shoulderJ.add(slabX(plate, -0.074, -0.05, mats.paint, 0.006));
+    this.shoulderJ.add(hubX(0.065, -0.049, 0.049, mats.dark));
+    this.shoulderJ.add(hubX(0.03, -0.122, 0.122, mats.chrome, 0.002));
+    const ramPin = hubX(0.02, -0.049, 0.049, mats.metal, 0.002);
+    ramPin.position.set(0, 0.26, -0.06);
+    this.shoulderJ.add(ramPin);
+    const cross = hubX(0.03, -0.049, 0.049, mats.dark, 0.003);
+    cross.position.set(0, L * 0.55, 0.03);
+    this.shoulderJ.add(cross);
+    const cover = capsuleOutline(0.05, 0.16, 0.042, L - 0.14);
+    for (const side of [-1, 1]) {
+      const x0 = side > 0 ? 0.074 : -0.08;
+      this.shoulderJ.add(slabX(cover, x0, x0 + 0.006, mats.dark, 0.002));
+      const maker = decalPlane(mats, DECAL_RECTS.maker, 0.2);
+      maker.rotation.set(0, (side * Math.PI) / 2, Math.PI / 2);
+      maker.position.set(side * 0.0815, L * 0.58, 0);
+      this.shoulderJ.add(maker);
+      const warn = decalPlane(mats, DECAL_RECTS.hazard, 0.16);
+      warn.rotation.set(0, (side * Math.PI) / 2, Math.PI / 2);
+      warn.position.set(side * 0.0815, L * 0.3, 0);
+      this.shoulderJ.add(warn);
+      this.shoulderJ.add(
+        cable([[side * 0.09, 0.06, -0.075], [side * 0.09, L * 0.4, -0.078], [side * 0.09, L * 0.8, -0.062], [side * 0.088, L - 0.02, -0.03]], 0.011, mats.rubber, 20),
+      );
+    }
+
+    // ── J3 elbow + forearm ───────────────────────────────────────────
+    const F = dims.fore;
+    this.elbowJ.position.y = L;
     this.shoulderJ.add(this.elbowJ);
-    this.elbowJ.add(hub(0.07, 0.17, mats.paint));
-    this.elbowJ.add(hub(0.074, 0.025, mats.accent));
-    this.elbowJ.add(hub(0.04, 0.18, mats.metal));
-    const elbowMotor = box(0.08, 0.11, 0.075, mats.dark, -0.02);
-    elbowMotor.position.z = -0.08;
-    this.elbowJ.add(elbowMotor);
-    this.elbowJ.add(cyl(0.05, 0.038, dims.fore - 0.06, mats.paint, (dims.fore - 0.06) / 2));
-    const rating = decalPlane(mats, DECAL_RECTS.payload, 0.15);
-    rating.rotation.set(0, Math.PI / 2, Math.PI / 2);
-    rating.position.set(0.046, dims.fore * 0.45, 0);
+    this.elbowJ.add(hubX(0.062, -0.044, 0.044, mats.paint));
+    this.elbowJ.add(hubX(0.025, -0.082, 0.082, mats.chrome, 0.002));
+    this.elbowJ.add(hubX(0.035, 0.0745, 0.08, mats.metal, 0.002));
+    this.elbowJ.add(hubX(0.035, -0.08, -0.0745, mats.metal, 0.002));
+    this.elbowJ.add(slabX(roundedRect(0.08, 0.12, 0.015, -0.085, -0.01), -0.04, 0.04, mats.dark, 0.005));
+    const rating = decalPlane(mats, DECAL_RECTS.payload, 0.07);
+    rating.rotation.y = Math.PI / 2;
+    rating.position.set(0.0415, -0.01, -0.085);
     this.elbowJ.add(rating);
-    const cable = cyl(0.014, 0.014, dims.fore * 0.8, mats.rubber, dims.fore * 0.45, 8);
-    cable.position.x = 0.045;
-    cable.position.z = 0.02;
-    this.elbowJ.add(cable);
+    this.elbowJ.add(
+      lathe(
+        [[0, 0.03], [0.05, 0.03], [0.054, 0.05], [0.05, 0.2], [0.042, F - 0.12], [0.046, F - 0.1], [0.046, F - 0.05], [0.04, F - 0.045], [0, F - 0.045]],
+        mats.paint,
+        32,
+      ),
+    );
+    this.elbowJ.add(drum(0.049, F - 0.094, F - 0.084, mats.accent, 0.001));
+    this.elbowJ.add(cable([[0.03, 0.06, -0.062], [0.05, F * 0.4, -0.048], [0.046, F * 0.75, -0.044], [0.03, F - 0.07, -0.045]], 0.009, mats.rubber, 20));
 
-    // J4–J6 wrist
-    this.wrist1.position.y = dims.fore;
+    // ── J4–J6 wrist ──────────────────────────────────────────────────
+    this.wrist1.position.y = F;
     this.elbowJ.add(this.wrist1);
-    this.wrist1.add(cyl(0.042, 0.042, 0.05, mats.dark, -0.03));
+    this.wrist1.add(drum(0.044, -0.04, -0.012, mats.dark, 0.003));
+    const wcheek = roundedRect(0.07, 0.06, 0.02, 0, -0.012);
+    this.wrist1.add(slabX(wcheek, 0.048, 0.062, mats.dark, 0.003));
+    this.wrist1.add(slabX(wcheek, -0.062, -0.048, mats.dark, 0.003));
     this.wrist1.add(this.wrist2);
-    this.wrist2.add(hub(0.042, 0.1, mats.paint));
-    this.wrist2.add(hub(0.045, 0.02, mats.accent));
+    this.wrist2.add(hubX(0.04, -0.045, 0.045, mats.paint));
+    this.wrist2.add(hubX(0.042, -0.006, 0.006, mats.accent, 0.001));
+    this.wrist2.add(hubX(0.022, 0.062, 0.068, mats.metal, 0.002));
+    this.wrist2.add(hubX(0.022, -0.068, -0.062, mats.metal, 0.002));
     this.wrist2.add(this.flange);
-    this.flange.add(cyl(0.04, 0.036, 0.08, mats.paint, 0.04));
-    this.flange.add(cyl(0.045, 0.045, 0.012, mats.metal, 0.086));
+    this.flange.add(drum(0.036, 0.03, 0.075, mats.paint));
+    this.flange.add(drum(0.046, 0.075, 0.085, mats.metal, 0.002));
+    this.flange.add(...boltCircle(6, 0.038, [0, 0.085, 0], 'y', mats.metal, 0.005));
+    // Tool changer
+    this.flange.add(drum(0.044, 0.089, 0.1, mats.dark, 0.003));
 
     if (tool === 'gripper') this.buildGripper(mats);
     else this.buildRivetGun(mats);
@@ -348,41 +391,93 @@ export class RobotArm {
     this.group.updateMatrixWorld(true);
   }
 
-  /** Parallel gripper (jaws open along X) + integrated nut runner. */
+  /**
+   * Servo parallel gripper (jaws open along X): force/torque sensor, body
+   * with valve block and air lines, guide rail, two-piece fingers with
+   * ribbed rubber pads, camera/light pod and an integrated nut runner.
+   */
   private buildGripper(mats: RobotMaterials): void {
-    this.flange.add(box(0.11, 0.07, 0.06, mats.dark, 0.13));
-    this.flange.add(box(0.22, 0.014, 0.024, mats.metal, 0.172));
-    const a = box(0.016, 0.1, 0.034, mats.accent, 0.23);
-    const b = box(0.016, 0.1, 0.034, mats.accent, 0.23);
-    a.userData.dynamic = true;
-    b.userData.dynamic = true;
-    this.flange.add(a, b);
-    this.fingerA = a;
-    this.fingerB = b;
+    const f = this.flange;
+    f.add(drum(0.04, 0.1, 0.118, mats.chrome, 0.002));
+    f.add(drum(0.042, 0.106, 0.11, mats.accent, 0.001));
+    f.add(slabY(roundedRect(0.13, 0.075, 0.012), 0.118, 0.19, mats.dark, 0.004));
+    f.add(slabY(roundedRect(0.134, 0.079, 0.014), 0.165, 0.172, mats.accent, 0.001));
+    // Guide rail + end stops
+    f.add(block(0.23, 0.012, 0.026, mats.metal, 0, 0.1955, 0));
+    f.add(block(0.008, 0.02, 0.03, mats.dark, 0.119, 0.199, 0));
+    f.add(block(0.008, 0.02, 0.03, mats.dark, -0.119, 0.199, 0));
+    // Valve block + air lines back to the wrist
+    f.add(block(0.04, 0.035, 0.02, mats.metal, -0.04, 0.145, 0.0475));
+    for (const x of [-0.05, -0.03]) {
+      f.add(cable([[x, 0.15, 0.057], [x, 0.11, 0.07], [x * 0.8, 0.05, 0.062], [x * 0.6, -0.02, 0.05]], 0.0055, mats.rubber, 14));
+    }
+    // Camera / light pod
+    f.add(block(0.04, 0.03, 0.03, mats.dark, 0.035, 0.155, -0.05));
+    const lens = drum(0.009, 0, 0.012, mats.chrome, 0.001, 16);
+    lens.rotation.x = -Math.PI / 2;
+    lens.position.set(0.035, 0.155, -0.065);
+    f.add(lens);
+    f.add(block(0.03, 0.006, 0.004, mats.led, 0.035, 0.172, -0.0655));
+
+    const jaw = (side: 1 | -1) => {
+      const g = new THREE.Group();
+      g.userData.dynamic = true;
+      g.add(block(0.042, 0.022, 0.04, mats.dark, 0, 0.2128, 0));
+      g.add(block(0.018, 0.044, 0.034, mats.accent, 0, 0.246, 0));
+      g.add(slabX([[-0.017, 0.267], [0.017, 0.267], [0.012, 0.285], [-0.012, 0.285]], -0.009, 0.009, mats.accent, 0.002));
+      // Pad on the inner face (toward the part)
+      const ix = side * 0.011;
+      g.add(block(0.004, 0.04, 0.03, mats.rubber, ix, 0.262, 0));
+      for (const y of [0.25, 0.262, 0.274]) g.add(block(0.002, 0.004, 0.03, mats.rubber, side * 0.0138, y, 0));
+      f.add(g);
+      return g;
+    };
+    // A sits on −X (its pad faces +X), B on +X
+    this.fingerA = jaw(1);
+    this.fingerB = jaw(-1);
+
+    // Nut runner: fixed housing + rotating spindle
+    const housing = drum(0.02, 0.12, 0.17, mats.dark, 0.003, 20);
+    housing.position.z = 0.055;
+    f.add(housing);
     const spindle = new THREE.Group();
-    spindle.position.set(0, 0.17, 0.05);
-    spindle.add(cyl(0.016, 0.016, 0.05, mats.chrome, 0.025, 12));
-    const bit = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.03, 6), mats.dark);
-    bit.position.y = 0.06;
+    spindle.userData.dynamic = true;
+    spindle.position.set(0, 0.17, 0.055);
+    spindle.add(drum(0.014, 0, 0.05, mats.chrome, 0.002, 16));
+    const bit = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.03, 6), mats.dark);
+    bit.position.y = 0.065;
     spindle.add(bit);
-    this.flange.add(spindle);
+    f.add(spindle);
     this.spindle = spindle;
   }
 
-  /** Pneumatic rivet gun: body, feed magazine, recoiling barrel. */
+  /** Pneumatic rivet gun: finned body, feed magazine, hose, recoiling barrel. */
   private buildRivetGun(mats: RobotMaterials): void {
-    this.flange.add(box(0.075, 0.11, 0.085, mats.accent, 0.15));
-    const mag = box(0.03, 0.08, 0.05, mats.dark, 0.15);
-    mag.position.x = 0.052;
-    this.flange.add(mag);
-    const hose = cyl(0.01, 0.01, 0.12, mats.rubber, 0.12, 8);
-    hose.position.z = -0.05;
-    this.flange.add(hose);
+    const f = this.flange;
+    f.add(lathe([[0, 0.1], [0.038, 0.1], [0.042, 0.106], [0.042, 0.2], [0.034, 0.215], [0, 0.215]], mats.accent, 28));
+    for (const y of [0.12, 0.135, 0.15, 0.165, 0.18]) f.add(drum(0.048, y, y + 0.005, mats.dark, 0.001, 28));
+    f.add(lathe([[0, 0.212], [0.03, 0.212], [0.018, 0.235], [0, 0.235]], mats.metal, 24));
+    f.add(block(0.026, 0.09, 0.05, mats.dark, 0.058, 0.16, 0));
+    for (let i = 0; i < 6; i++) {
+      const r = drum(0.005, 0, 0.004, mats.chrome, 0.001, 10);
+      r.rotation.z = -Math.PI / 2;
+      r.position.set(0.071, 0.125 + i * 0.013, 0.012);
+      f.add(r);
+    }
+    f.add(cable([[0.058, 0.205, 0], [0.045, 0.225, 0], [0.02, 0.232, 0]], 0.005, mats.rubber, 10));
+    f.add(cable([[0, 0.13, -0.042], [0, 0.08, -0.07], [0, 0.0, -0.06], [0, -0.05, -0.05]], 0.009, mats.rubber, 16));
     const barrel = new THREE.Group();
-    barrel.add(cyl(0.02, 0.02, 0.06, mats.metal, 0.23, 16));
-    barrel.add(cyl(0.012, 0.016, 0.02, mats.chrome, 0.27, 16));
-    this.flange.add(barrel);
+    barrel.userData.dynamic = true;
+    barrel.add(drum(0.013, 0.225, 0.265, mats.chrome, 0.002, 16));
+    barrel.add(lathe([[0, 0.265], [0.013, 0.265], [0.008, 0.278], [0, 0.278]], mats.chrome, 16));
+    f.add(barrel);
     this.barrel = barrel;
+  }
+
+  /** Carry a prop in the gripper (set dressing). */
+  hold(obj: THREE.Object3D): void {
+    obj.position.y = this.dims.wristToTcp - 0.02;
+    this.flange.add(obj);
   }
 
   /** Jaw opening 0 (closed on the part) → 1 (open). */

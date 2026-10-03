@@ -241,6 +241,14 @@ export const SEAMS = {
   faceSplitY: 1.7,
   /** Jaw / chin seam below faceSplitY. */
   jawZ: 0.02,
+  /**
+   * Chin plate: front panels under the mouth are only partly head-skinned
+   * (they blend into the neck) but belong to the faceplate so it swings
+   * as one unit, chin included.
+   */
+  chinX: 0.075,
+  chinY: 1.6,
+  chinZ: 0.075,
   /** Front / back clamshell planes (z). */
   torsoZ: -0.02,
   hipsZ: 0,
@@ -605,6 +613,26 @@ export function cutArmor(input: CutInput): PieceBuffers[] {
       if (w > bestW) {
         bestW = w;
         best = id;
+      }
+    }
+    // The chin rides with the faceplate even though it blends into the neck
+    {
+      let cx = 0;
+      let cy = 0;
+      let cz = 0;
+      for (const t of tris) {
+        for (let k = 0; k < 3; k++) {
+          const v = I[t * 3 + k];
+          cx += px(v);
+          cy += py(v);
+          cz += pz(v);
+        }
+      }
+      const m = tris.length * 3;
+      if (Math.abs(cx / m) < SEAMS.chinX && cy / m > SEAMS.chinY && cy / m < SEAMS.faceSplitY && cz / m > SEAMS.chinZ) {
+        const out = trisByPiece[pieceIndex.get('faceplate')!];
+        for (const t of tris) out.push(I[t * 3], I[t * 3 + 1], I[t * 3 + 2]);
+        continue;
       }
     }
     // Only head-skinned panels may join the helmet / faceplate — neck and

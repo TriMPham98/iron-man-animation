@@ -33,6 +33,21 @@ export const SOUNDS: SoundDef[] = [
   { id: 'robot-movement', label: 'Robot Movement', file: 'robot-movement.mp3' },
   { id: 'steam-hiss', label: 'Steam Hiss', file: 'steam-hiss.mp3' },
   { id: 'steam-release', label: 'Steam Release', file: 'steam-release.mp3' },
+  // Derived from the library for the action layer (servos, flaps, thrusters)
+  { id: 'servo-whir', label: 'Servo Whir', file: 'servo-whir.mp3' },
+  { id: 'servo-whine', label: 'Servo Whine', file: 'servo-whine.mp3' },
+  { id: 'flap-servo', label: 'Flap Servo', file: 'flap-servo.mp3' },
+  { id: 'flap-latch', label: 'Flap Latch', file: 'flap-latch.mp3' },
+  { id: 'weapon-deploy', label: 'Weapon Deploy', file: 'weapon-deploy.mp3' },
+  { id: 'weapon-lock', label: 'Weapon Lock', file: 'weapon-lock.mp3' },
+  { id: 'weapon-stow', label: 'Weapon Stow', file: 'weapon-stow.mp3' },
+  { id: 'unclamp-dry', label: 'Unclamp (dry)', file: 'unclamp-dry.mp3' },
+  { id: 'doff-hum', label: 'Doffing Hum', file: 'doff-hum.mp3' },
+  { id: 'thruster-ignite', label: 'Thruster Ignite', file: 'thruster-ignite.mp3' },
+  { id: 'thruster-burn', label: 'Thruster Burn', file: 'thruster-burn.mp3' },
+  { id: 'touchdown', label: 'Touchdown', file: 'touchdown.mp3' },
+  { id: 'spark-crackle', label: 'Spark Crackle', file: 'spark-crackle.mp3' },
+  { id: 'unclamp', label: 'Unclamp', file: 'unclamp.mp3' },
 ];
 
 /**

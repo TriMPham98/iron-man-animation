@@ -29,7 +29,7 @@ export interface RobotMaterials {
   decal: THREE.MeshStandardMaterial;
 }
 
-interface Weathering {
+export interface Weathering {
   /** Grime darkening / roughness variation 0–1. */
   grime: number;
   /** Fine directional scratches 0–1 (bare metal). */
@@ -74,7 +74,7 @@ const NOISE_GLSL = /* glsl */ `
   }
 `;
 
-function weather(mat: THREE.MeshPhysicalMaterial, w: Weathering, key: string): THREE.MeshPhysicalMaterial {
+export function weather<M extends THREE.MeshStandardMaterial>(mat: M, w: Weathering, key: string): M {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uGrime = { value: w.grime };
     shader.uniforms.uScratch = { value: w.scratch };

@@ -18,19 +18,22 @@ import {
   FIT_TASKS,
   fitTask,
   ROBOTS,
+  ROBOT_RING_RADIUS,
   taskForPiece,
   toolJob,
   type FitTask,
   type RobotId,
   type ToolJob,
 } from './fittingProgram';
-import { mergeStaticChildren, mergeStaticTree } from './mergeStatic';
+import { mergeStaticTree } from './mergeStatic';
 import { SuitScanView } from './suitScanView';
+import { createWorkshopDetail, type WorkshopDetail } from './workshopDetail';
+import { CRADLE_PORT_RADIUS, CradleStands, floorCradlePorts } from './cradleStands';
 import { createRobotMaterials, RobotArm, toolQuaternion } from './robotArm';
 import {
-  createCradleStand,
   createWorkshopEnvironment,
   ROOM_HEIGHT,
+  RING_HALF_WIDTH,
   type WorkshopEnvironment,
 } from './workshopEnvironment';
 
@@ -65,13 +68,14 @@ const FLOOR_STOW_EXTRA = 1.35;
 const CEILING_STOW_EXTRA = 1.3;
 
 /**
- * The robot cell: environment, fourteen arms and their parts cradles.
+ * The robot cell: environment, thirteen arms and their parts cradles.
  *
  * Each arm runs a baked program of hold / move / attached / tool segments.
  * Grippers ride the part they carry; riveters ride the seated
  * part's frame while they work its seams. After its last job an arm folds
  * and drops into its floor well (or climbs its mast into the ceiling) so
- * the finished suit stands alone, as in the film. Everything is a function
+ * the finished suit stands alone, as in the film. Parts stands sink
+ * through flush floor ports (hangers into the ceiling) once emptied. Everything is a function
  * of the seed-clock time, so scrubbing is exact.
  */
 export class Workshop {
@@ -79,16 +83,16 @@ export class Workshop {
   private readonly env: WorkshopEnvironment;
   /** Live suit diagnostic feed shown on the workshop monitors. */
   private readonly scanView: SuitScanView;
+  private readonly detail: WorkshopDetail;
   private readonly arms = new Map<RobotId, RobotArm>();
   private readonly programs = new Map<RobotId, Segment[]>();
   private readonly homes = new Map<RobotId, ToolPose>();
   private readonly passes = new Map<string, ToolPass>();
   private readonly masts = new Map<RobotId, THREE.Mesh>();
+  private stands!: CradleStands;
+  private readonly standRetract = new Map<string, number>();
   private readonly mats = createRobotMaterials();
   private readonly liftTasks: FitTask[];
-  private readonly rivetSites: Array<{ pass: ToolPass; k: number }> = [];
-  private readonly rivets: THREE.InstancedMesh;
-  private readonly hot: THREE.InstancedMesh;
   private lastT = Number.NaN;
   private readonly _m = new THREE.Matrix4();
   private readonly _m2 = new THREE.Matrix4();
@@ -96,7 +100,6 @@ export class Workshop {
   private readonly _q = new THREE.Quaternion();
   private readonly _v = new THREE.Vector3();
   private readonly _n = new THREE.Vector3();
-  private readonly _s = new THREE.Vector3(1, 1, 1);
   /** Worst IK miss on the last applied frame (m) — diagnostics/tests. */
   maxReachError = 0;
 
@@ -116,6 +119,8 @@ export class Workshop {
       this.scanView.target.texture,
     );
     this.group.add(this.env.group);
+    this.detail = createWorkshopDetail(suit.finalGeometry, this.mats);
+    this.group.add(this.detail.group);
 
     for (const st of ROBOTS) {
       const arm = new RobotArm(st.id, st.base, st.mount, st.pedestal, this.mats, st.tool, armDims(st));
@@ -131,28 +136,8 @@ export class Workshop {
       }
     }
 
-    // Rivet heads (+ their heat glow) ride the parts
+    // Rivet sites snap onto the part surfaces (the gun rides them)
     this.prepareToolPasses();
-    const rivetGeo = new THREE.SphereGeometry(0.0075, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-    const glowGeo = new THREE.SphereGeometry(0.012, 10, 8);
-    this.rivets = new THREE.InstancedMesh(rivetGeo, this.mats.metal, Math.max(1, this.rivetSites.length));
-    this.hot = new THREE.InstancedMesh(
-      glowGeo,
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-      Math.max(1, this.rivetSites.length),
-    );
-    this.hot.setColorAt(0, new THREE.Color(0, 0, 0));
-    for (const im of [this.rivets, this.hot]) {
-      im.frustumCulled = false;
-      im.count = 0;
-      this.group.add(im);
-    }
 
     this.group.updateMatrixWorld(true);
     this.buildCradles();
@@ -167,10 +152,7 @@ export class Workshop {
   }
 
   private buildCradles(): void {
-    const stands = new THREE.Group();
-    stands.name = 'cradles';
-    for (const task of FIT_TASKS) {
-      if (!task.robot) continue;
+    const bounds = (task: FitTask) => {
       const c = cradleFor(task);
       let minY = Infinity;
       let maxY = -Infinity;
@@ -180,17 +162,19 @@ export class Workshop {
         minY = Math.min(minY, box.min.y);
         maxY = Math.max(maxY, box.max.y);
       }
-      const bottom = c[1] - (task.origin[1] - minY);
-      const top = c[1] + (maxY - task.origin[1]);
-      const hanging = ROBOTS.find((r) => r.id === task.robot)!.mount === 'ceiling';
-      const stand = createCradleStand(new THREE.Vector3(c[0], c[1], c[2]), bottom, top, hanging, {
-        steel: this.mats.paint,
-        accent: this.mats.accent,
-      });
-      stands.add(...stand.children);
+      return { bottom: c[1] - (task.origin[1] - minY), top: c[1] + (maxY - task.origin[1]) };
+    };
+    // A stand starts down once its part is lifted clear
+    for (const track of this.plan.robots) {
+      for (const job of track.jobs) this.standRetract.set(job.task, job.lift + 0.35);
     }
-    mergeStaticChildren(stands);
-    this.group.add(stands);
+    const holes: Array<[number, number, number]> = [
+      ...floorCradlePorts().map(([x, z]) => [x, z, CRADLE_PORT_RADIUS] as [number, number, number]),
+    ];
+    const rings: Array<[number, number]> = [[ROBOT_RING_RADIUS - RING_HALF_WIDTH, ROBOT_RING_RADIUS + RING_HALF_WIDTH]];
+    this.stands = new CradleStands(this.mats, bounds, ROOM_HEIGHT, holes, rings);
+    mergeStaticTree(this.stands.group);
+    this.group.add(this.stands.group);
   }
 
   /** Snap every rivet site onto its part's surface. */
@@ -213,7 +197,6 @@ export class Workshop {
       });
       const pass: ToolPass = { timing, spec, sites };
       this.passes.set(timing.job, pass);
-      sites.forEach((_, k) => this.rivetSites.push({ pass, k }));
     }
     probeMat.dispose();
   }
@@ -471,7 +454,7 @@ export class Workshop {
       plate.position.y = Math.min(this._v.y, 0.05);
     });
 
-    this.updateMarks(frame);
+    this.stands.apply((task) => this.standRetract.get(task.id) ?? Infinity, t);
   }
 
   /** Final parked pose of an arm's program (where it starts stowing). */
@@ -504,58 +487,9 @@ export class Workshop {
     return lead ? Math.max(track, THREE.MathUtils.clamp(lead.insert * 1.15, 0, 1)) : track;
   }
 
-  /** Rivet heads: appear when struck, glow hot, then seat flush. */
-  private updateMarks(frame: SuitUpFrame): void {
-    const t = frame.t;
-    let nr = 0;
-    let nh = 0;
-    const color = new THREE.Color();
-    const frameCache = new Map<ArmorPieceId, THREE.Matrix4>();
-    const frameOf = (id: ArmorPieceId) => {
-      let f = frameCache.get(id);
-      if (!f) {
-        f = this.partFrame(id, frame.pieces, new THREE.Matrix4());
-        frameCache.set(id, f);
-      }
-      return f;
-    };
-    const up = new THREE.Vector3(0, 1, 0);
-    const place = (im: THREE.InstancedMesh, i: number, p: THREE.Vector3, n: THREE.Vector3, s: number) => {
-      this._q.setFromUnitVectors(up, n);
-      this._m.compose(p, this._q, this._s.set(s, s, s));
-      im.setMatrixAt(i, this._m);
-    };
-    const heat = (age: number, tau: number) => Math.exp(-age / tau);
-    const p = new THREE.Vector3();
-    const n = new THREE.Vector3();
-
-    // Animation-only: rivet heads seat flush, so the finished suit carries
-    // no extra geometry.
-    const fade = (age: number, hold: number, out: number) =>
-      1 - THREE.MathUtils.smoothstep(age, hold, hold + out);
-    for (const { pass, k } of this.rivetSites) {
-      const struck = pass.timing.strikes[k];
-      if (struck === undefined || t < struck) continue;
-      const age = t - struck;
-      const keep = fade(age, 0.7, 0.5);
-      if (keep <= 0.01) continue;
-      this.siteWorld(frameOf(pass.spec.piece), pass.sites[k], pass.spec.normal, p, n);
-      place(this.rivets, nr++, p, n, keep);
-      const h = heat(age, 0.3);
-      if (h > 0.02) {
-        place(this.hot, nh, p, n, 0.6 + h);
-        this.hot.setColorAt(nh++, color.setRGB(h, 0.45 * h * h, 0.12 * h * h * h));
-      }
-    }
-    this.rivets.count = nr;
-    this.hot.count = nh;
-    for (const im of [this.rivets, this.hot]) im.instanceMatrix.needsUpdate = true;
-    if (this.hot.instanceColor) this.hot.instanceColor.needsUpdate = true;
-  }
-
   /**
    * Reset handoff: 0 = every arm stowed (end of a cycle), 1 = deployed at
-   * home ready for the next one. Rivet marks are cleared.
+   * home ready for the next one.
    */
   setRedeployProgress(u: number): void {
     const stow = 1 - THREE.MathUtils.clamp(u, 0, 1);
@@ -570,14 +504,14 @@ export class Workshop {
       this.updateMast(st.id, arm);
       this.env.setWell(st.id, stow);
     }
-    this.rivets.count = 0;
-    this.hot.count = 0;
+    this.stands.setDeployed(THREE.MathUtils.clamp(u, 0, 1));
     this.lastT = Number.NaN;
   }
 
   /** Background animation (screens, racks, holo table, scan feed). */
   update(dt: number, renderer?: THREE.WebGLRenderer): void {
     this.env.update(dt);
+    this.detail.update(dt);
     if (renderer) this.scanView.update(dt, renderer);
   }
 

@@ -67,19 +67,35 @@ export function armDims(st: RobotStation): typeof ARM_DIMS | typeof TOOL_ARM_DIM
 /** Mast flange height the ceiling arms hang from. */
 export const GANTRY_Y = 3.05;
 
+/**
+ * Floor arms all rise from one concentric ring trench around the platform
+ * (as in the film) — every floor base sits on this radius.
+ */
+export const ROBOT_RING_RADIUS = 1.45;
+
+/** Floor base at `deg` around the ring (0° = +X, 90° = +Z). */
+const onRing = (deg: number, pedestal: number): Vec3 => {
+  const a = (deg * Math.PI) / 180;
+  return [
+    +(Math.cos(a) * ROBOT_RING_RADIUS).toFixed(4),
+    pedestal,
+    +(Math.sin(a) * ROBOT_RING_RADIUS).toFixed(4),
+  ];
+};
+
 export const ROBOTS: readonly RobotStation[] = [
-  { id: 'bl', label: 'gripper · rear left', base: [0.85, 0.25, -1.1], mount: 'floor', pedestal: 0.25, tool: 'gripper' },
-  { id: 'br', label: 'gripper · rear right', base: [-0.85, 0.25, -1.1], mount: 'floor', pedestal: 0.25, tool: 'gripper' },
-  { id: 'sl', label: 'gripper · left', base: [1.55, 0.55, -0.45], mount: 'floor', pedestal: 0.55, tool: 'gripper' },
-  { id: 'sr', label: 'gripper · right', base: [-1.55, 0.55, -0.45], mount: 'floor', pedestal: 0.55, tool: 'gripper' },
-  { id: 'fl', label: 'gripper · front left', base: [1.3, 0.25, 0.55], mount: 'floor', pedestal: 0.25, tool: 'gripper' },
-  { id: 'fr', label: 'gripper · front right', base: [-1.3, 0.25, 0.55], mount: 'floor', pedestal: 0.25, tool: 'gripper' },
+  { id: 'bl', label: 'gripper · rear left', base: onRing(-52.3, 0.25), mount: 'floor', pedestal: 0.25, tool: 'gripper' },
+  { id: 'br', label: 'gripper · rear right', base: onRing(-127.7, 0.25), mount: 'floor', pedestal: 0.25, tool: 'gripper' },
+  { id: 'sl', label: 'gripper · left', base: onRing(-16.2, 0.55), mount: 'floor', pedestal: 0.55, tool: 'gripper' },
+  { id: 'sr', label: 'gripper · right', base: onRing(-163.8, 0.55), mount: 'floor', pedestal: 0.55, tool: 'gripper' },
+  { id: 'fl', label: 'gripper · front left', base: onRing(22.9, 0.25), mount: 'floor', pedestal: 0.25, tool: 'gripper' },
+  { id: 'fr', label: 'gripper · front right', base: onRing(157.1, 0.25), mount: 'floor', pedestal: 0.25, tool: 'gripper' },
   { id: 'cl', label: 'gripper · overhead left', base: [0.72, GANTRY_Y, -0.2], mount: 'ceiling', pedestal: 0, tool: 'gripper' },
   { id: 'cr', label: 'gripper · overhead right', base: [-0.72, GANTRY_Y, -0.2], mount: 'ceiling', pedestal: 0, tool: 'gripper' },
   { id: 'cf', label: 'gripper · overhead front', base: [0, GANTRY_Y, 0.88], mount: 'ceiling', pedestal: 0, tool: 'gripper' },
   { id: 'cb', label: 'gripper · overhead rear', base: [0, GANTRY_Y, -0.88], mount: 'ceiling', pedestal: 0, tool: 'gripper' },
-  { id: 'rl', label: 'riveter · front left', base: [1.25, 0.35, 1.55], mount: 'floor', pedestal: 0.35, tool: 'riveter' },
-  { id: 'rr', label: 'riveter · front right', base: [-1.25, 0.35, 1.55], mount: 'floor', pedestal: 0.35, tool: 'riveter' },
+  { id: 'rl', label: 'riveter · front left', base: onRing(51.1, 0.35), mount: 'floor', pedestal: 0.35, tool: 'riveter' },
+  { id: 'rr', label: 'riveter · front right', base: onRing(128.9, 0.35), mount: 'floor', pedestal: 0.35, tool: 'riveter' },
 ];
 
 export function robotStation(id: RobotId): RobotStation {
@@ -305,12 +321,58 @@ export function taskForPiece(piece: ArmorPieceId): FitTask {
  * never swings through its own ±180° yaw), shelves hang beside each
  * ceiling arm. Returns the world point the task origin rests on.
  */
+/** Floor parts cradles stand on a ring just outside the robot ring. */
+export const CRADLE_RING_RADIUS = 2.05;
+/** Least angular spacing between neighbouring floor cradles (deg). */
+const CRADLE_MIN_GAP_DEG = 10;
+
+let floorCradleAngles: Map<string, number> | null = null;
+
+/**
+ * Angle (deg) of every floor cradle: beside its arm (alternating sides,
+ * further jobs fanning out), then relaxed so neighbours keep
+ * {@link CRADLE_MIN_GAP_DEG} — each stand gets its own port.
+ */
+function cradleAngles(): Map<string, number> {
+  if (floorCradleAngles) return floorCradleAngles;
+  const want: Array<{ id: string; a: number }> = [];
+  for (const st of ROBOTS.filter((r) => r.mount === 'floor')) {
+    const jobs = FIT_TASKS.filter((t) => t.robot === st.id);
+    const base = (Math.atan2(st.base[2], st.base[0]) * 180) / Math.PI;
+    const sideOf = (t: FitTask, i: number) => t.cradleSide ?? (i % 2 === 0 ? 1 : -1);
+    jobs.forEach((task, k) => {
+      const sign = sideOf(task, k);
+      const slot = jobs.slice(0, k).filter((t, i) => sideOf(t, i) === sign).length;
+      // cradleSide is relative to the arm facing the suit: +1 = its left
+      want.push({ id: task.id, a: base - sign * (13 + slot * CRADLE_MIN_GAP_DEG) });
+    });
+  }
+  want.sort((a, b) => a.a - b.a);
+  // Push apart until every gap is respected (a few sweeps both ways)
+  for (let it = 0; it < 20; it++) {
+    for (let i = 1; i < want.length; i++) {
+      const gap = want[i].a - want[i - 1].a;
+      if (gap < CRADLE_MIN_GAP_DEG) {
+        const push = (CRADLE_MIN_GAP_DEG - gap) / 2;
+        want[i].a += push;
+        want[i - 1].a -= push;
+      }
+    }
+  }
+  floorCradleAngles = new Map(want.map((w) => [w.id, w.a]));
+  return floorCradleAngles;
+}
+
 export function cradleFor(task: FitTask): Vec3 {
   if (!task.robot) {
     // Boot lifts park under the platform hatch
     return [task.origin[0], task.origin[1] - LIFT_DEPTH, task.origin[2]];
   }
   const st = robotStation(task.robot);
+  if (st.mount === 'floor') {
+    const a = (cradleAngles().get(task.id)! * Math.PI) / 180;
+    return [Math.cos(a) * CRADLE_RING_RADIUS, 0.95, Math.sin(a) * CRADLE_RING_RADIUS];
+  }
   const jobs = FIT_TASKS.filter((t) => t.robot === task.robot);
   const sideOf = (t: FitTask, i: number) => t.cradleSide ?? (i % 2 === 0 ? 1 : -1);
   const k = jobs.indexOf(task);
@@ -322,7 +384,7 @@ export function cradleFor(task: FitTask): Vec3 {
   const reach = 0.66;
   const x = st.base[0] + Math.sin(a) * reach;
   const z = st.base[2] + Math.cos(a) * reach;
-  return [x, st.mount === 'floor' ? 0.95 : 2.05, z];
+  return [x, 2.05, z];
 }
 
 /** How far below the platform the boot lifts start. */

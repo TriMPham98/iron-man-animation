@@ -1,5 +1,6 @@
 import gsap from 'gsap';
 import * as THREE from 'three';
+import { assemblyCues, type SfxCue } from '../audio/actionSfx';
 import type { Suit } from '../suit/Suit';
 import { isSystemsOnlineStatus } from '../ui/jarvisHud';
 import {
@@ -100,6 +101,13 @@ export interface AssemblyController {
    * the posed rig. Director pick draws this; the current frame is restored.
    */
   samplePiecePath: (id: string, segments?: number) => THREE.Vector3[];
+  /**
+   * Pose suit + robot cell at a GSAP time without moving the transport or
+   * the camera (the reverse "doffing" handoff between cycles drives this).
+   */
+  renderSuitAt: (gsapT: number) => void;
+  /** GSAP time the seamless suit swaps in (last frame with real parts). */
+  getFinalSwapTime: () => number;
 }
 
 /**
@@ -182,7 +190,7 @@ export function createAssemblyTimeline(
   camera: THREE.PerspectiveCamera,
   lookTarget: THREE.Vector3,
   callbacks: TimelineCallbacks = {},
-  opts: { plan?: SuitUpPlan; workshop?: Workshop | null } = {},
+  opts: { plan?: SuitUpPlan; workshop?: Workshop | null; sfx?: (cue: SfxCue) => void } = {},
 ): AssemblyController {
   let tl: gsap.core.Timeline | null = null;
   let playing = false;
@@ -197,6 +205,7 @@ export function createAssemblyTimeline(
   // Parts waiting on their cradles = the reset target between cycles
   suit.setRestFrame(evaluateSuitUp(plan, plan.preRoll));
   const offset = audioTimelineOffset();
+  const actionCues = assemblyCues(plan);
   const toGsap = (seedT: number) => seedT + offset;
 
   /** Timeline time when seamless final mesh swaps in. */
@@ -294,6 +303,13 @@ export function createAssemblyTimeline(
         undefined,
         Math.max(0, toGsap(t)),
       );
+    }
+    // Action sounds (servos, grippers, crackle, hiss) — live transport only
+    if (opts.sfx) {
+      const sfx = opts.sfx;
+      for (const cue of actionCues) {
+        timeline.call(() => sfx(cue), undefined, Math.max(0, toGsap(cue.t)));
+      }
     }
     // Sparks / steam ride the live transport only (scrub suppresses calls)
     for (const burst of plan.bursts) {
@@ -442,6 +458,12 @@ export function createAssemblyTimeline(
       userOwnsCamera = owns;
       return points;
     },
+    renderSuitAt: (gsapT: number) => {
+      const frame = evaluateSuitUp(plan, gsapT - offset);
+      suit.applyFrame(frame);
+      workshop?.apply(frame);
+    },
+    getFinalSwapTime: () => finalSwapTime,
     setUserOwnsCamera: (owns: boolean) => {
       userOwnsCamera = owns;
       // Releasing free-look does not by itself move the camera — callers that

@@ -12,6 +12,9 @@ import type { Suit } from '../suit/Suit';
 import type { SuitUpPlan } from '../animation/suitUpChoreography';
 import type { Workshop } from '../workshop/Workshop';
 import { diagnosticStatusForProgress } from '../suit/diagnosticScan';
+import { evaluateFlightCheck } from '../animation/flightCheck';
+import { createCuePlayer, doffCues, flightCues } from '../audio/actionSfx';
+import { createFlightPanel } from '../ui/flightPanel';
 import { statusForIntegrityProgress } from '../suit/waves';
 import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
@@ -27,23 +30,27 @@ import { isSystemsOnlineStatus } from '../ui/jarvisHud';
  * Forcing wall-clock at 38–60s felt *slower* than the old high-refresh feel.
  * ~28s matches “just under 40s” with headroom and the pre-tier snappy loop.
  */
-const SHOWCASE_ORBIT_SEC = 28;
+const SHOWCASE_ORBIT_SEC = 35;
 /**
  * When remaining yaw is under this, ease spin to a stop.
  * The wireframe diagnostic starts here and hits 1.0 as remaining → 0
  * (same window as the orbit ease-out).
  */
 const SPIN_EASE_OUT_RAD = 0.275;
-/** Plates burst outward (reverse cascade) — slow, linear flight (no ease-out coast). */
-const HANDOFF_EXPLODE_SEC = 3.12;
+/**
+ * Doffing handoff: the whole fitting runs backwards, mechanically — arms
+ * rise from the ring, unclamp each part and carry it back to its stand,
+ * boots sink through the hatch — ending exactly on the next cycle's first
+ * frame. Wall-clock length of that rewind.
+ */
+const HANDOFF_REWIND_SEC = 7.2;
 /**
  * Hangar pull hero → open wide. Long enough to read as continuous cinema
  * after the orbit settle; ends with the last plates so assembly t=0 has no
  * empty-pad hold.
  */
-const HANDOFF_CAM_SEC = 1.85;
-/** Pull while debris is still in flight so empty-pad time is near zero. */
-const HANDOFF_CAM_DELAY = HANDOFF_EXPLODE_SEC - HANDOFF_CAM_SEC;
+const HANDOFF_CAM_SEC = 4.2;
+
 
 const VIEWER_HINT =
   'Drag to orbit · R replay · Space pause · S skip · M mute · L loop · ←→ scrub';
@@ -251,7 +258,49 @@ export function createAssemblySession(
     }
   };
 
+  /** Last flight-check status line shown (avoids re-setting every frame). */
+  let lastFlightStatus = '';
+
+  /**
+   * Flight-control check rides the turn: its clock is the yaw travelled, so
+   * a Space pause freezes it mid-step and drags cancel it with the orbit.
+   */
+  const updateFlightCheck = () => {
+    const t = (completeSpinAccum / (Math.PI * 2)) * SHOWCASE_ORBIT_SEC;
+    const f = evaluateFlightCheck(t);
+    suit.setFlightCheck(f, t);
+    // Keep the suit framed while it hovers: the orbit pivot and the lens
+    // ride up with it (and come back down as it lands)
+    const lift = f.active ? f.pose.lift ?? 0 : 0;
+    const dy = lift - flightCamLift;
+    if (Math.abs(dy) > 1e-6) {
+      flightCamLift = lift;
+      lookTarget.y += dy;
+      camera.position.y += dy * 0.75;
+      controls.target.copy(lookTarget);
+      camera.lookAt(lookTarget);
+    }
+    cues.between(flightSfx, lastFlightT, t);
+    lastFlightT = t;
+    // Checklist holds "all OK" until the diagnostic takes over
+    if (orbitScanArmed) flightPanel.hide();
+    else flightPanel.update(t, f.active);
+    if (f.status && f.status !== lastFlightStatus && !orbitScanArmed) {
+      lastFlightStatus = f.status;
+      ui.setStatus(f.status, false);
+    }
+  };
+
   const stopCompleteSpinTracking = () => {
+    suit.setFlightCheck(null);
+    flightPanel.hide();
+    if (flightCamLift !== 0) {
+      lookTarget.y -= flightCamLift;
+      camera.position.y -= flightCamLift * 0.75;
+      flightCamLift = 0;
+    }
+    lastFlightStatus = '';
+    lastFlightT = Number.NaN;
     completeSpinActive = false;
     completeSpinAccum = 0;
     showcaseSpinPaused = false;
@@ -447,6 +496,15 @@ export function createAssemblySession(
     ui.setSystemsOnline(false);
   };
 
+  // Action sound layer (servos, flaps, thrusters, unclamps) on the engine
+  const cues = createCuePlayer((req) => audioTimeline?.engine.play(req));
+  const flightSfx = flightCues();
+  const doffSfx = plan ? doffCues(plan) : [];
+  let lastFlightT = Number.NaN;
+  /** Camera height offset currently applied for the hover. */
+  let flightCamLift = 0;
+  const flightPanel = createFlightPanel();
+
   assembly = createAssemblyTimeline(suit, camera, lookTarget, {
     onStatus: (text) => {
       // Only final SYSTEMS ONLINE dismisses the progress panel — not
@@ -475,7 +533,7 @@ export function createAssemblySession(
       }
       applyCompleteUi({ preserveCamera: assembly.userOwnsCamera() });
     },
-  }, { plan, workshop });
+  }, { plan, workshop, sfx: (cue) => cues.fire(cue) });
 
   syncAudioDuration();
 
@@ -527,9 +585,10 @@ export function createAssemblySession(
   /**
    * After the finished-suit idle 360° (or R from complete):
    * Diagnostic already ran over the orbit ease-out (if the full spin played).
-   * 1) Plates explode outward (reverse cascade — helmet first)
-   * 2) Pull camera to hangar open over the empty pad
-   * 3) Drain integrity + restart assembly
+   * 1) The fitting runs backwards — arms come up from the ring, take every
+   *    part off and set it back on its stand, boots sink into the hatch
+   * 2) Camera eases out to the hangar framing as the last parts come off
+   * 3) Drain integrity + restart assembly on the exact same frame
    */
   const softRestartFromShowcase = () => {
     killHandoff();
@@ -553,8 +612,8 @@ export function createAssemblySession(
     audioStop();
     syncDebugPauseLabel();
 
-    // Seamless → seated shards for the reverse burst
-    suit.armExplosionFromFinal();
+    // Seamless suit → its seated parts for the reverse fitting
+    suit.resumeAssemblyVisuals();
 
     // Always pull from authored hero end (orbit seals this pose) so the
     // hangar open ease is a clean, repeatable loop join.
@@ -583,7 +642,16 @@ export function createAssemblySession(
     // Orbit would fight the cinematic handoff
     controls.enabled = false;
 
-    const explode = { t: 0 };
+    // Rewind from the last frame with real parts to GSAP 0 (= what play()
+    // renders first), so the next cycle starts without a cut.
+    const rewindFrom = Math.max(0, assembly.getFinalSwapTime() - 0.02);
+    const rewind = { t: rewindFrom };
+    // Seed clock = GSAP − offset; doffing cues fire as it runs backwards
+    const seedOffset = assembly.getFinalSwapTime() - (plan?.finalSwapAt ?? 0);
+    let lastSeed = rewindFrom - seedOffset;
+    ui.setStatus('DOFFING SEQUENCE // RESET');
+    // Low motor bed under the whole rewind (no hiss)
+    cues.fire({ t: 0, file: 'doff-hum.mp3', volume: 0.32, duration: HANDOFF_REWIND_SEC, fadeOut: 1.2 });
     handoffTween = gsap.timeline({
       onComplete: () => {
         handoffTween = null;
@@ -605,25 +673,24 @@ export function createAssemblySession(
       },
     });
 
-    // 1) Linear burst — ease-out used to empty the pad early, then sit dead
-    //    until t=end. Linear keeps plates in flight for the full duration.
+    // 1) Mechanical reverse fitting (eased so it starts and lands gently)
     handoffTween.to(
-      explode,
+      rewind,
       {
-        t: 1,
-        duration: HANDOFF_EXPLODE_SEC,
-        ease: 'none',
+        t: 0,
+        duration: HANDOFF_REWIND_SEC,
+        ease: 'power1.inOut',
         onUpdate: () => {
-          suit.setExplosionProgress(explode.t);
-          // Arms ride their elevators back up for the next cycle
-          workshop?.setRedeployProgress(explode.t);
+          assembly.renderSuitAt(rewind.t);
+          const seed = rewind.t - seedOffset;
+          cues.between(doffSfx, lastSeed, seed);
+          lastSeed = seed;
         },
       },
       0,
     );
 
-    // 2) Hangar pull ends with the last plates → next cycle starts immediately.
-    // Longer + power3 so hero settle → open wide reads as one continuous shot.
+    // 2) Camera eases out to the hangar framing as the last parts come off
     handoffTween.to(
       proxy,
       {
@@ -638,7 +705,7 @@ export function createAssemblySession(
         ease: 'power3.inOut',
         onUpdate: applyHandoffCam,
       },
-      HANDOFF_CAM_DELAY,
+      HANDOFF_REWIND_SEC - HANDOFF_CAM_SEC,
     );
   };
 
@@ -971,6 +1038,7 @@ export function createAssemblySession(
     controls.target.copy(lookTarget);
 
     completeSpinAccum += Math.abs(angle);
+    updateFlightCheck();
 
     // Finish when full turn is done, or last ~1° of ease (avoids infinite crawl)
     if (completeSpinAccum >= Math.PI * 2 - 1e-3 || remaining <= 0.02) {

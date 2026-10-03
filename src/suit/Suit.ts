@@ -25,11 +25,14 @@ import {
   type DiagnosticScan,
 } from './diagnosticScan';
 import { FitKinematics } from '../workshop/fittingKinematics';
+import type { FlightCheckFrame } from '../animation/flightCheck';
+import { armorPieceDef } from './armorPieces';
+import { buildFlightFlaps, flapMotion, type Flap } from './flightFlaps';
+import { FlightFx, type PalmEmitter } from './flightFx';
+import { WeaponsFx } from './weaponsFx';
 import { FIT_TASKS } from '../workshop/fittingProgram';
+import { FOOT_HATCH_RADIUS } from '../workshop/workshopEnvironment';
 
-/** Dissolve heights (bind y) — above the helmet and under the soles. */
-const CUT_TOP = 1.95;
-const CUT_BOTTOM = -0.05;
 const NO_CUT = 99;
 
 /**
@@ -59,8 +62,16 @@ export class Suit {
   private diagnostic: DiagnosticScan | null = null;
   /** Frame with every part waiting on its cradle (reset target). */
   private restFrame: SuitUpFrame | null = null;
-  private resetArmed = false;
   private readonly frames = new Map<ArmorPieceId, THREE.Matrix4>();
+  /** Dark inner shell seen through open flaps (back faces of the suit). */
+  private cavity!: THREE.SkinnedMesh;
+  private flightFx!: FlightFx;
+  private weapons!: WeaponsFx;
+  private flightActive = false;
+  private flaps: Flap[] = [];
+  private flapRests = new Map<ArmorPieceId, THREE.SkinnedMesh>();
+  private flapped = new Set<ArmorPieceId>();
+  private readonly _hm = new THREE.Matrix4();
 
   private readonly _bm = new THREE.Matrix4();
   private readonly _tf = new THREE.Matrix4();
@@ -96,7 +107,26 @@ export class Suit {
     const skeleton = bindRig(suit.rig);
     const bindMatrix = suit.model.matrixWorld.clone();
     suit.modelInv.copy(bindMatrix).invert();
+    const cavity = new THREE.SkinnedMesh(
+      loaded.finalMesh.geometry,
+      new THREE.MeshStandardMaterial({ color: 0x0d0f12, metalness: 0.65, roughness: 0.5, side: THREE.BackSide }),
+    );
+    cavity.name = 'suit-cavity';
+    cavity.bindMode = THREE.DetachedBindMode;
+    cavity.frustumCulled = false;
+    cavity.visible = false;
+    suit.model.add(cavity);
+    suit.cavity = cavity;
+    // Flight-check flaps: the model's own panels, split off their parts
+    const split = buildFlightFlaps(suit.pieces);
+    suit.flaps = split.flaps;
+    suit.flapRests = split.rests;
+    for (const f of split.flaps) suit.flapped.add(f.piece.id);
+    const flapMeshes = [...split.flaps.map((f) => f.mesh), ...split.rests.values()];
+    for (const m of flapMeshes) suit.model.add(m);
     const meshes: THREE.SkinnedMesh[] = [
+      ...flapMeshes,
+      cavity,
       loaded.finalMesh,
       loaded.hologram,
       ...suit.pieces.map((p) => p.mesh as THREE.SkinnedMesh),
@@ -107,16 +137,15 @@ export class Suit {
 
     suit.overlay = new RigOverlay(suit.rig);
     suit.model.add(suit.overlay.group);
-    // Hatch rings sit on the platform top (= the soles, model y 0)
-    const boots = FIT_TASKS.filter((t) => t.kind === 'lift');
-    suit.hatches = new FloorHatches(
-      boots.map((t) => t.origin[0]),
-      boots[0]?.origin[2] ?? 0.02,
-      0.002,
-    );
+    // Centre hatch glow sits on the platform top (= the soles, model y 0)
+    suit.hatches = new FloorHatches(0, 0, FOOT_HATCH_RADIUS, 0.002);
     suit.model.add(suit.hatches.group);
     suit.particles = new SuitParticles();
     suit.model.add(suit.particles.group);
+    suit.flightFx = new FlightFx(measurePalms(suit.pieces));
+    suit.model.add(suit.flightFx.group);
+    suit.weapons = new WeaponsFx(suit.flaps);
+    suit.model.add(suit.weapons.group);
 
     suit.resetToStart();
     return suit;
@@ -126,7 +155,7 @@ export class Suit {
 
   /** Apply one evaluated choreography frame (pose, pieces, FX, systems). */
   applyFrame(frame: SuitUpFrame): void {
-    this.resetArmed = false;
+    this.endFlightCheck();
     this.setPose(frame.pose);
     setFitFx(this.finalMesh.material as THREE.Material, NO_CUT);
 
@@ -231,10 +260,72 @@ export class Suit {
     this.hologramMat.uniforms.uTime.value += dt;
   }
 
+  // ── Flight-control check (showcase turn) ──────────────────────────
+
+  /**
+   * Show the finished suit as its seated parts so flaps can actuate, posed
+   * by the flight check. `null` / inactive hands back to the seamless suit.
+   */
+  setFlightCheck(f: FlightCheckFrame | null, t = 0): void {
+    if (!f || !f.active) {
+      this.endFlightCheck();
+      return;
+    }
+    this.flightActive = true;
+    this.setPose(f.pose);
+    if (this.finalModel) this.finalModel.visible = false;
+    this.cavity.visible = true;
+    for (const piece of this.pieces) {
+      const mesh = piece.mesh as THREE.Mesh;
+      mesh.matrix.identity();
+      mesh.matrixWorldNeedsUpdate = true;
+      // Flapped parts show as remainder + flaps instead
+      mesh.visible = !this.flapped.has(piece.id);
+      setFitFx(mesh.material as THREE.Material, NO_CUT);
+    }
+    for (const rest of this.flapRests.values()) rest.visible = true;
+    for (const flap of this.flaps) {
+      const k = f.flaps[flap.id] ?? 0;
+      const m = flap.mesh;
+      m.visible = true;
+      m.matrixWorldNeedsUpdate = true;
+      if (k <= 1e-4) {
+        m.matrix.identity();
+        continue;
+      }
+      // frame = dock · motion; mesh matrix = frame · dock⁻¹
+      const frame = this.kin.dock(armorPieceDef(flap.piece.id).anchor, this._tf).multiply(flapMotion(flap, k, this._hm));
+      this.kin.meshMatrix(flap.piece.id, frame, m.matrix);
+    }
+    this.flightFx.update(f, t, this.rig, this.modelInv, this.particles);
+    this.weapons.update(f, t, this.rig, this.modelInv, this.particles);
+  }
+
+  private endFlightCheck(): void {
+    if (!this.flightActive) return;
+    this.flightActive = false;
+    this.cavity.visible = false;
+    this.flightFx.hide();
+    this.weapons.hide();
+    for (const m of [...this.flaps.map((f) => f.mesh), ...this.flapRests.values()]) m.visible = false;
+    for (const p of this.pieces) {
+      p.mesh.matrix.identity();
+      p.mesh.matrixWorldNeedsUpdate = true;
+      p.mesh.visible = false;
+    }
+    this.setPose(BIND_POSE);
+    if (this.finalModel) this.finalModel.visible = true;
+  }
+
+  isFlightCheckActive(): boolean {
+    return this.flightActive;
+  }
+
   // ── Visibility modes ──────────────────────────────────────────────
 
   /** Assembly mode with every piece hidden (pad empty). */
   showAssembly(): void {
+    this.endFlightCheck();
     this.assemblyMode = true;
     this.stopDiagnosticScan();
     if (this.finalModel) this.finalModel.visible = false;
@@ -243,6 +334,7 @@ export class Suit {
 
   /** Leave seamless mode for scrubbing — the next frame decides visibility. */
   resumeAssemblyVisuals(): void {
+    this.endFlightCheck();
     this.assemblyMode = true;
     this.stopDiagnosticScan();
     if (this.finalModel) this.finalModel.visible = false;
@@ -277,6 +369,7 @@ export class Suit {
    * Does **not** reset progress — use {@link setDiagnosticScanProgress}.
    */
   startDiagnosticScan(): void {
+    this.endFlightCheck();
     if (!this.finalModel) return;
     // Wireframe is built from bind-pose geometry
     this.setPose(BIND_POSE);
@@ -310,56 +403,13 @@ export class Suit {
     this.restFrame = frame;
   }
 
-  /**
-   * Seamless suit in the bind pose, ready for the JARVIS reset: it
-   * dissolves top → bottom while every part re-materializes on its cradle.
-   */
-  armExplosionFromFinal(): void {
-    this.stopDiagnosticScan();
-    this.clearFx();
-    this.setPose(BIND_POSE);
-    if (this.finalModel) this.finalModel.visible = true;
-    this.hologram.visible = false;
-    this.overlay.update(0);
-    this.hatches.setOpen(0);
-    this.powers = { reactor: 1, eyes: 1, repulsors: 1 };
-    this.applySystems();
-    this.resetArmed = true;
-  }
-
-  /** Reset dissolve 0 = suit assembled, 1 = parts back on their cradles. */
-  setExplosionProgress(amount: number): void {
-    const u = THREE.MathUtils.clamp(amount, 0, 1);
-    if (!this.resetArmed) this.armExplosionFromFinal();
-    const out = THREE.MathUtils.clamp(u / 0.62, 0, 1);
-    const cut = THREE.MathUtils.lerp(CUT_TOP, CUT_BOTTOM, out * out * (3 - 2 * out));
-    if (this.finalModel) this.finalModel.visible = out < 1;
-    setFitFx(this.finalMesh.material as THREE.Material, cut);
-
-    if (this.restFrame) {
-      const back = THREE.MathUtils.clamp((u - 0.38) / 0.62, 0, 1);
-      const e = back * back * (3 - 2 * back);
-      this.assemblyMode = true;
-      this.placePieces(this.restFrame.pieces, (id) => {
-        const box = this.pieceBounds(id);
-        if (!box) return NO_CUT;
-        return e >= 1 ? NO_CUT : THREE.MathUtils.lerp(box.min.y - 0.01, box.max.y + 0.01, e);
-      });
-      for (const p of this.pieces) p.mesh.visible = back > 0;
-    }
-
-    const glow = THREE.MathUtils.clamp(1 - u * 1.8, 0, 1);
-    this.powers = { reactor: glow, eyes: glow, repulsors: glow };
-    this.applySystems();
-  }
-
   resetToStart(): void {
+    this.endFlightCheck();
     this.powers = { reactor: 0, eyes: 0, repulsors: 0 };
     this.applySystems();
     this.showAssembly();
     this.clearFx();
     this.setPose(BIND_POSE);
-    this.resetArmed = false;
     setFitFx(this.finalMesh.material as THREE.Material, NO_CUT);
     this.hologram.visible = false;
     this.hologramMat.uniforms.uReveal.value = 0;
@@ -423,4 +473,47 @@ export class Suit {
       }
     });
   }
+}
+
+/**
+ * Repulsor centre + normal per hand, measured off the gauntlet's palm
+ * panels (inward-facing faces around the palm), so the glow and thrust sit
+ * flat on the repulsor and fire square out of it.
+ */
+function measurePalms(pieces: readonly ArmorPiece[]): PalmEmitter[] {
+  return (['L', 'R'] as const).map((side) => {
+    const s = side === 'L' ? 1 : -1;
+    const geo = (pieces.find((p) => p.id === `gauntlet.${side}`)?.mesh as THREE.Mesh | undefined)?.geometry;
+    const fallback: PalmEmitter = { bone: `hand.${side}`, at: [s * 0.347, 0.975, 0.035], normal: [-s * 0.98, -0.15, 0.06] };
+    if (!geo?.index) return fallback;
+    const pos = geo.getAttribute('position');
+    const idx = geo.index.array;
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    const sumN = new THREE.Vector3();
+    const sumP = new THREE.Vector3();
+    let area = 0;
+    for (let t = 0; t < idx.length; t += 3) {
+      a.fromBufferAttribute(pos, idx[t]);
+      b.fromBufferAttribute(pos, idx[t + 1]);
+      c.fromBufferAttribute(pos, idx[t + 2]);
+      n.subVectors(b, a).cross(c.clone().sub(a));
+      const w = n.length() / 2;
+      if (w < 1e-9) continue;
+      n.normalize();
+      const cx = (a.x + b.x + c.x) / 3;
+      const cy = (a.y + b.y + c.y) / 3;
+      // Palm: faces in toward the body, between wrist and knuckles
+      if (n.x * s > -0.6 || Math.abs(cy - 0.975) > 0.04 || cx * s < 0.32 || cx * s > 0.375) continue;
+      sumN.addScaledVector(n, w);
+      sumP.add(new THREE.Vector3(cx, cy, (a.z + b.z + c.z) / 3).multiplyScalar(w));
+      area += w;
+    }
+    if (area < 1e-6) return fallback;
+    sumN.normalize();
+    sumP.divideScalar(area);
+    return { bone: `hand.${side}`, at: [sumP.x, sumP.y, sumP.z], normal: [sumN.x, sumN.y, sumN.z] };
+  });
 }

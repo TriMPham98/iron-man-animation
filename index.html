@@ -396,6 +396,11 @@
         class="start-gate is-hidden"
         aria-hidden="true"
       >
+        <div class="gate-title" aria-hidden="true">
+          <span class="gate-kicker">STARK INDUSTRIES <i></i> MALIBU WORKSHOP</span>
+          <h1 class="gate-name">MARK&nbsp;III</h1>
+          <span class="gate-sub">AUTOMATED SUIT-UP SEQUENCE</span>
+        </div>
         <button
           id="start-btn"
           type="button"
@@ -418,7 +423,21 @@
           <span class="jarvis-orb-core" aria-hidden="true"></span>
           <span class="jarvis-orb-label" data-value="INITIATE">INITIATE</span>
         </button>
+        <div class="gate-hint" aria-hidden="true">
+          <span><kbd>ENTER</kbd> INITIATE</span>
+          <span><kbd>M</kbd> MUTE</span>
+          <span><kbd>S</kbd> SKIP</span>
+        </div>
       </div>
+
+      <!-- Flight-control checklist (showcase turn) -->
+      <aside id="flight-panel" class="flight-panel" aria-hidden="true" hidden>
+        <header class="flight-head">
+          <span class="flight-title">FLIGHT CONTROL CHECK</span>
+          <span id="flight-count" class="flight-count">0/0</span>
+        </header>
+        <ol id="flight-list" class="flight-list"></ol>
+      </aside>
 
       <!-- Decorative tech frame — animates in with HUD boot -->
       <div id="hud-frame" class="hud-frame hidden" aria-hidden="true">

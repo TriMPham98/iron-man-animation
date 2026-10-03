@@ -78,10 +78,10 @@ export function diagnosticStatusForProgress(progress01: number): string {
 const RING_RADIUS = 0.78;
 
 /**
- * Hangar pad sits at world y=0 with decorative rings at ~0.01–0.013.
- * World-space floor for the scan disc (must stay above the pad).
+ * World-space floor for the scan disc: just above the suit-up platform top
+ * (= the soles), so the band lands on the deck instead of sinking into it.
  */
-export const SCAN_RING_PAD_CLEARANCE = 0.028;
+export const SCAN_RING_PAD_CLEARANCE = SUIT_GROUND_CLEARANCE + 0.008;
 
 /**
  * Suit-local Y for the ring floor when the rig is lifted by
@@ -595,12 +595,11 @@ export function createDiagnosticScan(
   // Spin phase: wall-clock from first visible frame so resume mid-scan stays smooth
   let spinOriginMs: number | null = null;
 
-  // Scratch planes in finalModel-local space → world (Three clips in world).
-  const _localReveal = new THREE.Plane();
-  const _localBandTop = new THREE.Plane();
-  const _localBandBot = new THREE.Plane();
   const _nDown = new THREE.Vector3(0, -1, 0);
   const _nUp = new THREE.Vector3(0, 1, 0);
+  const _origin = new THREE.Vector3();
+  const _rot = new THREE.Quaternion();
+  const _scale = new THREE.Vector3();
 
   const setProgress = (progress01: number) => {
     const t = THREE.MathUtils.clamp(progress01, 0, 1);
@@ -610,21 +609,20 @@ export function createDiagnosticScan(
 
     finalModel.updateWorldMatrix(true, false);
     const mw = finalModel.matrixWorld;
+    // The suit leans slightly; the scan stays level with the deck so it
+    // reaches the soles evenly front to back. y is height above the suit
+    // origin, measured in world Y.
+    mw.decompose(_origin, _rot, _scale);
+    const wy = _origin.y + y;
 
-    // Local: keep y ≥ scanY  (head→feet reveal as front descends)
-    // normal (0,1,0), constant = -y  ⇒  distance = py - y
-    _localReveal.set(_nUp, -y);
-    _localReveal.applyMatrix4(mw);
-    revealPlane.copy(_localReveal);
-
+    revealPlane.set(_nUp, -wy);
     // Band: y ∈ [y - SCAN_BAND, y + SCAN_BAND * 0.35]
-    _localBandTop.set(_nDown, y + SCAN_BAND * 0.35);
-    _localBandTop.applyMatrix4(mw);
-    bandTop.copy(_localBandTop);
+    bandTop.set(_nDown, wy + SCAN_BAND * 0.35);
+    bandBottom.set(_nUp, -(wy - SCAN_BAND));
 
-    _localBandBot.set(_nUp, -(y - SCAN_BAND));
-    _localBandBot.applyMatrix4(mw);
-    bandBottom.copy(_localBandBot);
+    // Ring stack: undo the lean so the disc is level in world
+    group.quaternion.copy(_rot).invert();
+    group.scale.set(1 / _scale.x, 1 / _scale.y, 1 / _scale.z);
 
     revealMat.opacity = 0.55 * wireOp;
     bandMat.opacity = 0.95 * bandOp;

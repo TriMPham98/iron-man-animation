@@ -15,12 +15,13 @@ describe('scanFrontY', () => {
     expect(scanFrontY(0.05, 0, 2)).toBeLessThan(y0);
   });
 
-  it('settles at suit-local ring floor (under boots, above world pad)', () => {
+  it('settles just above the soles on the platform deck', () => {
     const floor = scanRingLocalFloorY();
     expect(scanFrontY(0.9, 0, 2)).toBeCloseTo(floor, 5);
     expect(scanFrontY(1, 0, 2)).toBeCloseTo(floor, 5);
-    // Local floor is below plant Y=0 when the group is lifted
-    expect(floor).toBeLessThan(0);
+    // A hair above the soles (suit-local 0 = platform top), never inside it
+    expect(floor).toBeGreaterThan(0);
+    expect(floor).toBeLessThan(0.02);
   });
 
   it('is monotonically decreasing through the sweep window', () => {
