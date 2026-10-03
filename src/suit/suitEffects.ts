@@ -36,11 +36,19 @@ export function createHologramMaterial(): THREE.ShaderMaterial {
         #include <defaultnormal_vertex>
         #include <begin_vertex>
         #include <skinning_vertex>
-        transformed -= normalize(objectNormal) * uShrink;
+        // normalize(0) is NaN. A NaN position or varying on this GPU
+        // rasterizes as a screen-sized black rectangle, so a zero-length
+        // skinned normal must not be divided.
+        float shrinkLen = length(objectNormal);
+        if (shrinkLen > 1e-5) transformed -= objectNormal * (uShrink / shrinkLen);
         vBindY = position.y;
         #include <project_vertex>
-        vViewNormal = normalize(transformedNormal);
-        vViewDir = normalize(-mvPosition.xyz);
+        vViewNormal = vec3(0.0, 0.0, 1.0);
+        float nLen = length(transformedNormal);
+        if (nLen > 1e-5) vViewNormal = transformedNormal / nLen;
+        vViewDir = vec3(0.0, 0.0, 1.0);
+        float vLen = length(mvPosition.xyz);
+        if (vLen > 1e-5) vViewDir = -mvPosition.xyz / vLen;
       }
     `,
     fragmentShader: /* glsl */ `
@@ -53,7 +61,7 @@ export function createHologramMaterial(): THREE.ShaderMaterial {
       varying float vBindY;
       void main() {
         if (vBindY > uReveal) discard;
-        float facing = abs(dot(normalize(vViewNormal), normalize(vViewDir)));
+        float facing = abs(dot(vViewNormal, vViewDir));
         float rim = pow(1.0 - facing, 2.2);
         float lines = step(0.55, fract(vBindY * 120.0 - uTime * 0.9));
         float front = smoothstep(0.07, 0.0, uReveal - vBindY);
