@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { weather } from './robotMaterials';
 import { ROBOTS } from './fittingProgram';
-import { aperturePit } from './aperturePit';
+import { aperturePit, BEZEL_H } from './aperturePit';
 import { APERTURE_INNER, APERTURE_OUTER, RingAperture } from './ringAperture';
 
 /**
@@ -21,6 +21,9 @@ export const PLATFORM_TOP = 0.05;
  * single flush disc.
  */
 export const FOOT_HATCH_RADIUS = 0.336;
+/** Hatch door leaves: thickness, and how far their top sits under the platform top (m). */
+const DOOR_THICK = 0.012;
+const DOOR_RECESS = 0.004;
 export const ROOM_RADIUS = 7.4;
 export const ROOM_HEIGHT = 4.6;
 
@@ -33,6 +36,8 @@ export interface WorkshopEnvironment {
   liftPlates: THREE.Group[];
   /** Open the floor ring aperture (0 shut → 1 open). */
   setAperture: (open: number) => void;
+  /** Slide the centre boot hatch's doors apart (0 shut → 1 open). */
+  setHatchDoors: (open: number) => void;
   /** Screens, rack LEDs, holo table. */
   update: (dt: number) => void;
   dispose: () => void;
@@ -621,18 +626,55 @@ export function createWorkshopEnvironment(
     liftPlates.push(lift);
   }
 
+  // Hatch doors: two half-disc leaves just under the platform top, split
+  // across the boots' seam; they slide apart into pockets in the platform
+  // body to let the lifts through and close over the empty hatch
+  const doorLeaves: THREE.Group[] = [];
+  const doorR = FOOT_HATCH_RADIUS - 0.004;
+  for (const side of [1, -1]) {
+    const leaf = new THREE.Group();
+    leaf.userData.dynamic = true;
+    const slab = new THREE.Mesh(
+      keep(new THREE.CylinderGeometry(doorR, doorR, DOOR_THICK, 48, 1, false, side > 0 ? 0 : Math.PI, Math.PI)),
+      darkSteel,
+    );
+    leaf.add(slab);
+    // Amber leading edge along the seam, a grip rib behind it
+    const edge = new THREE.Mesh(keep(new THREE.BoxGeometry(0.012, DOOR_THICK + 0.001, doorR * 2 - 0.02)), amber);
+    edge.position.x = side * 0.006;
+    leaf.add(edge);
+    const rib = new THREE.Mesh(keep(new THREE.BoxGeometry(0.02, 0.003, doorR * 1.4)), steel);
+    rib.position.set(side * 0.09, DOOR_THICK / 2 + 0.0015, 0);
+    leaf.add(rib);
+    leaf.position.y = PLATFORM_TOP - DOOR_RECESS - DOOR_THICK / 2;
+    leaf.userData.side = side;
+    group.add(leaf);
+    doorLeaves.push(leaf);
+  }
+  const setHatchDoors = (open: number) => {
+    const k = THREE.MathUtils.smoothstep(THREE.MathUtils.clamp(open, 0, 1), 0, 1);
+    for (const leaf of doorLeaves) {
+      const side = leaf.userData.side as number;
+      leaf.position.x = side * (0.0015 + k * (doorR + 0.03));
+      // Fully home in its pocket: nothing to draw
+      leaf.visible = k < 0.999;
+    }
+  };
+  setHatchDoors(0);
+
   // ── Ring aperture: one wide annular pit round the platform ────────
   // The floor arms stand in it, the parts stands telescope through it, and
   // the aperture's iris blades close over it once the whole cell has stowed.
   group.add(aperturePit(steel, keep));
-  // Lit edges on the deck either side of the opening
-  for (const [a0, a1] of [
-    [APERTURE_INNER - 0.024, APERTURE_INNER - 0.014],
-    [APERTURE_OUTER + 0.014, APERTURE_OUTER + 0.024],
+  // Lit edges either side of the opening: on the deck inside, on top of
+  // the outer bezel
+  for (const [a0, a1, y] of [
+    [APERTURE_INNER - 0.024, APERTURE_INNER - 0.014, 0.0012],
+    [APERTURE_OUTER + 0.03, APERTURE_OUTER + 0.04, BEZEL_H + 0.0006],
   ]) {
     const strip = new THREE.Mesh(keep(new THREE.RingGeometry(a0, a1, 160)), glowCyan);
     strip.rotation.x = -Math.PI / 2;
-    strip.position.y = 0.0012;
+    strip.position.y = y;
     group.add(strip);
   }
   const aperture = keep(new RingAperture(steel, amber));
@@ -1029,6 +1071,7 @@ export function createWorkshopEnvironment(
     group,
     liftPlates,
     setAperture: (open) => aperture.set(open),
+    setHatchDoors,
     update: (dt) => {
       clock += dt;
       for (const m of animated) m.uniforms.uTime.value += dt;

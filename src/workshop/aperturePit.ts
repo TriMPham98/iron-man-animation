@@ -7,6 +7,11 @@ export const PIT_DEPTH = 3;
 const THROAT = 0.2;
 /** How far the throat rings and wall ribs stand into the opening (m). */
 const STEP_IN = 0.022;
+/** Outer bezel: width on the deck, height, lip overhang and slot roof (m). */
+export const BEZEL_W = 0.15;
+export const BEZEL_H = 0.018;
+const BEZEL_LIP = 0.014;
+const BEZEL_SLOT = 0.003;
 
 function canvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement('canvas');
@@ -141,9 +146,25 @@ export function aperturePit(trim: THREE.Material, keep: <T extends { dispose: ()
     [APERTURE_INNER + s, -0.024],
     [APERTURE_INNER - 0.08, -0.024],
   ];
+  // Bezel over the outer edge: a chamfered collar on the deck whose lip
+  // overhangs the opening, leaving a narrow slot the blades draw back into
+  // (so they slide under real metal instead of vanishing at a flat edge).
+  // Wound so every face points out of the solid (lathe normals sit to the
+  // right of the direction of travel in (r, y)).
+  const O = APERTURE_OUTER;
+  const bezel = [
+    [O + BEZEL_W, 0.0005],
+    [O + BEZEL_W - 0.03, BEZEL_H],
+    [O + 0.008, BEZEL_H],
+    [O - BEZEL_LIP + 0.004, BEZEL_H - 0.004],
+    [O - BEZEL_LIP, BEZEL_H - 0.008],
+    [O - BEZEL_LIP, BEZEL_SLOT],
+    [O + 0.09, BEZEL_SLOT],
+  ];
   for (const [pts, n] of [
     [outer, 160],
     [inner, 96],
+    [bezel, 160],
   ] as const) {
     const geo = keep(new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), n));
     group.add(new THREE.Mesh(geo, trim));

@@ -192,8 +192,10 @@ export class RigOverlay {
 }
 
 /**
- * Floor hatches under each boot — the boots rise through these. Ring + soft
- * disc, additive cyan, driven 0–1 by the choreography.
+ * Floor hatches under each boot — the boots rise through these. A glowing
+ * rim, additive cyan, driven 0–1 by the choreography. (No fill over the
+ * opening: with one lift plate up and the other down, a fill lit only the
+ * raised half.)
  */
 export class FloorHatches {
   readonly group = new THREE.Group();
@@ -203,8 +205,7 @@ export class FloorHatches {
   constructor(cx: number, cz: number, radius: number, floorY: number) {
     this.group.name = 'floor-hatches';
     const ring = new THREE.Mesh(new THREE.RingGeometry(radius, radius + 0.022, 96), this.material(0x6ee7ff));
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(radius, 96), this.material(0x1a6f9a));
-    for (const m of [ring, disc]) {
+    for (const m of [ring]) {
       m.rotation.x = -Math.PI / 2;
       m.position.set(cx, floorY, cz);
       m.renderOrder = 2;
@@ -229,8 +230,8 @@ export class FloorHatches {
   setOpen(amount: number): void {
     const a = THREE.MathUtils.clamp(amount, 0, 1);
     this.group.visible = a > 0.003;
-    this.mats.forEach((m, i) => {
-      m.opacity = a * (i % 2 === 0 ? 0.95 : 0.55);
+    this.mats.forEach((m) => {
+      m.opacity = a * 0.95;
     });
   }
 

@@ -95,6 +95,9 @@ const REDEPLOY_RING_OPEN = 0.3;
 const FLOOR_STOW_CLEARANCE = 0.12;
 /** Elevator travel so a folded mast arm clears the ceiling. */
 const CEILING_STOW_EXTRA = 1.3;
+/** Centre hatch doors: slide time, and how long before the first boot lift moves they are open (s). */
+const HATCH_DOOR_SEC = 0.3;
+const HATCH_DOOR_LEAD = 0.03;
 
 /**
  * The robot cell: environment, thirteen arms and their parts cradles.
@@ -140,6 +143,8 @@ export class Workshop {
   private prepOrder: Array<{ id: RobotId; at: number; rise: number }> | null = null;
   private readonly mats = createRobotMaterials();
   private readonly liftTasks: FitTask[];
+  /** Seed time the centre hatch doors are fully open (the boots start up right after). */
+  private readonly hatchOpenAt: number;
   private lastT = Number.NaN;
   private readonly _m = new THREE.Matrix4();
   private readonly _m2 = new THREE.Matrix4();
@@ -158,6 +163,11 @@ export class Workshop {
   ) {
     this.group.name = 'workshop';
     this.liftTasks = FIT_TASKS.filter((t) => t.kind === 'lift');
+    const liftIds = new Set(this.liftTasks.map((t) => t.id));
+    this.hatchOpenAt = Math.max(
+      plan.preRoll + HATCH_DOOR_SEC + 0.02,
+      Math.min(...plan.fits.filter((f) => liftIds.has(f.task)).map((f) => f.depart)) - HATCH_DOOR_LEAD,
+    );
     this.scanView = new SuitScanView(suit.finalGeometry);
     this.env = createWorkshopEnvironment(
       this.liftTasks.map((t) => {
@@ -569,6 +579,10 @@ export class Workshop {
     this.maxReachError = worst;
     this.env.setAperture(this.apertureAt(t));
     this.lastT = t;
+
+    // Hatch doors part just before the boots start up and, as the doff
+    // runs the same clock backwards, close once both are back down
+    this.env.setHatchDoors(1 - (this.hatchOpenAt - t) / HATCH_DOOR_SEC);
 
     // Boot lifts
     this.liftTasks.forEach((task, i) => {

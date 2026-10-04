@@ -35,6 +35,13 @@ const OVERLAP = 0.25;
 const TOP = -0.003;
 const DROP = 0.0075;
 const THICK = 0.005;
+/**
+ * Opening starts by unlatching: every blade drops this far off the deck's
+ * underside (first share of the stroke) before it slides, and closing ends
+ * by lifting it back up into its seat.
+ */
+const UNLATCH = 0.004;
+const UNLATCH_SHARE = 0.14;
 /** Raised seal along each blade's exposed inner (leading) edge. */
 const SEAL_W = 0.03;
 const SEAL_H = 0.0025;
@@ -44,8 +51,8 @@ const R0 = APERTURE_INNER - LAP;
 const R1 = APERTURE_OUTER + LAP;
 const S_END = 1 + OVERLAP;
 
-/** Lowest point of a shut blade's underside (world y): anything under the ring must clear it. */
-export const APERTURE_UNDERSIDE = TOP - DROP * S_END - THICK;
+/** Lowest point of a blade's underside, unlatched (world y): anything under the ring must clear it. */
+export const APERTURE_UNDERSIDE = TOP - DROP * S_END - THICK - UNLATCH;
 
 const ease = (u: number) => {
   const k = THREE.MathUtils.clamp(u, 0, 1);
@@ -84,10 +91,15 @@ const TRAVEL = (() => {
   }
 })();
 
-/** Blade i's placement at opening u: ring angle, radial run. */
-function placement(i: number, u: number): { angle: number; run: number } {
-  const k = ease(u);
-  return { angle: i * PITCH + TWIST * k, run: TRAVEL * k };
+/**
+ * Blade i's placement at opening u: ring angle, radial run, drop. The
+ * blades unlatch (drop clear of their seat), then the ring turns as they
+ * draw back into the slot under the outer bezel.
+ */
+function placement(i: number, u: number): { angle: number; run: number; drop: number } {
+  const drop = UNLATCH * ease(u / UNLATCH_SHARE);
+  const k = ease((u - UNLATCH_SHARE * 0.7) / (1 - UNLATCH_SHARE * 0.7));
+  return { angle: i * PITCH + TWIST * k, run: TRAVEL * k, drop };
 }
 
 /** Outline of blade i at opening u (0 shut → 1 open), plane coordinates. */
@@ -103,7 +115,7 @@ export function aperturePlatePoints(i: number, u: number): Array<[number, number
  * (a, b), or null where the blade is not.
  */
 export function apertureBladeSpan(i: number, u: number, a: number, b: number): { top: number; bottom: number } | null {
-  const { angle, run } = placement(i, u);
+  const { angle, run, drop } = placement(i, u);
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   const la = a * c + b * s - run;
@@ -113,7 +125,7 @@ export function apertureBladeSpan(i: number, u: number, a: number, b: number): {
   const sweep = SWEEP * ((r - R0) / (R1 - R0) - 0.5);
   const x = (Math.atan2(lb, la) - sweep) / PITCH + 0.5;
   if (x < 0 || x > S_END) return null;
-  return { top: topAt(x), bottom: topAt(x) - THICK };
+  return { top: topAt(x) - drop, bottom: topAt(x) - THICK - drop };
 }
 
 /**
@@ -204,9 +216,9 @@ export class RingAperture {
     if (k === this.u) return;
     this.u = k;
     for (let i = 0; i < APERTURE_SEGMENTS; i++) {
-      const { angle, run } = placement(i, k);
+      const { angle, run, drop } = placement(i, k);
       // Plane rotation by α is a world rotation about Y by −α
-      this._m.makeRotationY(-angle).multiply(this._t.makeTranslation(run, 0, 0));
+      this._m.makeRotationY(-angle).multiply(this._t.makeTranslation(run, -drop, 0));
       this.plates.setMatrixAt(i, this._m);
       this.seals.setMatrixAt(i, this._m);
     }

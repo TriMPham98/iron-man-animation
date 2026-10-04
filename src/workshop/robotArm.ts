@@ -3,6 +3,7 @@ import { ARM_DIMS } from './fittingProgram';
 import { mergeStaticTree } from './mergeStatic';
 import { DECAL_RECTS, decalPlane, type RobotMaterials } from './robotMaterials';
 import { block, boltCircle, cable, capsuleOutline, drum, hubX, hull, lathe, roundedRect, slabX, slabY } from './robotParts';
+import { PIT_DEPTH } from './aperturePit';
 
 /**
  * Six-axis industrial arm (yaw · shoulder · elbow · wrist roll/pitch/roll)
@@ -266,8 +267,14 @@ export class RobotArm {
 
     // ── Mount: pedestal on its elevator (floor) or mast trolley ──────
     if (mount === 'floor' && pedestal > 0) {
-      // Column runs on below the floor so a rising elevator never shows its foot
-      this.group.add(drum(0.18, -pedestal - 0.3, -0.03, mats.dark, 0.004, 40));
+      // Column runs on to the pit floor so a raised arm never shows its foot,
+      // banded like the elevator stages it telescopes from
+      const foot = -pedestal - PIT_DEPTH + 0.02;
+      this.group.add(drum(0.18, foot, -0.03, mats.dark, 0.004, 40));
+      for (let y = -pedestal - 0.45; y > foot + 0.2; y -= 0.55) {
+        this.group.add(drum(0.186, y - 0.05, y, mats.metal, 0.003, 40));
+        this.group.add(drum(0.1835, y - 0.032, y - 0.018, mats.accent, 0.001, 40));
+      }
       this.group.add(drum(0.183, -pedestal + 0.05, -pedestal + 0.075, mats.accent, 0.002, 40));
       if (pedestal > 0.3) {
         this.group.add(block(0.11, pedestal * 0.45, 0.03, mats.paint, 0, -pedestal * 0.5, 0.168));
