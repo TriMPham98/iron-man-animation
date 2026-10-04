@@ -112,8 +112,8 @@ export interface AssemblyController {
   toSeed: (gsapT: number) => number;
   /** GSAP time the seamless suit swaps in (last frame with real parts). */
   getFinalSwapTime: () => number;
-  /** The cinematic camera pose at a GSAP time (not applied). */
-  cameraAt: (gsapT: number) => CameraPose;
+  /** The cinematic camera pose at a GSAP time (not applied); `shake` false drops the impact shakes. */
+  cameraAt: (gsapT: number, shake?: boolean) => CameraPose;
 }
 
 /**
@@ -471,7 +471,7 @@ export function createAssemblyTimeline(
       workshop?.apply(frame);
     },
     getFinalSwapTime: () => finalSwapTime,
-    cameraAt: (gsapT: number) => evaluateCamera(plan, gsapT - offset),
+    cameraAt: (gsapT: number, shake = true) => evaluateCamera(plan, gsapT - offset, shake),
     toSeed: (gsapT: number) => gsapT - offset,
     setUserOwnsCamera: (owns: boolean) => {
       userOwnsCamera = owns;

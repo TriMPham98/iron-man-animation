@@ -12,7 +12,7 @@ import { createRenderer } from './scene/createRenderer';
 import { applyStudioEnvironment } from './scene/createStudioEnv';
 import { createAssemblySession } from './session/assemblySession';
 import { buildSuitUpPlan } from './animation/suitUpChoreography';
-import { CRADLE_PORT_RADIUS, floorCradlePorts } from './workshop/cradleStands';
+import { floorCradlePorts } from './workshop/cradleStands';
 import { Workshop } from './workshop/Workshop';
 import { ROBOT_RING_RADIUS } from './workshop/fittingProgram';
 import { FOOT_HATCH_RADIUS, RING_HALF_WIDTH } from './workshop/workshopEnvironment';
@@ -127,7 +127,7 @@ async function boot(): Promise<void> {
       // Centre boot hatch
       [0, 0, FOOT_HATCH_RADIUS + 0.005],
       // Flush ports the parts stands retract through
-      ...floorCradlePorts().map(([x, z]) => [x, z, CRADLE_PORT_RADIUS] as [number, number, number]),
+      ...floorCradlePorts(),
     ],
     // The concentric trench the floor arms rise from
     [[ROBOT_RING_RADIUS - RING_HALF_WIDTH, ROBOT_RING_RADIUS + RING_HALF_WIDTH]],

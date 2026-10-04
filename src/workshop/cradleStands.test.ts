@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { CRADLE_PORT_RADIUS, floorCradlePorts, LID_RADIUS, LID_TRAVEL, lidDirections } from './cradleStands';
+import { floorCradlePorts, lidDirections, lidRadius, lidTravel } from './cradleStands';
 import { ROBOT_RING_RADIUS, ROBOTS } from './fittingProgram';
 import { RING_HALF_WIDTH, WELL_RADIUS } from './workshopEnvironment';
 
 describe('cradle ports', () => {
   const ports = floorCradlePorts();
   const holes: Array<[number, number, number]> = [
-    ...ports.map(([x, z]) => [x, z, CRADLE_PORT_RADIUS] as [number, number, number]),
+    ...ports,
     ...ROBOTS.filter((r) => r.mount === 'floor').map((r) => [r.base[0], r.base[2], WELL_RADIUS] as [number, number, number]),
   ];
 
@@ -21,7 +21,7 @@ describe('cradle ports', () => {
   });
 
   it('keeps every port clear of the robot ring', () => {
-    for (const [x, z] of ports) expect(Math.hypot(x, z) - CRADLE_PORT_RADIUS).toBeGreaterThan(ring[1] + 0.05);
+    for (const [x, z, r] of ports) expect(Math.hypot(x, z) - r).toBeGreaterThan(ring[1] + 0.05);
   });
 
   it('never overlap each other or a robot well', () => {
@@ -36,14 +36,14 @@ describe('cradle ports', () => {
 
   it('park their lids out of sight under the floor', () => {
     const dirs = lidDirections(holes, [ring]);
-    ports.forEach(([x, z], i) => {
-      const lx = x + dirs[i][0] * LID_TRAVEL;
-      const lz = z + dirs[i][1] * LID_TRAVEL;
+    ports.forEach(([x, z, r], i) => {
+      const lx = x + dirs[i][0] * lidTravel(r);
+      const lz = z + dirs[i][1] * lidTravel(r);
       holes.forEach(([hx, hz, hr], j) => {
         if (j === i) return;
-        expect(Math.hypot(lx - hx, lz - hz)).toBeGreaterThan(LID_RADIUS + hr);
+        expect(Math.hypot(lx - hx, lz - hz)).toBeGreaterThan(lidRadius(r) + hr);
       });
-      expect(Math.hypot(lx, lz) - LID_RADIUS).toBeGreaterThan(ring[1]);
+      expect(Math.hypot(lx, lz) - lidRadius(r)).toBeGreaterThan(ring[1]);
     });
   });
 });

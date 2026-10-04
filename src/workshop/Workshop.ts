@@ -28,7 +28,7 @@ import {
 import { mergeStaticTree } from './mergeStatic';
 import { SuitScanView } from './suitScanView';
 import { createWorkshopDetail, type WorkshopDetail } from './workshopDetail';
-import { CRADLE_PORT_RADIUS, CradleStands, floorCradlePorts } from './cradleStands';
+import { CradleStands, floorCradlePorts } from './cradleStands';
 import { createRobotMaterials, RobotArm, toolQuaternion, type ArmJoints } from './robotArm';
 
 const JOINT_KEYS = ['yaw', 'shoulder', 'elbow', 'wristRoll', 'wristPitch', 'flangeRoll'] as const;
@@ -196,7 +196,7 @@ export class Workshop {
       for (const job of track.jobs) this.standRetract.set(job.task, job.lift + 0.35);
     }
     const holes: Array<[number, number, number]> = [
-      ...floorCradlePorts().map(([x, z]) => [x, z, CRADLE_PORT_RADIUS] as [number, number, number]),
+      ...floorCradlePorts(),
     ];
     const rings: Array<[number, number]> = [[ROBOT_RING_RADIUS - RING_HALF_WIDTH, ROBOT_RING_RADIUS + RING_HALF_WIDTH]];
     this.stands = new CradleStands(this.mats, bounds, ROOM_HEIGHT, holes, rings);
@@ -592,6 +592,11 @@ export class Workshop {
     }
     this.stands.setDeployed(THREE.MathUtils.clamp(u, 0, 1));
     this.lastT = Number.NaN;
+  }
+
+  /** World-y shift of a task's cradle head (parts ride it down / up). */
+  standShift(taskId: string): number {
+    return this.stands.shift(taskId);
   }
 
   /** Background animation (screens, racks, holo table, scan feed). */

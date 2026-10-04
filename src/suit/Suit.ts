@@ -31,9 +31,11 @@ import { buildFlightFlaps, flapMotion, type Flap } from './flightFlaps';
 import { FlightFx, type PalmEmitter } from './flightFx';
 import { WeaponsFx, type WeaponTarget } from './weaponsFx';
 import { FIT_TASKS } from '../workshop/fittingProgram';
-import { FOOT_HATCH_RADIUS } from '../workshop/workshopEnvironment';
+import { FOOT_HATCH_RADIUS, ROOM_HEIGHT } from '../workshop/workshopEnvironment';
 
 const NO_CUT = 99;
+/** Stow clip planes parked out of reach (nothing clipped). */
+const NO_CLIP = 1e4;
 
 /**
  * The rigged Mark III: skinned seamless mesh, skinned suit-up pieces, the
@@ -77,6 +79,16 @@ export class Suit {
   private flaps: Flap[] = [];
   private flapRests = new Map<ArmorPieceId, THREE.SkinnedMesh>();
   private flapped = new Set<ArmorPieceId>();
+  /**
+   * World clip at the deck and the ceiling, shared by every part: parts
+   * riding their stands away vanish into the floor ports / ceiling irises
+   * instead of passing through the slab. Parked out of reach otherwise
+   * (the planes always exist, so turning them on never recompiles).
+   */
+  private readonly stowClip = [
+    new THREE.Plane(new THREE.Vector3(0, 1, 0), NO_CLIP),
+    new THREE.Plane(new THREE.Vector3(0, -1, 0), NO_CLIP),
+  ];
   private readonly _hm = new THREE.Matrix4();
 
   private readonly _bm = new THREE.Matrix4();
@@ -124,6 +136,7 @@ export class Suit {
       ...split.rests.values(),
     ];
     for (const m of flapMeshes) suit.model.add(m);
+    for (const p of suit.pieces) ((p.mesh as THREE.Mesh).material as THREE.Material).clippingPlanes = suit.stowClip;
     // Interior shell: back faces only, pushed back in depth so where the
     // model has two layers back to back (one facing in, one out) the outer
     // face always wins and nothing flickers
@@ -183,6 +196,8 @@ export class Suit {
   /** Apply one evaluated choreography frame (pose, pieces, FX, systems). */
   applyFrame(frame: SuitUpFrame): void {
     this.endFlightCheck();
+    this.stowClip[0].constant = NO_CLIP;
+    this.stowClip[1].constant = NO_CLIP;
     this.setPose(frame.pose);
     setFitFx(this.finalMesh.material as THREE.Material, NO_CUT);
 
@@ -223,6 +238,29 @@ export class Suit {
         piece.mesh.matrixWorldNeedsUpdate = true;
         piece.mesh.visible = this.assemblyMode;
         setFitFx((piece.mesh as THREE.Mesh).material as THREE.Material, cutY ? cutY(id) : NO_CUT);
+      }
+    }
+  }
+
+  /**
+   * Cell reset: every part still on a cradle rides its stand by `shift`
+   * (world y, per task) and is clipped at the deck / ceiling as it goes
+   * through. Call after {@link applyFrame} (which parks the clip again).
+   */
+  rideStands(shift: (taskId: string) => number): void {
+    this.stowClip[0].constant = 0;
+    this.stowClip[1].constant = ROOM_HEIGHT;
+    // World up in model space (the rig stands with a slight lean)
+    const up = this._dir.set(0, 1, 0).transformDirection(this.modelInv);
+    for (const task of FIT_TASKS) {
+      const dy = shift(task.id);
+      if (dy === 0) continue;
+      this._bm.makeTranslation(up.x * dy, up.y * dy, up.z * dy);
+      for (const id of task.pieces) {
+        const piece = this.pieces.find((p) => p.id === id);
+        if (!piece) continue;
+        piece.mesh.matrix.premultiply(this._bm);
+        piece.mesh.matrixWorldNeedsUpdate = true;
       }
     }
   }

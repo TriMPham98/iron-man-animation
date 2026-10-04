@@ -268,3 +268,22 @@ export function createCuePlayer(play: (req: PlayRequest) => void, maxJump = 0.5)
     },
   };
 }
+
+/**
+ * Cell reset between cycles, timed within each phase (s from its start):
+ * the arms' motors as they fold away, slides as the stands carry their
+ * parts down (and later back up), a close as the cell shuts. Stands run
+ * in the last third of the stow and the first third of the rise (see
+ * CradleStands.setDeployed).
+ */
+export function resetCues(stowSec: number, riseSec: number): Array<SfxCue & { phase: 'stow' | 'rise' }> {
+  return [
+    { phase: 'stow', t: 0, file: 'robot-movement.mp3', volume: 0.22, pitch: 0.82, duration: 2.4, fadeOut: 0.7 },
+    { phase: 'stow', t: 0.15, file: 'robot-movement.mp3', volume: 0.16, pitch: 0.94, duration: 2.2, fadeOut: 0.7 },
+    { phase: 'stow', t: stowSec * 0.62, file: 'metal-sliding.mp3', volume: 0.16, pitch: 0.78 },
+    { phase: 'stow', t: stowSec - 0.1, file: 'medium-close.mp3', volume: 0.18, pitch: 0.9 },
+    { phase: 'rise', t: 0, file: 'metal-sliding.mp3', volume: 0.16, pitch: 0.86 },
+    { phase: 'rise', t: riseSec * 0.25, file: 'robot-movement.mp3', volume: 0.2, pitch: 0.9, duration: 2.2, fadeOut: 0.7 },
+    { phase: 'rise', t: riseSec - 0.15, file: 'metal-connect.mp3', volume: 0.14, pitch: 0.95 },
+  ];
+}

@@ -1,13 +1,14 @@
 import * as THREE from 'three';
-import { cradleFor, FIT_TASKS, ROBOTS, type FitTask } from './fittingProgram';
+import { cradleFor, cradlePortRadius, FIT_TASKS, ROBOTS, type FitTask } from './fittingProgram';
 import type { RobotMaterials } from './robotMaterials';
 import { block, drum, slabX } from './robotParts';
 
-/** Floor port a cradle post telescopes through (m). */
-export const CRADLE_PORT_RADIUS = 0.078;
-/** Port lid radius and how far it parks out under the floor. */
-export const LID_RADIUS = CRADLE_PORT_RADIUS + 0.01;
-export const LID_TRAVEL = 2 * CRADLE_PORT_RADIUS + 0.03;
+/**
+ * Port lid radius and how far it parks out under the floor, for a port of
+ * radius r (ports are sized to their parts: see cradlePortRadius).
+ */
+export const lidRadius = (r: number): number => r + 0.01;
+export const lidTravel = (r: number): number => 2 * r + 0.03;
 /** Lid top sits just under the floor plane (flush, never coplanar). */
 const LID_TOP = -0.003;
 /** Retract stroke time (s). */
@@ -30,22 +31,24 @@ export function lidDirections(
   holes: Array<[number, number, number]>,
   rings: Array<[number, number]> = [],
 ): Array<[number, number]> {
-  return floorCradlePorts().map(([x, z]) => {
+  return floorCradlePorts().map(([x, z, r]) => {
+    const lr = lidRadius(r);
+    const travel = lidTravel(r);
     let best: [number, number] = [1, 0];
     let bestGap = -Infinity;
     for (let k = 0; k < 32; k++) {
       const a = (k / 32) * Math.PI * 2;
       const dx = Math.cos(a);
       const dz = Math.sin(a);
-      const lx = x + dx * LID_TRAVEL;
-      const lz = z + dz * LID_TRAVEL;
+      const lx = x + dx * travel;
+      const lz = z + dz * travel;
       let gap = Infinity;
       for (const [hx, hz, hr] of holes) {
         if (Math.hypot(hx - x, hz - z) < 1e-6) continue;
-        gap = Math.min(gap, Math.hypot(lx - hx, lz - hz) - hr - LID_RADIUS);
+        gap = Math.min(gap, Math.hypot(lx - hx, lz - hz) - hr - lr);
       }
       const d = Math.hypot(lx, lz);
-      for (const [r0, r1] of rings) gap = Math.min(gap, Math.max(r0 - d, d - r1) - LID_RADIUS);
+      for (const [r0, r1] of rings) gap = Math.min(gap, Math.max(r0 - d, d - r1) - lr);
       // Prefer parking away from the suit when several are clear
       gap += 0.02 * (dx * x + dz * z) / Math.max(1e-6, Math.hypot(x, z));
       if (gap > bestGap) {
@@ -57,13 +60,13 @@ export function lidDirections(
   });
 }
 
-/** World (x, z) of every floor cradle port (cut out of the floor). */
-export function floorCradlePorts(): Array<[number, number]> {
+/** World (x, z) and radius of every floor cradle port (cut out of the floor). */
+export function floorCradlePorts(): Array<[number, number, number]> {
   return cradleTasks()
     .filter((t) => !hangs(t))
     .map((t) => {
       const c = cradleFor(t);
-      return [c[0], c[2]];
+      return [c[0], c[2], cradlePortRadius(t)];
     });
 }
 
@@ -79,6 +82,8 @@ interface Stand {
   lidClosed: THREE.Vector3;
   /** Retract 0 (up, holding) → 1 (stowed). */
   u: number;
+  /** World-y shift of the cradle head from its up position (− = down). */
+  shift: number;
 }
 
 /**
@@ -113,9 +118,8 @@ export class CradleStands {
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
     });
-    const P = CRADLE_PORT_RADIUS;
-    const pitGeo = new THREE.CylinderGeometry(P, P, 1.4, 32, 1, true);
-    const trimGeo = new THREE.RingGeometry(P, P + 0.016, 40);
+    // Ceiling shafts read as openings while their iris is open
+    const shaftMat = new THREE.MeshBasicMaterial({ color: 0x030405 });
 
     // Pits + trims of every port share one static group (merged to a
     // couple of draw calls); only the moving parts live per port
@@ -126,6 +130,8 @@ export class CradleStands {
       const c = cradleFor(task);
       const { bottom, top } = bounds(task);
       const hanging = hangs(task);
+      const P = cradlePortRadius(task);
+      const trimGeo = new THREE.RingGeometry(P, P + 0.016, 48);
       const port = new THREE.Group();
       port.name = `port-${task.id}`;
       port.position.set(c[0], 0, c[2]);
@@ -134,7 +140,7 @@ export class CradleStands {
       if (!hanging) {
         const h = Math.max(0.1, bottom - 0.005);
         // Port: pit + flush trim ring
-        const pit = new THREE.Mesh(pitGeo, pitMat);
+        const pit = new THREE.Mesh(new THREE.CylinderGeometry(P, P, 1.4, 40, 1, true), pitMat);
         pit.position.set(c[0], -0.7, c[2]);
         statics.add(pit);
         const trim = new THREE.Mesh(trimGeo, trimMat);
@@ -172,21 +178,23 @@ export class CradleStands {
         port.add(head);
 
         // Lid slides out radially, under the floor
-        const lid = drum(LID_RADIUS, LID_TOP - 0.02, LID_TOP, mats.paint, 0.003, 32);
+        const lid = drum(lidRadius(P), LID_TOP - 0.02, LID_TOP, mats.paint, 0.003, 40);
         lid.userData.dynamic = true;
         const [dx, dz] = lidDirs[floorIndex++];
-        const lidOpen = new THREE.Vector3(dx, 0, dz).multiplyScalar(LID_TRAVEL);
+        const lidOpen = new THREE.Vector3(dx, 0, dz).multiplyScalar(lidTravel(P));
         port.add(lid);
         this.stands.push({
           task,
           hanging,
-          stroke: h + 0.03,
+          // Deep enough to take the whole part below the deck with it
+          stroke: Math.max(h, top) + 0.03,
           head,
           sleeve,
           lid,
           lidOpen,
           lidClosed: new THREE.Vector3(),
           u: -1,
+          shift: 0,
         });
       } else {
         port.position.y = ceilingY;
@@ -194,7 +202,12 @@ export class CradleStands {
         trim.rotation.x = Math.PI / 2;
         trim.position.set(c[0], ceilingY - 0.0015, c[2]);
         statics.add(trim);
-        const iris = new THREE.Mesh(new THREE.CircleGeometry(P, 32), mats.dark);
+        // Open shaft (dark) under an iris plate that closes over it
+        const shaft = new THREE.Mesh(new THREE.CircleGeometry(P, 40), shaftMat);
+        shaft.rotation.x = Math.PI / 2;
+        shaft.position.set(c[0], ceilingY - 0.001, c[2]);
+        statics.add(shaft);
+        const iris = new THREE.Mesh(new THREE.CircleGeometry(P, 40), mats.metal);
         iris.rotation.x = Math.PI / 2;
         iris.position.y = -0.002;
         iris.userData.dynamic = true;
@@ -211,13 +224,15 @@ export class CradleStands {
         this.stands.push({
           task,
           hanging,
-          stroke: -hook + 0.06,
+          // Up past the ceiling with the part it carries
+          stroke: Math.max(-hook + 0.06, ceilingY - bottom + 0.03),
           head,
           sleeve: null,
           lid: iris,
           lidOpen: new THREE.Vector3(),
           lidClosed: new THREE.Vector3(),
           u: -1,
+          shift: 0,
         });
       }
     }
@@ -231,6 +246,7 @@ export class CradleStands {
     // The head runs the stroke, then the lid / iris closes over the port
     const travel = THREE.MathUtils.smoothstep(k, 0, 0.78) * s.stroke;
     const close = THREE.MathUtils.smoothstep(k, 0.8, 1);
+    s.shift = s.hanging ? travel : -travel;
     if (s.hanging) {
       s.head.position.y = travel;
       s.head.visible = k < 0.999;
@@ -249,6 +265,14 @@ export class CradleStands {
       const t0 = retractStart(s.task);
       this.setRetract(s, (t - t0) / STAND_RETRACT_SEC);
     }
+  }
+
+  /**
+   * How far a task's cradle head has moved from its holding position
+   * (world y, + = up into the ceiling): a part still on it rides along.
+   */
+  shift(taskId: string): number {
+    return this.stands.find((s) => s.task.id === taskId)?.shift ?? 0;
   }
 
   /** Reset handoff: all stands rise (u = 1 → fully deployed). */

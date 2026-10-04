@@ -325,13 +325,49 @@ export function taskForPiece(piece: ArmorPieceId): FitTask {
 export const CRADLE_RING_RADIUS = 2.05;
 /** Least angular spacing between neighbouring floor cradles (deg). */
 const CRADLE_MIN_GAP_DEG = 10;
+/** Floor between neighbouring cradle ports (m). */
+const CRADLE_PORT_GAP = 0.04;
+
+/**
+ * Radius (m) of each cradle's floor port / ceiling iris: the widest reach
+ * of its parts from the stand axis as they sit on the cradle, plus a
+ * little clearance, so the whole part can be carried through it when the
+ * cell stows. Measured off the model (see Workshop's footprint check).
+ */
+const CRADLE_PORT_RADII: Readonly<Record<string, number>> = {
+  'shin.L': 0.205,
+  'shin.R': 0.205,
+  'thigh.L': 0.262,
+  'thigh.R': 0.262,
+  'pec.L': 0.152,
+  'pec.R': 0.153,
+  'forearm.L': 0.127,
+  'forearm.R': 0.128,
+  'gauntlet.L': 0.115,
+  'gauntlet.R': 0.115,
+  'upperArm.L': 0.183,
+  'upperArm.R': 0.182,
+  'pauldron.L': 0.15,
+  'pauldron.R': 0.151,
+  hips: 0.297,
+  'back.lower': 0.21,
+  'back.upper': 0.28,
+  abdomen: 0.223,
+  'chest.core': 0.238,
+  helmet: 0.182,
+};
+
+/** Port / iris radius for a task's cradle (m). */
+export function cradlePortRadius(task: FitTask): number {
+  return CRADLE_PORT_RADII[task.id] ?? 0.15;
+}
 
 let floorCradleAngles: Map<string, number> | null = null;
 
 /**
  * Angle (deg) of every floor cradle: beside its arm (alternating sides,
- * further jobs fanning out), then relaxed so neighbours keep
- * {@link CRADLE_MIN_GAP_DEG} — each stand gets its own port.
+ * further jobs fanning out), then relaxed so neighbouring ports (sized to
+ * their parts) keep a strip of floor between them.
  */
 function cradleAngles(): Map<string, number> {
   if (floorCradleAngles) return floorCradleAngles;
@@ -348,15 +384,33 @@ function cradleAngles(): Map<string, number> {
     });
   }
   want.sort((a, b) => a.a - b.a);
-  // Push apart until every gap is respected (a few sweeps both ways)
-  for (let it = 0; it < 20; it++) {
+  // Neighbours keep their ports apart: chord ≥ both radii + a strip of floor
+  const radius = (id: string) => CRADLE_PORT_RADII[id] ?? 0.15;
+  const minGap = (a: string, b: string) => {
+    const chord = radius(a) + radius(b) + CRADLE_PORT_GAP;
+    const deg = (2 * Math.asin(Math.min(1, chord / (2 * CRADLE_RING_RADIUS))) * 180) / Math.PI;
+    return Math.max(CRADLE_MIN_GAP_DEG, deg);
+  };
+  // Push apart until every gap is respected (sweeps both ways, wrapping)
+  for (let it = 0; it < 60; it++) {
     for (let i = 1; i < want.length; i++) {
+      const need = minGap(want[i - 1].id, want[i].id);
       const gap = want[i].a - want[i - 1].a;
-      if (gap < CRADLE_MIN_GAP_DEG) {
-        const push = (CRADLE_MIN_GAP_DEG - gap) / 2;
+      if (gap < need) {
+        const push = (need - gap) / 2;
         want[i].a += push;
         want[i - 1].a -= push;
       }
+    }
+    // The ring closes: last and first are neighbours too
+    const first = want[0];
+    const last = want[want.length - 1];
+    const need = minGap(last.id, first.id);
+    const wrap = first.a + 360 - last.a;
+    if (wrap < need) {
+      const push = (need - wrap) / 2;
+      first.a += push;
+      last.a -= push;
     }
   }
   floorCradleAngles = new Map(want.map((w) => [w.id, w.a]));

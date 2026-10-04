@@ -894,7 +894,7 @@ export function shakeOffset(
 }
 
 /** Pure: cinematic camera pose at a seed time (shake included). */
-export function evaluateCamera(plan: SuitUpPlan, t: number): CameraPose {
+export function evaluateCamera(plan: SuitUpPlan, t: number, shake = true): CameraPose {
   const keys = plan.camera;
   const ts = keys.map((k) => k.t);
   const ch = (f: (k: CameraKey) => number) => monotoneCubic(ts, keys.map(f), t);
@@ -903,7 +903,7 @@ export function evaluateCamera(plan: SuitUpPlan, t: number): CameraPose {
   const lx = ch((k) => k.look[0]);
   const ly = ch((k) => k.look[1]);
   const lz = ch((k) => k.look[2]);
-  const [sx, sy, sz] = shakeOffset(plan.shakes, t);
+  const [sx, sy, sz] = shake ? shakeOffset(plan.shakes, t) : [0, 0, 0];
   return {
     x: lx + Math.sin(az) * r + sx,
     y: ch((k) => k.y) + sy,
