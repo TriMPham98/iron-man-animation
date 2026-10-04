@@ -37,14 +37,12 @@ function glowTexture(): THREE.Texture {
   return t;
 }
 
-/** Irregular engine flicker 0.8–1.05: no single sine reads as a loop. */
+/**
+ * Steady burn with a faint, slow shimmer (±3 %). Repulsors are a stable
+ * energy jet, not a guttering flame — any visible strobing reads as a fault.
+ */
 function flick(t: number, seed: number): number {
-  return (
-    0.92 +
-    0.06 * Math.sin(t * 53 + seed) * Math.sin(t * 31 + seed * 1.7) +
-    0.04 * Math.sin(t * 97 + seed * 2.3) +
-    0.03 * Math.sin(t * 7.3 + seed * 0.7)
-  );
+  return 0.97 + 0.02 * Math.sin(t * 5.3 + seed) * Math.sin(t * 3.1 + seed * 1.7) + 0.01 * Math.sin(t * 11 + seed * 2.3);
 }
 
 /**
@@ -118,10 +116,10 @@ export class FlightFx {
             // its tip, never a rigid cone
             vec3 p = position;
             float h = clamp(vH, 0.0, 1.0);
-            float a = uTime * 23.0 + uSeed;
+            float a = uTime * 6.0 + uSeed;
             p.x += h * h * 0.025 * (sin(a + vH * 9.0) + 0.5 * sin(a * 1.9 - vH * 17.0));
             p.z += h * h * 0.025 * (cos(a * 1.3 + vH * 7.0) + 0.5 * sin(a * 2.3 + vH * 13.0));
-            p.xz *= 1.0 + 0.12 * sin(a * 3.1 - vH * 21.0) * h;
+            p.xz *= 1.0 + 0.04 * sin(a * 2.1 - vH * 9.0) * h;
             vec4 mv = modelViewMatrix * vec4(p, 1.0);
             vN = normalize(normalMatrix * normal);
             vV = normalize(-mv.xyz);
@@ -140,8 +138,8 @@ export class FlightFx {
             // Bright at the nozzle, thinning out; standing shock diamonds
             // near the nozzle plus turbulent bands racing down it
             float along = pow(1.0 - clamp(vH, 0.0, 1.0), ${power.toFixed(1)});
-            float diamonds = 0.75 + 0.5 * pow(0.5 + 0.5 * cos(vH * 34.0 + sin(uTime * 9.0 + uSeed) * 0.6), 6.0) * (1.0 - vH);
-            float race = 0.85 + 0.15 * sin(vH * 47.0 - uTime * 55.0 + uSeed) * sin(vH * 19.0 - uTime * 31.0);
+            float diamonds = 0.85 + 0.3 * pow(0.5 + 0.5 * cos(vH * 34.0), 6.0) * (1.0 - vH);
+            float race = 0.95 + 0.05 * sin(vH * 30.0 - uTime * 18.0 + uSeed);
             float bands = diamonds * race;
             float edge = pow(abs(dot(vN, vV)), 0.8);
             gl_FragColor = vec4(uColor * bands, along * edge * uOpacity);
@@ -204,8 +202,6 @@ export class FlightFx {
       // Thrust plume straight out of the palm (jet geometry runs along −Y)
       this._q.setFromUnitVectors(new THREE.Vector3(0, -1, 0), this._n);
       const fl = flick(t, i * 3.1);
-      // Disc throbs with the burn
-      s.scale.multiplyScalar(0.94 + 0.08 * fl);
       for (const [m, w, len, op] of [
         [this.palmJets[i], 0.75, 0.36, 0.8],
         [this.palmCores[i], 0.8, 0.24, 1.1],

@@ -163,7 +163,7 @@ const IGNITE = AT_HOVER + 1.0;
 const SPOOL = IGNITE + 0.6;
 const LIFTOFF = IGNITE + 0.9;
 const HOVER = IGNITE + 2.2;
-const DESCEND = IGNITE + 5.0;
+const DESCEND = IGNITE + 4.5;
 const TOUCHDOWN = IGNITE + 5.9;
 const CUTOFF = IGNITE + 6.2;
 /** Seconds the boot thrusters burn (lift-off spool → cut-off). */
@@ -194,10 +194,10 @@ const LEGS_IN: Keys = [
 
 const NECK_YAW: Keys = keysAt(AT_SERVOS, [
   [0.8, 0],
-  [1.4, 0.5], // look left
-  [1.9, 0.5],
-  [2.7, -0.5], // look right
-  [3.1, -0.5],
+  [1.5, 0.4], // look left
+  [1.9, 0.4],
+  [2.8, -0.4], // look right
+  [3.1, -0.4],
   [3.6, 0],
 ]);
 const NECK_PITCH: Keys = keysAt(AT_SERVOS, [
@@ -254,42 +254,34 @@ export const FLARE_POPS: ReadonlyArray<{ t: number; side: 'L' | 'R' }> = [
  * diagnostic.
  */
 const GAZE: ReadonlyArray<readonly [number, number, number, number, number?]> = [
-  [AT_REPULSORS + 0.2, 0, 0, 0],
-  [R + 1.15, 0.55, 0.14, 0.05], // left palm
-  [R + 1.95, -0.55, 0.14, -0.05, 0.55], // right palm
-  [R + 3.05, 0, 0.02, 0], // both, dead ahead
-  [AT_SHOULDER + 0.05, 0.75, 0.16, -0.1], // left shoulder flap
-  [AT_SHOULDER + 0.6, -0.75, 0.16, 0.1, 0.6], // right
-  [AT_SHOULDER + 1.6, 0, 0, 0, 0.45],
-  [AT_DORSAL + 0.05, 0.38, -0.04, 0], // over the shoulder at the back
-  [AT_DORSAL + 0.5, -0.38, -0.04, 0, 0.45],
-  [AT_DORSAL + 1.6, 0, 0, 0, 0.45],
-  [AT_CALF + 0.05, 0.25, 0.42, 0.04], // down at the left calf
-  [AT_CALF + 0.45, -0.25, 0.42, -0.04, 0.4],
-  [AT_CALF + 1.6, 0, 0, 0, 0.45],
-  [W + 0.5, 0.6, 0.26, 0.06], // left launcher
-  [W + 0.95, -0.6, 0.26, -0.06, 0.55], // right launcher
-  [W + 1.75, 0, -0.08, 0], // silos up front
-  [W + 2.85, 0.3, 0.46, 0.05], // left flare drum
-  [W + 3.75, -0.3, 0.46, -0.05, 0.45], // right drum, its pops
-  [W + 4.6, 0, 0.05, 0, 0.45],
-  [AT_ALL + 0.1, 0, -0.05, 0],
-  [AT_ALL + 2.0, 0, 0, 0],
-  [PALMS_DOWN, 0, 0.36, 0], // down at the deck as the palms set
-  [IGNITE + 0.6, 0, -0.06, 0, 0.6], // eyes up for the lift
-  [HOVER + 0.3, 0.26, 0, 0], // checks left …
-  [HOVER + 1.3, -0.22, 0.02, 0, 0.45], // … and right while holding
-  [HOVER + 2.2, 0, 0, 0],
-  [DESCEND + 0.1, 0, 0.3, 0, 0.5], // watches the deck come up
-  [TOUCHDOWN + 0.1, 0, 0.1, 0],
-  [TOUCHDOWN + 0.6, 0, 0, 0, 0.5],
+  // Unhurried and economical: one look per job, then eyes front
+  [R + 1.1, 0.32, 0.08, 0.03, 0.8], // left palm
+  [R + 2.0, -0.32, 0.08, -0.03, 1.0], // right palm
+  [R + 3.0, 0, 0.02, 0, 0.8], // both, dead ahead
+  [AT_SHOULDER + 0.05, 0.4, 0.1, -0.04, 0.8], // left shoulder flap
+  [AT_SHOULDER + 0.75, -0.4, 0.1, 0.04, 1.1], // right
+  [AT_SHOULDER + 1.75, 0, 0, 0, 0.8],
+  [AT_DORSAL + 0.1, 0, 0.04, 0, 0.8], // can't see the back — waits it out
+  [AT_CALF + 0.1, 0, 0.24, 0, 0.9], // down at the calves
+  [AT_CALF + 1.6, 0, 0, 0, 0.8],
+  [W + 0.5, 0.34, 0.14, 0.03, 0.8], // left launcher
+  [W + 1.2, -0.34, 0.14, -0.03, 1.0], // right launcher
+  [W + 2.0, 0, -0.04, 0, 0.8], // silos, eyes front
+  [W + 3.0, 0, 0.22, 0, 0.8], // down at the flare drums
+  [W + 4.8, 0, 0, 0, 0.8],
+  [PALMS_DOWN, 0, 0.2, 0, 0.8], // checks the deck as the palms set
+  [IGNITE + 0.5, 0, -0.03, 0, 0.9], // eyes up for the lift
+  [HOVER + 0.8, 0.14, 0, 0, 1.0], // one easy look round
+  [HOVER + 2.2, 0, 0, 0, 1.0],
+  [DESCEND + 0.2, 0, 0.16, 0, 0.9], // watches the deck come up
+  [TOUCHDOWN + 0.25, 0, 0, 0, 0.75],
 ];
 
 /** Gaze channel (0 yaw, 1 pitch, 2 roll) at t: ease between holds. */
 function gaze(t: number, ch: 1 | 2 | 3): number {
   let v = 0;
   for (const g of GAZE) {
-    const dur = g[4] ?? 0.32;
+    const dur = g[4] ?? 0.8;
     if (t <= g[0]) break;
     v = v + (g[ch] - v) * stroke(g[0], g[0] + dur, t);
   }
@@ -386,14 +378,18 @@ const HOVER_WRIST = 1.45;
 /** Ripple delay per finger [thumb, index, middle, ring, pinky] (s). */
 const RIPPLE = [0.2, 0.15, 0.1, 0.05, 0];
 
-function fingers(t: number, side: 'L' | 'R', palms: number): number[] {
+/** Resting hand: fingers fall into a loose, natural curl (pinky most). */
+const RELAXED = [0.08, 0.12, 0.15, 0.18, 0.2];
+
+function fingers(t: number, side: 'L' | 'R', palms: number, easy: number): number[] {
   const fist = side === 'L' ? FIST_L : FIST_R;
   // Palms flat (fingers straight) for repulsor shots and in the air
-  const wrist = keyed(t, side === 'L' ? WRIST_L : WRIST_R);
-  const flat = -0.25 * Math.max(Math.min(1, wrist), palms);
+  const wrist = Math.min(1, keyed(t, side === 'L' ? WRIST_L : WRIST_R));
+  const flat = -0.25 * Math.max(wrist, palms);
+  const rest = easy * (1 - wrist);
   return RIPPLE.map((d, i) => {
     const k = move(t, fist[0] + d, fist[1] + d, fist[2] + d * 0.5, fist[3] + d * 0.5);
-    return Math.max(k * (i === 0 ? 0.8 : 1), 0) + flat * (1 - k);
+    return Math.max(k * (i === 0 ? 0.8 : 1), 0) + (flat + RELAXED[i] * rest) * (1 - k);
   });
 }
 
@@ -440,9 +436,10 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
   // Neck: the servo check (left, right, a glance down), then the pilot's
   // gaze follows each part under test; a faint drift keeps it alive
   const live = breathEnvelope(t);
-  let headYaw = keyed(t, NECK_YAW) + gaze(t, 1) + live * (0.012 * Math.sin(t * 1.7) + 0.007 * Math.sin(t * 3.1 + 1));
-  let headPitch = keyed(t, NECK_PITCH) + gaze(t, 2) + live * 0.008 * Math.sin(t * 2.3 + 0.5);
-  let headRoll = gaze(t, 3) + live * 0.006 * Math.sin(t * 1.3 + 2);
+  // Slow, barely-there drift (attention settling, not twitching)
+  let headYaw = keyed(t, NECK_YAW) + gaze(t, 1) + live * 0.006 * Math.sin(t * 0.55 + 1);
+  let headPitch = keyed(t, NECK_PITCH) + gaze(t, 2) + live * 0.004 * Math.sin(t * 0.4 + 0.5);
+  let headRoll = gaze(t, 3) + live * 0.004 * Math.sin(t * 0.33 + 2);
 
   // Repulsors: arms out, each palm up and fires, then both
   let stance = keyed(t, ARMS);
@@ -453,10 +450,15 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
   let repulsorR = Math.max(...FLASH_R.map(flash));
 
   const ignite = t >= IGNITE && t < SPOOL ? (t < IGNITE + 0.18 || (t > IGNITE + 0.32 && t < IGNITE + 0.5) ? 0.5 : 0.15) : 0;
+  // Throttles back on the way down, flares to arrest the descent, then
+  // spools down once the boots carry the weight
   const burn = keyed(t, [
     [SPOOL, 0],
     [LIFTOFF, 1],
-    [TOUCHDOWN, 1],
+    [HOVER, 0.9],
+    [DESCEND + 0.4, 0.78],
+    [TOUCHDOWN - 0.6, 1],
+    [TOUCHDOWN + 0.05, 0.7],
     [CUTOFF, 0],
   ]);
   const thrusters = Math.max(ignite, burn);
@@ -467,6 +469,9 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
     [HOVER + 0.6, 0.97],
     [HOVER + 1.3, 1],
     [DESCEND, 1],
+    // Arrests a hand's breadth off the deck, then sets down softly
+    [TOUCHDOWN - 0.7, 0.14],
+    [TOUCHDOWN - 0.25, 0.05],
     [TOUCHDOWN, 0],
   ]);
   const bob = t > HOVER - 0.3 && t < DESCEND + 0.3 ? 0.012 * Math.sin((t - HOVER) * Math.PI * 1.3) * move(t, HOVER - 0.3, HOVER, DESCEND, DESCEND + 0.3) : 0;
@@ -492,15 +497,18 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
     [IGNITE, 0.35],
     [LIFTOFF, 0.8],
     [HOVER, 0.55],
-    [TOUCHDOWN, 0.6],
+    [TOUCHDOWN - 0.6, 0.72],
+    [TOUCHDOWN + 0.1, 0.5],
     [CUTOFF + 0.4, 0],
   ]);
   stance = Math.max(stance, 0.1 * palms);
   // Wrists vector the palm thrust against the roll as well
-  wristL = Math.max(wristL, palms * (HOVER_WRIST + 0.12 * uRoll));
-  wristR = Math.max(wristR, palms * (HOVER_WRIST - 0.12 * uRoll));
-  repulsorL = Math.max(repulsorL, repBase * (1 - 0.6 * uRoll));
-  repulsorR = Math.max(repulsorR, repBase * (1 + 0.6 * uRoll));
+  // Bounded balance trim: a steady burn that leans, never gutters out
+  const trimRoll = Math.max(-1, Math.min(1, uRoll));
+  wristL = Math.max(wristL, palms * (HOVER_WRIST + 0.1 * trimRoll));
+  wristR = Math.max(wristR, palms * (HOVER_WRIST - 0.1 * trimRoll));
+  repulsorL = Math.max(repulsorL, repBase * (1 - 0.3 * trimRoll));
+  repulsorR = Math.max(repulsorR, repBase * (1 + 0.3 * trimRoll));
   // Drift: the suit slides a few cm toward its lean, then is brought back
   const driftX = -0.35 * roll;
   const driftZ = 0.3 * pitch;
@@ -508,8 +516,8 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
   // Head stays level with the horizon while the body rocks (vestibular
   // reflex), with a slight lag so it reads as muscle, not a gimbal
   const lagged = attitude(t - 0.12, lift);
-  headRoll -= 0.75 * lagged.roll;
-  headPitch -= 0.6 * lagged.pitch;
+  headRoll -= 0.5 * lagged.roll;
+  headPitch -= 0.4 * lagged.pitch;
 
   // ── Limbs: alive in the air ──
   const air = stroke(0, 0.18, lift);
@@ -521,9 +529,9 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
       [LIFTOFF + 0.25, 0],
     ]) +
     keyed(t, [
-      [TOUCHDOWN - 0.1, 0],
-      [TOUCHDOWN + 0.15, 0.3],
-      [TOUCHDOWN + 0.9, 0],
+      [TOUCHDOWN - 0.05, 0],
+      [TOUCHDOWN + 0.2, 0.22],
+      [TOUCHDOWN + 1.0, 0],
     ]);
   // Dangling legs: soft knees, toes dropped, legs lag the body's tilt
   const sway = (k: number, ph: number) => air * k * Math.sin(t * 1.9 + ph);
@@ -549,11 +557,30 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
     footRollL: air * 0.2 * uRoll,
     footRollR: air * 0.2 * uRoll,
   };
+  // ── On the deck between checks: a pilot standing easy ──
+  // Weight drifts slowly from foot to foot; the loaded leg locks, the other
+  // knee softens; elbows stay relaxed. Off while airborne / in pre-hover.
+  const easy = live * (1 - air) * (1 - palms);
+  const shift = Math.sin(((t - FLIGHT_CHECK_START) / 7.5) * Math.PI * 2) * easy;
+  const shiftX = 0.012 * shift;
+  limbs.hipOutL -= shiftX / 0.88;
+  limbs.hipOutR += shiftX / 0.88;
+  const softL = 0.06 * Math.max(0, -shift);
+  const softR = 0.06 * Math.max(0, shift);
+  limbs.kneeL += softL;
+  limbs.kneeR += softR;
+  limbs.hipL += softL / 2;
+  limbs.hipR += softR / 2;
+  limbs.elbowL += 0.07 * easy + 0.012 * shift;
+  limbs.elbowR += 0.07 * easy - 0.012 * shift;
+  limbs.armL += 0.008 * shift;
+  limbs.armR -= 0.008 * shift;
+
   // Bent knees on the deck lower the hips a touch
   const sink = 0.035 * crouch * (1 - air);
   // Boots: the low side burns harder too
-  const thrusterL = burn * clamp01(1 - 0.35 * uRoll);
-  const thrusterR = burn * clamp01(1 + 0.35 * uRoll);
+  const thrusterL = burn * clamp01(1 - 0.2 * trimRoll);
+  const thrusterR = burn * clamp01(1 + 0.2 * trimRoll);
 
   const flap = (k: readonly [number, number, number, number]) => clamp01(move(t, k[0], k[1], k[2], k[3]));
   // Full deflection drives every flap and every weapon together
@@ -593,12 +620,12 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
       lift: lift - sink,
       pitch,
       roll,
-      driftX,
+      driftX: driftX + shiftX,
       driftZ,
       breath: breathing(t),
       legsIn: keyed(t, LEGS_IN),
-      fingersL: fingers(t, 'L', palms),
-      fingersR: fingers(t, 'R', palms),
+      fingersL: fingers(t, 'L', palms, easy),
+      fingersR: fingers(t, 'R', palms, easy),
     },
     flaps,
     repulsorL: clamp01(repulsorL),
