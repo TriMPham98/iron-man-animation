@@ -410,6 +410,11 @@ export interface ToolJob {
   normal: Vec3;
   /** One strike per point on this click train (index parity). */
   clicks: { train: ClickTrain; parity: 0 | 1 };
+  /**
+   * The part this one joins: rivet sites snap onto the seam where the two
+   * meet (nearest seam point to each hint), so the gun works the joint.
+   */
+  seamWith?: ArmorPieceId;
 }
 
 function rivetLeg(
@@ -427,8 +432,9 @@ function rivetLeg(
     kind: 'rivet',
     piece: `${piece}.${side}.front`,
     points: ys.map((y) => [x * s, y, z] as Vec3),
-    normal: [0.25 * s, 0, 1],
+    normal: [s, 0, 0.35],
     clicks: { train, parity: side === 'L' ? 0 : 1 },
+    seamWith: `${piece}.${side}.back`,
   };
 }
 
@@ -440,20 +446,22 @@ function rivetPec(side: 'L' | 'R'): ToolJob {
     kind: 'rivet',
     piece: `pec.${side}`,
     points: [
-      [0.12 * s, 1.3, 0.2],
-      [0.16 * s, 1.4, 0.2],
-      [0.12 * s, 1.5, 0.2],
+      [0.09 * s, 1.32, 0.18],
+      [0.09 * s, 1.4, 0.19],
+      [0.09 * s, 1.48, 0.18],
     ],
     normal: [0.3 * s, 0, 1],
     clicks: { train: 'arms', parity: side === 'L' ? 0 : 1 },
+    seamWith: 'chest.core',
   };
 }
 
 export const TOOL_JOBS: readonly ToolJob[] = [
-  rivetLeg('shins', 'shin', 'L', [0.27, 0.34, 0.41], 0.15, 0.1),
-  rivetLeg('shins', 'shin', 'R', [0.27, 0.34, 0.41], 0.15, 0.1),
-  rivetLeg('thighs', 'thigh', 'L', [0.6, 0.69, 0.78], 0.12, 0.2),
-  rivetLeg('thighs', 'thigh', 'R', [0.6, 0.69, 0.78], 0.12, 0.2),
+  // Hints sit on the outer side seam where the front and back halves close
+  rivetLeg('shins', 'shin', 'L', [0.27, 0.34, 0.41], 0.21, -0.02),
+  rivetLeg('shins', 'shin', 'R', [0.27, 0.34, 0.41], 0.21, -0.02),
+  rivetLeg('thighs', 'thigh', 'L', [0.6, 0.69, 0.78], 0.2, -0.01),
+  rivetLeg('thighs', 'thigh', 'R', [0.6, 0.69, 0.78], 0.2, -0.01),
   rivetPec('L'),
   rivetPec('R'),
 ];

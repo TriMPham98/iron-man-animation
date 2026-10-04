@@ -29,7 +29,9 @@ import { mergeStaticTree } from './mergeStatic';
 import { SuitScanView } from './suitScanView';
 import { createWorkshopDetail, type WorkshopDetail } from './workshopDetail';
 import { CRADLE_PORT_RADIUS, CradleStands, floorCradlePorts } from './cradleStands';
-import { createRobotMaterials, RobotArm, toolQuaternion } from './robotArm';
+import { createRobotMaterials, RobotArm, toolQuaternion, type ArmJoints } from './robotArm';
+
+const JOINT_KEYS = ['yaw', 'shoulder', 'elbow', 'wristRoll', 'wristPitch', 'flangeRoll'] as const;
 import {
   createWorkshopEnvironment,
   ROOM_HEIGHT,
@@ -47,11 +49,28 @@ interface ToolPass {
   spec: ToolJob;
   /** Sites snapped onto the part surface (bind space). */
   sites: THREE.Vector3[];
+  /** Outward surface normal at each site (bind). */
+  normals: THREE.Vector3[];
 }
 
 type Segment =
   | { t0: number; t1: number; kind: 'hold'; pose: ToolPose }
-  | { t0: number; t1: number; kind: 'move'; from: ToolPose; to: ToolPose; arc: number }
+  | {
+      t0: number;
+      t1: number;
+      kind: 'move';
+      from: ToolPose;
+      to: ToolPose;
+      arc: number;
+      /**
+       * Transits (arc > 0) run in joint space between these continuous IK
+       * solutions — every joint moves smoothly from start to end, so the
+       * path is always reachable with no wrist flips. Straight approaches
+       * (arc 0) stay Cartesian.
+       */
+      jFrom?: ArmJoints;
+      jTo?: ArmJoints;
+    }
   | { t0: number; t1: number; kind: 'attached'; task: FitTask }
   | { t0: number; t1: number; kind: 'tool'; pass: ToolPass };
 
@@ -100,6 +119,8 @@ export class Workshop {
   private readonly _q = new THREE.Quaternion();
   private readonly _v = new THREE.Vector3();
   private readonly _n = new THREE.Vector3();
+  private readonly _n2 = new THREE.Vector3();
+  private readonly _j: ArmJoints = { yaw: 0, shoulder: 0, elbow: 0, wristRoll: 0, wristPitch: 0, flangeRoll: 0, error: 0 };
   /** Worst IK miss on the last applied frame (m) — diagnostics/tests. */
   maxReachError = 0;
 
@@ -178,26 +199,53 @@ export class Workshop {
     this.group.add(this.stands.group);
   }
 
-  /** Snap every rivet site onto its part's surface. */
+  /**
+   * Place every rivet site. With a seam partner, each hint snaps to the
+   * nearest point of the joint line where the two parts meet (vertices of
+   * this part within a few mm of the partner's), using that point's own
+   * normal — so the gun works the actual join. Otherwise the hint is
+   * projected onto the part along the job normal.
+   */
   private prepareToolPasses(): void {
     const ray = new THREE.Raycaster();
     const probeMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
     for (const timing of this.plan.tools) {
       const spec = toolJob(timing.job);
-      const piece = this.suit.pieces.find((p) => p.id === spec.piece);
-      const geo = (piece?.mesh as THREE.Mesh | undefined)?.geometry;
-      const probe = geo ? new THREE.Mesh(geo, probeMat) : null;
+      const geoOf = (id: ArmorPieceId | undefined) =>
+        id ? ((this.suit.pieces.find((p) => p.id === id)?.mesh as THREE.Mesh | undefined)?.geometry ?? null) : null;
+      const geo = geoOf(spec.piece);
       const n = new THREE.Vector3(...spec.normal).normalize();
-      const sites = spec.points.map((p) => {
-        const site = new THREE.Vector3(...p);
-        if (!probe) return site;
-        ray.set(site.clone().addScaledVector(n, 0.3), n.clone().negate());
+      const seam = geo ? seamPoints(geo, geoOf(spec.seamWith)) : [];
+      const used: THREE.Vector3[] = [];
+      const sites: THREE.Vector3[] = [];
+      const normals: THREE.Vector3[] = [];
+      for (const p of spec.points) {
+        const hint = new THREE.Vector3(...p);
+        // Nearest seam point to the hint, kept ≥ 4 cm from the others
+        let best: { p: THREE.Vector3; n: THREE.Vector3 } | null = null;
+        let bestD = Infinity;
+        for (const sp of seam) {
+          if (used.some((u) => u.distanceTo(sp.p) < 0.04)) continue;
+          const d = sp.p.distanceToSquared(hint);
+          if (d < bestD) {
+            bestD = d;
+            best = sp;
+          }
+        }
+        if (best && bestD < 0.12 * 0.12) {
+          used.push(best.p);
+          sites.push(best.p.clone().addScaledVector(best.n, 0.002));
+          normals.push(best.n.clone());
+          continue;
+        }
+        const probe = geo ? new THREE.Mesh(geo, probeMat) : null;
+        ray.set(hint.clone().addScaledVector(n, 0.3), n.clone().negate());
         ray.far = 0.6;
-        const hit = ray.intersectObject(probe, false)[0];
-        return hit ? hit.point.clone() : site;
-      });
-      const pass: ToolPass = { timing, spec, sites };
-      this.passes.set(timing.job, pass);
+        const hit = probe ? ray.intersectObject(probe, false)[0] : undefined;
+        sites.push(hit ? hit.point.clone() : hint);
+        normals.push(n.clone());
+      }
+      this.passes.set(timing.job, { timing, spec, sites, normals });
     }
     probeMat.dispose();
   }
@@ -264,7 +312,7 @@ export class Workshop {
     t: number,
     out: ToolPose,
   ): { recoil: number } {
-    const { timing, sites, spec } = pass;
+    const { timing, sites } = pass;
     const s = timing.strikes;
     let recoil = 0;
     let standoff = RIVET_HOVER;
@@ -284,7 +332,9 @@ export class Workshop {
       mix = ease('inOut2', (t - (s[k - 1] + 0.08)) / Math.max(1e-3, s[k] - 0.06 - (s[k - 1] + 0.08)));
     }
     this._v.copy(sites[a]).lerp(sites[k], mix);
-    this.siteWorld(frame, this._v, spec.normal, out.pos, this._n);
+    // Normal blends between neighbouring sites as the gun slides along
+    this._n2.copy(pass.normals[a]).lerp(pass.normals[k], mix).normalize();
+    this.siteWorld(frame, this._v, [this._n2.x, this._n2.y, this._n2.z], out.pos, this._n);
     out.pos.addScaledVector(this._n, standoff);
     // The gun keeps its feed magazine up
     toolQuaternion(this._n.clone().negate(), new THREE.Vector3(0, 1, 0), out.quat);
@@ -377,6 +427,21 @@ export class Workshop {
         }
       });
       segs.push({ t0: t, t1: Infinity, kind: 'hold', pose: cur });
+      // Chain IK through every boundary so neighbouring segments share one
+      // continuous joint branch; transits get their joint-space endpoints
+      let ref = arm.solveWorld(home.pos, home.quat);
+      for (const seg of segs) {
+        if (seg.kind === 'hold') ref = arm.solveWorld(seg.pose.pos, seg.pose.quat, undefined, ref);
+        else if (seg.kind === 'move') {
+          const jFrom = arm.solveWorld(seg.from.pos, seg.from.quat, undefined, ref);
+          const jTo = arm.solveWorld(seg.to.pos, seg.to.quat, undefined, jFrom);
+          if (seg.arc > 0) {
+            seg.jFrom = jFrom;
+            seg.jTo = jTo;
+          }
+          ref = jTo;
+        }
+      }
       this.programs.set(st.id, segs);
     }
   }
@@ -409,6 +474,21 @@ export class Workshop {
       } else if (seg.kind === 'hold') {
         tool.pos.copy(seg.pose.pos);
         tool.quat.copy(seg.pose.quat);
+      } else if (seg.kind === 'move' && seg.jFrom && seg.jTo && r.stow <= 0) {
+        // Joint-space transit
+        const u = ease('inOut2', (t - seg.t0) / Math.max(1e-6, seg.t1 - seg.t0));
+        const j = this._j;
+        for (const k of JOINT_KEYS) j[k] = THREE.MathUtils.lerp(seg.jFrom[k], seg.jTo[k], u);
+        j.error = 0;
+        arm.group.position.copy(arm.base);
+        arm.setJoints(j);
+        arm.setStow(r.stow, this.stowDepth(arm));
+        arm.setGripper(this.jawFor(seg, frame, r.gripper));
+        arm.setSpindle(r.spindle);
+        arm.setRecoil(0);
+        this.updateMast(r.id, arm);
+        this.env.setWell(r.id, r.stow);
+        continue;
       } else if (seg.kind === 'move') {
         const u = ease('inOut2', (t - seg.t0) / Math.max(1e-6, seg.t1 - seg.t0));
         tool.pos.lerpVectors(seg.from.pos, seg.to.pos, u);
@@ -557,4 +637,69 @@ export class Workshop {
     }
     return best;
   }
+}
+
+/**
+ * Joint line between two parts: vertices of `geo` lying within 4 mm of a
+ * vertex of `partner` (bind space), with their outward normals.
+ */
+function seamPoints(
+  geo: THREE.BufferGeometry,
+  partner: THREE.BufferGeometry | null,
+): Array<{ p: THREE.Vector3; n: THREE.Vector3 }> {
+  if (!partner) return [];
+  const cell = 0.004;
+  const key = (x: number, y: number, z: number) => `${Math.floor(x / cell)},${Math.floor(y / cell)},${Math.floor(z / cell)}`;
+  const grid = new Map<string, number[]>();
+  const pp = partner.getAttribute('position');
+  for (let i = 0; i < pp.count; i++) {
+    const k = key(pp.getX(i), pp.getY(i), pp.getZ(i));
+    const list = grid.get(k);
+    if (list) list.push(i);
+    else grid.set(k, [i]);
+  }
+  const pos = geo.getAttribute('position');
+  const nor = geo.getAttribute('normal');
+  const out: Array<{ p: THREE.Vector3; n: THREE.Vector3 }> = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    // Keep only outward-ish surface points (skip inner shell faces)
+    const nx = nor ? nor.getX(i) : 0;
+    const ny = nor ? nor.getY(i) : 0;
+    const nz = nor ? nor.getZ(i) : 1;
+    // Outward-facing, roughly horizontal surface points only (skip the
+    // inner shell and the rolled edges)
+    const radial = x * nx + z * nz;
+    if (radial < 0 || Math.abs(ny) > 0.6) continue;
+    let near = false;
+    const cx = Math.floor(x / cell);
+    const cy = Math.floor(y / cell);
+    const cz = Math.floor(z / cell);
+    for (let dx = -1; dx <= 1 && !near; dx++) {
+      for (let dy = -1; dy <= 1 && !near; dy++) {
+        for (let dz = -1; dz <= 1 && !near; dz++) {
+          const list = grid.get(`${cx + dx},${cy + dy},${cz + dz}`);
+          if (!list) continue;
+          for (const j of list) {
+            const ex = pp.getX(j) - x;
+            const ey = pp.getY(j) - y;
+            const ez = pp.getZ(j) - z;
+            if (ex * ex + ey * ey + ez * ez < cell * cell) {
+              near = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (!near) continue;
+    const k = key(x, y, z);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ p: new THREE.Vector3(x, y, z), n: new THREE.Vector3(nx, ny, nz).normalize() });
+  }
+  return out;
 }

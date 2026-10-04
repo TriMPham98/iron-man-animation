@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BONE_NAMES, BONE_SPECS, type BoneName } from './rig';
+import { BONE_NAMES, BONE_SPECS, FINGERS, type BoneName, type Finger } from './rig';
 
 /**
  * Scalar pose channels the suit-up choreography animates. Every channel is 0
@@ -29,6 +29,34 @@ export interface FlightPose extends SuitPose {
   lift?: number;
   /** 0 = modelled stance (~30 cm between the boots), 1 = feet together. */
   legsIn?: number;
+  /**
+   * Finger curl per hand, [thumb, index, middle, ring, pinky]:
+   * 0 = as modelled, 1 = fist, negative = straightened / splayed.
+   */
+  fingersL?: readonly number[];
+  fingersR?: readonly number[];
+}
+
+/** Max curl (rad) of proximal / distal phalanges at curl 1. */
+const FINGER_CURL = [1.25, 1.35] as const;
+const FINGER_CURL_THUMB = [0.7, 0.9] as const;
+
+const curlAxes = new Map<string, THREE.Vector3>();
+/**
+ * Curl axis of a finger (bind = bone-local): ⊥ to the finger and the palm
+ * normal, signed so positive curl folds the tip into the palm.
+ */
+function curlAxis(f: Finger, side: 'L' | 'R'): THREE.Vector3 {
+  const key = `${f}.${side}`;
+  let a = curlAxes.get(key);
+  if (!a) {
+    const spec = BONE_SPECS.find((s) => s.name === `${f}1.${side}`)!;
+    const dir = new THREE.Vector3(...spec.tail).sub(new THREE.Vector3(...spec.head)).normalize();
+    const palm = new THREE.Vector3(side === 'L' ? -1 : 1, 0, f === 'thumb' ? -0.6 : 0).normalize();
+    a = new THREE.Vector3().crossVectors(dir, palm).normalize();
+    curlAxes.set(key, a);
+  }
+  return a;
 }
 
 /** Thigh adduction that brings the boots together (rad). */
@@ -146,6 +174,25 @@ export function applyPose(rig: SuitRig, pose: FlightPose): void {
     setAxisAngles(b[`thigh.${side}`], [_Z, s * legs]);
     // Soles stay flat on the deck
     setAxisAngles(b[`foot.${side}`], [_Z, -s * legs]);
+  }
+
+  for (const [side, curl] of [
+    ['L', pose.fingersL],
+    ['R', pose.fingersR],
+  ] as const) {
+    FINGERS.forEach((f, i) => {
+      const k = curl?.[i] ?? 0;
+      const p1 = b[`${f}1.${side}` as BoneName];
+      const p2 = b[`${f}2.${side}` as BoneName];
+      if (Math.abs(k) < 1e-5) {
+        p1.quaternion.identity();
+        p2.quaternion.identity();
+        return;
+      }
+      const max = f === 'thumb' ? FINGER_CURL_THUMB : FINGER_CURL;
+      p1.quaternion.setFromAxisAngle(curlAxis(f, side), k * max[0]);
+      p2.quaternion.setFromAxisAngle(curlAxis(f, side), k * max[1]);
+    });
   }
 
   setAxisAngles(b.chest, [_X, -CHEST_RECOIL * pose.chestRecoil]);

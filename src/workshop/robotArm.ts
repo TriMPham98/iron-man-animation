@@ -128,6 +128,33 @@ export function solveArmIK(
   return out;
 }
 
+const TAU = Math.PI * 2;
+const wrapNear = (a: number, ref: number) => a + TAU * Math.round((ref - a) / TAU);
+
+/**
+ * Make an IK solution continuous with a reference configuration: pick the
+ * wrist branch (roll, pitch, roll) vs (roll+π, −pitch, roll+π) nearest the
+ * reference and unwrap the revolute joints by whole turns, so a moving
+ * target never makes a joint jump.
+ */
+export function continueFrom(j: ArmJoints, ref: Readonly<ArmJoints>): ArmJoints {
+  const cost = (r: number, p: number, f: number) =>
+    Math.abs(wrapNear(r, ref.wristRoll) - ref.wristRoll) +
+    Math.abs(p - ref.wristPitch) +
+    Math.abs(wrapNear(f, ref.flangeRoll) - ref.flangeRoll);
+  const a = cost(j.wristRoll, j.wristPitch, j.flangeRoll);
+  const b = cost(j.wristRoll + Math.PI, -j.wristPitch, j.flangeRoll + Math.PI);
+  if (b < a) {
+    j.wristRoll += Math.PI;
+    j.wristPitch = -j.wristPitch;
+    j.flangeRoll += Math.PI;
+  }
+  j.yaw = wrapNear(j.yaw, ref.yaw);
+  j.wristRoll = wrapNear(j.wristRoll, ref.wristRoll);
+  j.flangeRoll = wrapNear(j.flangeRoll, ref.flangeRoll);
+  return j;
+}
+
 /** Forward kinematics (mount frame) — TCP position + tool quaternion. */
 export function armForward(
   j: ArmJoints,
@@ -211,6 +238,8 @@ export class RobotArm {
   private readonly ramA = new THREE.Vector3(0, 0.2, -0.13);
   private readonly ramB = new THREE.Vector3(0, 0.26, -0.06);
   private readonly mountInv = new THREE.Matrix4();
+  private readonly mountMatrix = new THREE.Matrix4();
+  private readonly _one = new THREE.Vector3(1, 1, 1);
   private readonly _p = new THREE.Vector3();
   private readonly _q = new THREE.Quaternion();
   private readonly _a = new THREE.Vector3();
@@ -514,14 +543,35 @@ export class RobotArm {
 
   /** Point the TCP at a world-space pose; returns the residual reach error. */
   reachWorld(tcp: THREE.Vector3, toolQuat: THREE.Quaternion): number {
-    this.group.updateWorldMatrix(true, false);
-    this.mountInv.copy(this.group.matrixWorld).invert();
-    this._p.copy(tcp).applyMatrix4(this.mountInv);
-    this.group.getWorldQuaternion(this._q).invert().multiply(toolQuat);
-    // Mast arms keep their elbows up toward the ceiling, clear of the suit
-    solveArmIK(this._p, this._q, this.dims, this.joints, this.mount === 'ceiling' ? -1 : 1);
+    this.solveWorld(tcp, toolQuat, this.joints, this.joints);
     this.applyJoints();
     return this.joints.error;
+  }
+
+  /**
+   * IK for a world tool pose at the deployed mount, continuous with `ref`
+   * (defaults to the current joints). Does not move the arm.
+   */
+  solveWorld(
+    tcp: THREE.Vector3,
+    toolQuat: THREE.Quaternion,
+    out: ArmJoints = { yaw: 0, shoulder: 0, elbow: 0, wristRoll: 0, wristPitch: 0, flangeRoll: 0, error: 0 },
+    ref: Readonly<ArmJoints> = this.joints,
+  ): ArmJoints {
+    const r = { ...ref };
+    this.mountMatrix.compose(this.base, this.group.quaternion, this._one);
+    this.mountInv.copy(this.mountMatrix).invert();
+    this._p.copy(tcp).applyMatrix4(this.mountInv);
+    this._q.copy(this.group.quaternion).invert().multiply(toolQuat);
+    // Mast arms keep their elbows up toward the ceiling, clear of the suit
+    solveArmIK(this._p, this._q, this.dims, out, this.mount === 'ceiling' ? -1 : 1);
+    return continueFrom(out, r);
+  }
+
+  /** Drive the arm to a joint configuration. */
+  setJoints(j: Readonly<ArmJoints>): void {
+    Object.assign(this.joints, j);
+    this.applyJoints();
   }
 
   /**

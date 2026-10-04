@@ -30,7 +30,28 @@ export const BONE_NAMES = [
   'thigh.R',
   'shin.R',
   'foot.R',
+  ...fingerNames('L'),
+  ...fingerNames('R'),
 ] as const;
+
+/** Thumb + four fingers, two phalanx bones each (proximal → distal). */
+export const FINGERS = ['thumb', 'index', 'middle', 'ring', 'pinky'] as const;
+export type Finger = (typeof FINGERS)[number];
+
+function fingerNames<S extends 'L' | 'R'>(side: S) {
+  return [
+    `thumb1.${side}`,
+    `thumb2.${side}`,
+    `index1.${side}`,
+    `index2.${side}`,
+    `middle1.${side}`,
+    `middle2.${side}`,
+    `ring1.${side}`,
+    `ring2.${side}`,
+    `pinky1.${side}`,
+    `pinky2.${side}`,
+  ] as const;
+}
 
 export type BoneName = (typeof BONE_NAMES)[number];
 
@@ -65,6 +86,50 @@ const LEFT_ARM: Omit<BoneSpec, 'name' | 'parent'>[] = [
   // hand.L — wrist → fingertips
   { head: [0.375, 1.03, 0.02], tail: [0.4, 0.84, 0.045], radius: 0.045, deform: true },
 ];
+
+/**
+ * Finger joints (left hand, bind space) measured off the gauntlet's
+ * finger plates: knuckle → middle joint → tip. Fingers hang down with the
+ * palm facing in (−X); the thumb sits forward (+Z).
+ */
+const LEFT_FINGERS: Record<Finger, [Vec3, Vec3, Vec3]> = {
+  thumb: [
+    [0.36, 1.0, 0.07],
+    [0.35, 0.965, 0.097],
+    [0.333, 0.94, 0.12],
+  ],
+  index: [
+    [0.395, 0.94, 0.078],
+    [0.398, 0.875, 0.083],
+    [0.398, 0.845, 0.095],
+  ],
+  middle: [
+    [0.4, 0.938, 0.042],
+    [0.405, 0.87, 0.043],
+    [0.405, 0.832, 0.045],
+  ],
+  ring: [
+    [0.392, 0.938, 0.006],
+    [0.395, 0.878, 0.004],
+    [0.393, 0.844, 0.0],
+  ],
+  pinky: [
+    [0.377, 0.95, -0.022],
+    [0.375, 0.893, -0.032],
+    [0.369, 0.866, -0.045],
+  ],
+};
+
+function fingerSpecs(side: 'L' | 'R'): BoneSpec[] {
+  const flip = (v: Vec3): Vec3 => (side === 'R' ? mirror(v) : v);
+  return FINGERS.flatMap((f): BoneSpec[] => {
+    const [a, b, c] = LEFT_FINGERS[f].map(flip);
+    return [
+      { name: `${f}1.${side}` as BoneName, parent: `hand.${side}`, head: a, tail: b, radius: 0.011, deform: true },
+      { name: `${f}2.${side}` as BoneName, parent: `${f}1.${side}` as BoneName, head: b, tail: c, radius: 0.01, deform: true },
+    ];
+  });
+}
 
 const LEFT_LEG: Omit<BoneSpec, 'name' | 'parent'>[] = [
   { head: [0.1, 0.89, 0.0], tail: [0.14, 0.51, -0.02], radius: 0.09, deform: true },
@@ -159,6 +224,8 @@ export const BONE_SPECS: readonly BoneSpec[] = [
   ...limbChain('R', ['upperArm.R', 'forearm.R', 'hand.R'], 'chest', LEFT_ARM),
   ...limbChain('L', ['thigh.L', 'shin.L', 'foot.L'], 'hips', LEFT_LEG),
   ...limbChain('R', ['thigh.R', 'shin.R', 'foot.R'], 'hips', LEFT_LEG),
+  ...fingerSpecs('L'),
+  ...fingerSpecs('R'),
 ];
 
 const SPEC_BY_NAME = new Map(BONE_SPECS.map((s) => [s.name, s] as const));
@@ -188,8 +255,8 @@ export function boneAxis(name: BoneName): Vec3 {
 /** Candidate bones per limb. Torso candidates gain arm/leg roots by region. */
 const LIMB_BONES: Record<Limb, BoneName[]> = {
   core: ['hips', 'spine', 'chest', 'neck', 'head'],
-  'arm.L': ['chest', 'upperArm.L', 'forearm.L', 'hand.L'],
-  'arm.R': ['chest', 'upperArm.R', 'forearm.R', 'hand.R'],
+  'arm.L': ['chest', 'upperArm.L', 'forearm.L', 'hand.L', ...fingerNames('L')],
+  'arm.R': ['chest', 'upperArm.R', 'forearm.R', 'hand.R', ...fingerNames('R')],
   'leg.L': ['hips', 'thigh.L', 'shin.L', 'foot.L'],
   'leg.R': ['hips', 'thigh.R', 'shin.R', 'foot.R'],
 };

@@ -475,45 +475,84 @@ export class Suit {
   }
 }
 
+/** Packed emissive atlas (B = repulsors) as pixels, for locating the repulsor. */
+function emissivePixels(mat: THREE.Material | undefined): { d: Uint8ClampedArray; w: number; h: number; flipY: boolean } | null {
+  const tex = (mat as THREE.MeshStandardMaterial | undefined)?.emissiveMap;
+  const img = tex?.image as { width?: number; height?: number } | undefined;
+  if (!tex || !img || typeof document === 'undefined') return null;
+  const w = Number(img.width) || 0;
+  const h = Number(img.height) || 0;
+  if (w < 2 || h < 2) return null;
+  try {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true })!;
+    g.drawImage(img as CanvasImageSource, 0, 0, w, h);
+    return { d: g.getImageData(0, 0, w, h).data, w, h, flipY: tex.flipY };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Repulsor centre + normal per hand, measured off the gauntlet's palm
- * panels (inward-facing faces around the palm), so the glow and thrust sit
- * flat on the repulsor and fire square out of it.
+ * Repulsor centre + normal per hand, measured off the gauntlet: the faces
+ * whose emissive texels light up as repulsor (blue channel of the packed
+ * glow atlas) on the palm. Falls back to the palm-facing panels.
  */
 function measurePalms(pieces: readonly ArmorPiece[]): PalmEmitter[] {
   return (['L', 'R'] as const).map((side) => {
     const s = side === 'L' ? 1 : -1;
-    const geo = (pieces.find((p) => p.id === `gauntlet.${side}`)?.mesh as THREE.Mesh | undefined)?.geometry;
+    const mesh = pieces.find((p) => p.id === `gauntlet.${side}`)?.mesh as THREE.Mesh | undefined;
+    const geo = mesh?.geometry;
     const fallback: PalmEmitter = { bone: `hand.${side}`, at: [s * 0.347, 0.975, 0.035], normal: [-s * 0.98, -0.15, 0.06] };
     if (!geo?.index) return fallback;
     const pos = geo.getAttribute('position');
+    const uv = geo.getAttribute('uv');
+    const em = emissivePixels(mesh?.material as THREE.Material);
     const idx = geo.index.array;
     const a = new THREE.Vector3();
     const b = new THREE.Vector3();
     const c = new THREE.Vector3();
     const n = new THREE.Vector3();
-    const sumN = new THREE.Vector3();
-    const sumP = new THREE.Vector3();
-    let area = 0;
-    for (let t = 0; t < idx.length; t += 3) {
-      a.fromBufferAttribute(pos, idx[t]);
-      b.fromBufferAttribute(pos, idx[t + 1]);
-      c.fromBufferAttribute(pos, idx[t + 2]);
-      n.subVectors(b, a).cross(c.clone().sub(a));
-      const w = n.length() / 2;
-      if (w < 1e-9) continue;
-      n.normalize();
-      const cx = (a.x + b.x + c.x) / 3;
-      const cy = (a.y + b.y + c.y) / 3;
-      // Palm: faces in toward the body, between wrist and knuckles
-      if (n.x * s > -0.6 || Math.abs(cy - 0.975) > 0.04 || cx * s < 0.32 || cx * s > 0.375) continue;
-      sumN.addScaledVector(n, w);
-      sumP.add(new THREE.Vector3(cx, cy, (a.z + b.z + c.z) / 3).multiplyScalar(w));
-      area += w;
-    }
-    if (area < 1e-6) return fallback;
-    sumN.normalize();
-    sumP.divideScalar(area);
-    return { bone: `hand.${side}`, at: [sumP.x, sumP.y, sumP.z], normal: [sumN.x, sumN.y, sumN.z] };
+    const glowing = (i: number) => {
+      if (!em || !uv) return 0;
+      const u = ((uv.getX(i) % 1) + 1) % 1;
+      const v = ((uv.getY(i) % 1) + 1) % 1;
+      const px = Math.min(em.w - 1, Math.floor(u * em.w));
+      const py = Math.min(em.h - 1, Math.floor((em.flipY ? 1 - v : v) * em.h));
+      const k = (py * em.w + px) * 4;
+      return em.d[k + 2] / 255;
+    };
+    const accumulate = (useGlow: boolean) => {
+      const sumN = new THREE.Vector3();
+      const sumP = new THREE.Vector3();
+      let area = 0;
+      for (let t = 0; t < idx.length; t += 3) {
+        a.fromBufferAttribute(pos, idx[t]);
+        b.fromBufferAttribute(pos, idx[t + 1]);
+        c.fromBufferAttribute(pos, idx[t + 2]);
+        n.subVectors(b, a).cross(c.clone().sub(a));
+        const w = n.length() / 2;
+        if (w < 1e-9) continue;
+        n.normalize();
+        const cx = (a.x + b.x + c.x) / 3;
+        const cy = (a.y + b.y + c.y) / 3;
+        // Palm side of the hand, between wrist and knuckles
+        if (n.x * s > -0.3 || cy < 0.92 || cy > 1.03) continue;
+        let k = 1;
+        if (useGlow) {
+          k = (glowing(idx[t]) + glowing(idx[t + 1]) + glowing(idx[t + 2])) / 3;
+          if (k < 0.35) continue;
+        } else if (n.x * s > -0.6 || Math.abs(cy - 0.975) > 0.04 || cx * s < 0.32 || cx * s > 0.375) continue;
+        sumN.addScaledVector(n, w * k);
+        sumP.add(new THREE.Vector3(cx, cy, (a.z + b.z + c.z) / 3).multiplyScalar(w * k));
+        area += w * k;
+      }
+      return area > 1e-7 ? { n: sumN.normalize(), p: sumP.divideScalar(area) } : null;
+    };
+    const r = accumulate(true) ?? accumulate(false);
+    if (!r) return fallback;
+    return { bone: `hand.${side}`, at: [r.p.x, r.p.y, r.p.z], normal: [r.n.x, r.n.y, r.n.z] };
   });
 }

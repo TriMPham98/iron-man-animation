@@ -6,6 +6,7 @@ import { createEnvironment } from './scene/createEnvironment';
 import { createLights } from './scene/createLights';
 import { createPostProcessing } from './scene/postProcessing';
 import { createAdaptiveResolution } from './scene/adaptiveResolution';
+import { warmUp } from './scene/warmUp';
 import { createRenderer } from './scene/createRenderer';
 import { applyStudioEnvironment } from './scene/createStudioEnv';
 import { createAssemblySession } from './session/assemblySession';
@@ -151,6 +152,40 @@ async function boot(): Promise<void> {
   let raf = 0;
   let visible = true;
 
+  /** Opening dolly into the hangar framing (cancelled once INITIATE runs). */
+  const introCam = (() => {
+    let t = -1;
+    const endPos = new THREE.Vector3();
+    const startPos = new THREE.Vector3();
+    const look = new THREE.Vector3();
+    const DUR = 2.4;
+    return {
+      begin() {
+        endPos.copy(camera.position);
+        look.copy(lookTarget);
+        const back = endPos.clone().sub(look).normalize();
+        startPos.copy(endPos).addScaledVector(back, 0.9).add(new THREE.Vector3(0, 0.35, 0));
+        camera.position.copy(startPos);
+        camera.lookAt(look);
+        t = 0;
+      },
+      update(dt: number) {
+        if (t < 0) return;
+        // INITIATE / camera ownership take over immediately
+        if (session.assembly.isPlaying() || session.isComplete()) {
+          t = -1;
+          return;
+        }
+        t = Math.min(DUR, t + Math.min(dt, 0.05));
+        const u = t / DUR;
+        const e = 1 - Math.pow(1 - u, 3);
+        camera.position.lerpVectors(startPos, endPos, e);
+        camera.lookAt(look);
+        if (t >= DUR) t = -1;
+      },
+    };
+  })();
+
   document.addEventListener('visibilitychange', () => {
     visible = document.visibilityState === 'visible';
     if (visible) {
@@ -167,6 +202,7 @@ async function boot(): Promise<void> {
 
     const delta = clock.getDelta();
     adaptive.update(delta);
+    introCam.update(delta);
 
     // Showcase orbit owns the camera on those frames — skip OrbitControls
     // so damping / spherical rebuild cannot fight or dilute the yaw.
@@ -214,6 +250,11 @@ async function boot(): Promise<void> {
     post.render(delta);
   };
 
+  // Compile every shader and upload every texture now (incl. the ones the
+  // fitting / flight check / diagnostic use later) so nothing stalls mid-run
+  ui.setLoadingProgress(0.97);
+  suit.prepareDiagnosticScan();
+  await warmUp(renderer, scene, camera);
   ui.setLoadingProgress(1);
 
   // ── Phase 3: scene ready, keep loader until INITIATE handoff ─────
@@ -263,6 +304,10 @@ async function boot(): Promise<void> {
   // Coordinated handoff: loader chrome collapses, reactor → large INITIATE.
   // (showStartGate also calls hideLoading’s dissolve path.)
   ui.showStartGate();
+  // Hero reveal: the hangar comes up out of a dark, soft focus while the
+  // lens settles in from a little higher and further back
+  introCam.begin();
+  requestAnimationFrame(() => document.body.classList.add('scene-revealed'));
   loop();
 }
 

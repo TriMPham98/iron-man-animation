@@ -59,7 +59,7 @@ export const HOVER_HEIGHT = 0.45;
 
 /** Status lines with the time each step starts. */
 export const FLIGHT_CHECK_STEPS: ReadonlyArray<{ at: number; status: string; item: string; group: string }> = [
-  { at: 0.6, status: 'FLIGHT CONTROL CHECK · NECK SERVOS', item: 'NECK SERVOS', group: 'HEAD' },
+  { at: 0.6, status: 'FLIGHT CONTROL CHECK · HAND + NECK SERVOS', item: 'HAND / NECK SERVOS', group: 'SERVOS' },
   { at: 4.5, status: 'REPULSOR ALIGNMENT · L / R', item: 'REPULSORS L / R', group: 'HANDS' },
   { at: 9.2, status: 'FLIGHT STABILIZERS · SHOULDER FLAPS', item: 'SHOULDER FLAPS', group: 'STABILIZERS' },
   { at: 11.8, status: 'FLIGHT STABILIZERS · DORSAL FLAPS', item: 'DORSAL FLAPS', group: 'STABILIZERS' },
@@ -174,12 +174,20 @@ const FLASH_L = [6.15, 7.9];
 const FLASH_R = [7.05, 7.9];
 
 // Flaps: one side, then the other — open, hold, close
-const SHOULDER_L = [9.3, 9.8, 10.2, 10.65] as const;
-const SHOULDER_R = [10.55, 11.05, 11.45, 11.9] as const;
-const BACK_L = [11.9, 12.4, 12.8, 13.25] as const;
-const BACK_R = [13.15, 13.65, 14.05, 14.5] as const;
-const CALF_L = [14.6, 15.1, 15.5, 15.95] as const;
-const CALF_R = [15.85, 16.35, 16.75, 17.2] as const;
+// Staggered: the right side follows the left a beat later, overlapping
+const STAGGER = 0.35;
+const lag = (k: readonly [number, number, number, number]) =>
+  [k[0] + STAGGER, k[1] + STAGGER, k[2] + STAGGER, k[3] + STAGGER] as const;
+const SHOULDER_L = [9.4, 9.95, 10.55, 11.05] as const;
+const SHOULDER_R = lag(SHOULDER_L);
+const BACK_L = [11.9, 12.45, 13.05, 13.55] as const;
+const BACK_R = lag(BACK_L);
+const CALF_L = [14.5, 15.05, 15.75, 16.25] as const;
+const CALF_R = lag(CALF_L);
+/** Finger servo check: a fist rolls closed pinky → thumb, then opens. */
+const FIST_L = [1.0, 1.55, 2.0, 2.45] as const;
+const FIST_R = lag(FIST_L);
+
 const ALL = [29.7, 30.3, 30.6, 31.2] as const;
 
 // Weapons: launchers L then R; dorsal flaps open, guns rise, traverse, stow
@@ -208,6 +216,8 @@ const CUTOFF = 29.2;
 /** Sound / FX cue sheet for the check (flight-check seconds). */
 export const FLIGHT_EVENTS: readonly FlightEvent[] = [
   { t: 0.6, kind: 'servo', side: 'both' },
+  { t: FIST_L[0], kind: 'servo', side: 'L' },
+  { t: FIST_L[0] + STAGGER, kind: 'servo', side: 'R' },
   { t: 1.4, kind: 'servo' },
   { t: 2.5, kind: 'servo' },
   { t: 3.7, kind: 'servo' },
@@ -248,6 +258,23 @@ export const FLIGHT_EVENTS: readonly FlightEvent[] = [
   { t: 31.2, kind: 'nominal' },
 ];
 
+/** Wrist bend for the hover (1 = repulsor gesture, ~1.45 = full L). */
+const HOVER_WRIST = 1.45;
+
+/** Ripple delay per finger [thumb, index, middle, ring, pinky] (s). */
+const RIPPLE = [0.2, 0.15, 0.1, 0.05, 0];
+
+function fingers(t: number, side: 'L' | 'R', air: number): number[] {
+  const fist = side === 'L' ? FIST_L : FIST_R;
+  // Palms flat (fingers straight) for repulsor shots and in the air
+  const wrist = keyed(t, side === 'L' ? WRIST_L : WRIST_R);
+  const flat = -0.25 * Math.max(Math.min(1, wrist), air);
+  return RIPPLE.map((d, i) => {
+    const k = move(t, fist[0] + d, fist[1] + d, fist[2] + d * 0.5, fist[3] + d * 0.5);
+    return Math.max(k * (i === 0 ? 0.8 : 1), 0) + flat * (1 - k);
+  });
+}
+
 export function evaluateFlightCheck(t: number): FlightCheckFrame {
   const active = t >= FLIGHT_CHECK_START && t < FLIGHT_CHECK_END;
 
@@ -287,9 +314,11 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
     [DESCEND + 0.4, 1],
     [CUTOFF, 0],
   ]);
-  stance = Math.max(stance, 0.32 * air);
-  wristL = Math.max(wristL, 0.75 * air);
-  wristR = Math.max(wristR, 0.75 * air);
+  // Hover pose: arms in close, hands bent up in an L so the repulsors
+  // point straight down at the deck
+  stance = Math.max(stance, 0.1 * air);
+  wristL = Math.max(wristL, HOVER_WRIST * air);
+  wristR = Math.max(wristR, HOVER_WRIST * air);
   repulsorL = Math.max(repulsorL, 0.55 * air);
   repulsorR = Math.max(repulsorR, 0.55 * air);
 
@@ -319,10 +348,12 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
       chestRecoil: 0,
       headPitch,
       headYaw,
-      wristL: clamp01(wristL),
-      wristR: clamp01(wristR),
+      wristL: Math.max(0, wristL),
+      wristR: Math.max(0, wristR),
       lift,
       legsIn: keyed(t, LEGS_IN),
+      fingersL: fingers(t, 'L', air),
+      fingersR: fingers(t, 'R', air),
     },
     flaps,
     repulsorL: clamp01(repulsorL),

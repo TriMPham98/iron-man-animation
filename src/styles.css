@@ -4239,3 +4239,26 @@ body.reduced-motion .jarvis-cursor .jarvis-cursor-ring-outer {
     justify-content: center;
   }
 }
+
+/* ── Hero reveal: loader → hangar ───────────────────────────────────── */
+body.scene-ready #scene-canvas {
+  transition:
+    filter 1.9s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 2.2s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 1.2s ease-out;
+}
+body.scene-ready:not(.scene-revealed) #scene-canvas {
+  filter: brightness(0.12) saturate(0.5) blur(10px);
+  transform: scale(1.06);
+  opacity: 0.35;
+}
+body.scene-revealed #scene-canvas {
+  filter: none;
+  transform: none;
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.scene-ready #scene-canvas {
+    transition: none;
+  }
+}

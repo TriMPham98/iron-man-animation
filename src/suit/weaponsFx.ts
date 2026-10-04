@@ -17,8 +17,9 @@ import type { SuitParticles } from './particles';
 
 const mats = () => ({
   gun: new THREE.MeshStandardMaterial({ color: 0x2a2d33, metalness: 0.85, roughness: 0.35 }),
-  red: new THREE.MeshStandardMaterial({ color: 0x8c1018, metalness: 0.75, roughness: 0.3 }),
-  gold: new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 0.95, roughness: 0.25 }),
+  // Hot-rod red and gold of the suit itself (clearcoated metallic)
+  red: new THREE.MeshPhysicalMaterial({ color: 0x6d0a10, metalness: 0.85, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.12 }),
+  gold: new THREE.MeshPhysicalMaterial({ color: 0xb8913c, metalness: 1, roughness: 0.22, clearcoat: 0.6, clearcoatRoughness: 0.15 }),
   steel: new THREE.MeshStandardMaterial({ color: 0xb8bec6, metalness: 1, roughness: 0.22 }),
   lens: new THREE.MeshStandardMaterial({ color: 0x0a2430, emissive: new THREE.Color(0x6fe0ff), emissiveIntensity: 2 }),
 });
@@ -163,7 +164,7 @@ export class WeaponsFx {
       const trap = flaps.find((f) => f.id === `trap.${side}`);
       if (trap) this.silos.push(this.makeSilo(s, trap, m));
       const hip = flaps.find((f) => f.id === `flare.${side}`);
-      if (hip) this.dispensers.push(this.makeDispenser(s, hip, m));
+      if (hip) this.dispensers.push(this.makeDispenser(s, hip));
     }
   }
 
@@ -212,6 +213,9 @@ export class WeaponsFx {
     // Body (contoured prism) + gold rim just under the lid
     rig.add(prism(foot, -H, 0, m.red));
     rig.add(prism(inset(foot, -0.0015), -half - 0.006, -half - 0.002, m.gold));
+    // Second gold band low on the exposed sleeve + a dark seam between
+    rig.add(prism(inset(foot, -0.001), -half - SILO_RISE * 0.86, -half - SILO_RISE * 0.8, m.gold));
+    rig.add(prism(inset(foot, -0.0006), -half - SILO_RISE * 0.5, -half - SILO_RISE * 0.47, m.gun));
     // Front face: bezel plate and the rocket rack, aimed forward (+Z)
     // Rack sits on the silo's own front face
     const front = Math.max(...foot.map((q) => q[1]));
@@ -229,6 +233,7 @@ export class WeaponsFx {
         r.rotation.x = Math.PI / 2; // tube +Y → forward
         r.add(tube(0.0068, 0.0068, -0.004, 0.0, m.gold, 12)); // cell collar
         r.add(tube(0.0055, 0.0055, 0.0, 0.016, m.steel, 10));
+        r.add(tube(0.0057, 0.0057, 0.011, 0.014, m.gold, 10)); // warhead band
         r.add(tube(0.0055, 0.0, 0.016, 0.028, m.red, 10));
         rig.add(r);
         rockets.push(r);
@@ -240,43 +245,21 @@ export class WeaponsFx {
   }
 
   /**
-   * Flare dispenser under the round hip plate: a concentric drum the same
-   * shape as the hip disc — gold bezel ring, dark face, a ring of six flare
-   * cells round a centre cell.
+   * Flare ports on the suit's own round hip plate (no added hardware): the
+   * plate slides out and turns, and flares leave from the gap round its
+   * rim. Only the launch points are kept here, carried with the plate.
    */
-  private makeDispenser(s: number, flap: Flap, m: ReturnType<typeof mats>) {
+  private makeDispenser(s: number, flap: Flap) {
     const b = flap.bounds;
     const c = b.getCenter(new THREE.Vector3());
-    const outX = s > 0 ? b.max.x : b.min.x;
-    const bind = new THREE.Matrix4().makeTranslation(outX - s * 0.004, c.y, c.z);
-    const r = Math.max(0.026, Math.min(b.max.y - b.min.y, b.max.z - b.min.z) * 0.42);
-    const rig = new THREE.Group();
-    // Drum axis along X (out of the hip)
-    const axisX = (mesh: THREE.Mesh, x: number) => {
-      mesh.rotation.z = -s * (Math.PI / 2);
-      mesh.position.x = x;
-      return mesh;
-    };
-    rig.add(axisX(tube(r, r, -0.026, 0, m.gun, 40), 0));
-    rig.add(axisX(tube(r * 1.04, r * 1.04, -0.004, 0.0015, m.gold, 40), 0));
-    rig.add(axisX(tube(r * 0.9, r * 0.9, 0, 0.002, m.gun, 40), 0));
-    rig.add(axisX(tube(r * 0.42, r * 0.42, 0, 0.0028, m.red, 32), 0));
+    const r = Math.max(0.02, Math.min(b.max.y - b.min.y, b.max.z - b.min.z) * 0.45);
+    const bind = new THREE.Matrix4().makeTranslation(c.x - s * 0.008, c.y, c.z);
     const cells: THREE.Vector3[] = [];
-    const cellAt = (y: number, z: number) => {
-      const cell = axisX(tube(0.0062, 0.0062, 0, 0.0035, m.steel, 14), 0);
-      cell.position.set(0, y, z);
-      rig.add(cell);
-      const cap = axisX(tube(0.0046, 0.0046, 0, 0.0042, m.gold, 12), 0);
-      cap.position.set(0, y, z);
-      rig.add(cap);
-      cells.push(new THREE.Vector3(s * 0.005, y, z));
-    };
-    cellAt(0, 0);
     for (let k = 0; k < 6; k++) {
       const a = (k / 6) * Math.PI * 2;
-      cellAt(Math.sin(a) * r * 0.64, Math.cos(a) * r * 0.64);
+      cells.push(new THREE.Vector3(0, Math.sin(a) * r, Math.cos(a) * r));
     }
-    return { ...this.mount('hips', flap, bind, rig), cells, side: s };
+    return { ...this.mount('hips', flap, bind, new THREE.Group()), cells, side: s };
   }
 
   private mount(bone: BoneName, flap: Flap, bind: THREE.Matrix4, rig: THREE.Group): Mount {

@@ -103,15 +103,18 @@ const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
       }),
     },
     {
-      // Hip side plate slides out over the flare dispenser
+      // Round hip plate: slides out, then turns a quarter like a revolver
+      // cylinder to line its rim ports up — the flares leave from under it
       id: `flare.${side}`,
       piece: 'hips.front',
       region: { min: [xr(0.165, 0.215)[0], 0.93, 0.0], max: [xr(0.165, 0.215)[1], 1.04, 0.1] },
       hinge: (b) => ({
         pivot: new THREE.Vector3(mid(b, 'x'), mid(b, 'y'), mid(b, 'z')),
-        axis: X,
-        angle: 0,
+        axis: new THREE.Vector3(s, 0, 0.17).normalize(),
+        angle: 0.55 * s,
         lift: new THREE.Vector3(s * FLARE_SLIDE, 0, -0.012),
+        liftEnd: 0.55,
+        swingStart: 0.45,
       }),
     },
     {
