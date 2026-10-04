@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { ARM_DIMS, ROBOT_RING_RADIUS } from './fittingProgram';
+import { ARM_DIMS } from './fittingProgram';
+import { APERTURE_OUTER } from './ringAperture';
 import { RobotArm } from './robotArm';
 import type { RobotMaterials } from './robotMaterials';
 import { boltCircle, drum, lathe } from './robotParts';
@@ -261,13 +262,13 @@ export function createWorkshopDetail(suitGeometry: THREE.BufferGeometry, mats: R
     group.add(dash);
   }
   group.add(...boltCircle(16, 0.37, [0, top, 0], 'y', mats.metal, 0.006, Math.PI / 16));
-  // Inlaid floor lights round the outside of the robot ring
+  // Inlaid floor lights round the outside of the ring aperture
   const inlay = new THREE.CylinderGeometry(0.028, 0.028, 0.004, 16);
   const inlayMat = new THREE.MeshBasicMaterial({ color: 0x5cc8ef, toneMapped: false });
   for (let k = 0; k < 24; k++) {
     const a = ((k + 0.5) / 24) * Math.PI * 2;
     const l = new THREE.Mesh(inlay, inlayMat);
-    l.position.set(Math.cos(a) * (ROBOT_RING_RADIUS + 0.33), 0.001, Math.sin(a) * (ROBOT_RING_RADIUS + 0.33));
+    l.position.set(Math.cos(a) * (APERTURE_OUTER + 0.07), 0.001, Math.sin(a) * (APERTURE_OUTER + 0.07));
     group.add(l);
   }
 

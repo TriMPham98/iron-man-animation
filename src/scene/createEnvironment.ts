@@ -52,31 +52,28 @@ export function createEnvironment(
   ground.name = 'ground';
   group.add(ground);
 
-  addPadRings(group);
+  addPadRings(group, rings);
 
   scene.add(group);
 
   return { group, ground };
 }
 
-function addPadRings(group: THREE.Group): void {
+/** Painted guide rings on the pad (any that would cross an opening are left off). */
+function addPadRings(group: THREE.Group, openings: Array<[number, number]>): void {
   const segs = 80;
-
-  const inner = ringMesh(1.12, 1.22, segs, 0x5ec8ff, 0.32, 0.01);
-  inner.name = 'pad-ring-inner';
-  group.add(inner);
-
-  const mid = ringMesh(1.85, 1.9, segs, 0x3a6a88, 0.12, 0.011);
-  mid.name = 'pad-ring-mid';
-  group.add(mid);
-
-  const outer = ringMesh(2.55, 2.62, segs, COLORS.red, 0.14, 0.012);
-  outer.name = 'pad-ring-outer';
-  group.add(outer);
-
-  const safety = ringMesh(3.35, 3.4, segs, 0xc9a227, 0.06, 0.013);
-  safety.name = 'pad-ring-safety';
-  group.add(safety);
+  const rings: Array<[string, number, number, number, number, number]> = [
+    ['inner', 1.12, 1.22, 0x5ec8ff, 0.32, 0.01],
+    ['mid', 1.85, 1.9, 0x3a6a88, 0.12, 0.011],
+    ['outer', 2.55, 2.62, COLORS.red, 0.14, 0.012],
+    ['safety', 3.35, 3.4, 0xc9a227, 0.06, 0.013],
+  ];
+  for (const [name, r0, r1, color, opacity, y] of rings) {
+    if (openings.some(([a, b]) => r1 > a && r0 < b)) continue;
+    const ring = ringMesh(r0, r1, segs, color, opacity, y);
+    ring.name = `pad-ring-${name}`;
+    group.add(ring);
+  }
 }
 
 function ringMesh(

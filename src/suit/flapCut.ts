@@ -105,6 +105,15 @@ function planesOf(cut: FlapCut): Plane[] {
 
 const dist = (pl: Plane, v: Vert) => pl.n.dot(v.p) - pl.d;
 
+/**
+ * Identity of a corner for welding cut points: position AND the attributes
+ * that can split there. Two triangles meeting along a UV seam (or a hard
+ * normal crease) share positions but not UVs; keyed on position alone, the
+ * second one took the first one's cut vertex and its UVs jumped across the
+ * atlas, squashing the whole texture into a sliver of streaks.
+ */
+const cornerKey = (v: Vert) => `${v.p.toArray()}/${v.uv.toArray()}/${v.n.toArray()}`;
+
 /** Split a polygon by a plane → [inside, outside]. */
 function split(poly: Vert[], pl: Plane, seam: Map<string, Vert>): [Vert[], Vert[]] {
   const inside: Vert[] = [];
@@ -119,7 +128,9 @@ function split(poly: Vert[], pl: Plane, seam: Map<string, Vert>): [Vert[], Vert[
     else outside.push(a);
     if ((da >= 0) !== (db >= 0)) {
       // Shared per edge so both sides of the cut stay welded
-      const key = a.p.x < b.p.x || (a.p.x === b.p.x && a.p.y < b.p.y) ? `${a.p.toArray()}|${b.p.toArray()}` : `${b.p.toArray()}|${a.p.toArray()}`;
+      const ka = cornerKey(a);
+      const kb = cornerKey(b);
+      const key = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
       let s = seam.get(key);
       if (!s) seam.set(key, (s = lerpVert(a, b, da / (da - db))));
       inside.push(s);

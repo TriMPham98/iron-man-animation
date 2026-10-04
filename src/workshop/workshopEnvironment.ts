@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { weather } from './robotMaterials';
 import { ROBOTS } from './fittingProgram';
+import { APERTURE_INNER, APERTURE_OUTER, RingAperture } from './ringAperture';
 
 /**
  * Tony's Malibu workshop, built procedurally: a raised suit-up platform with
- * boot hatches and robot elevator wells, mast hardpoints for the overhead
+ * boot hatch and a ring aperture round it, mast hardpoints for the overhead
  * arms, an eight-sided bay with pilasters, conduits, cable trays and a lit
  * truss, animated JARVIS monitors, server racks, a holo table, crates and
  * floor paint, and soft beams of work light.
@@ -25,17 +26,12 @@ export const ROOM_HEIGHT = 4.6;
 /** Monitors: left share of the screen given to the live suit scan. */
 const SCAN_SPLIT = 0.62;
 
-/** Radius of a floor arm's elevator well (pedestal flange is 0.205). */
-export const WELL_RADIUS = 0.215;
-/** Half-width of the concentric trench the floor arms rise from. */
-export const RING_HALF_WIDTH = 0.25;
-
 export interface WorkshopEnvironment {
   group: THREE.Group;
   /** Boot lift plates (move with the boots). */
   liftPlates: THREE.Group[];
-  /** Slide a floor well's lid shut as its arm finishes stowing (0–1). */
-  setWell: (id: string, stow: number) => void;
+  /** Open the floor ring aperture (0 shut → 1 open). */
+  setAperture: (open: number) => void;
   /** Screens, rack LEDs, holo table. */
   update: (dt: number) => void;
   dispose: () => void;
@@ -222,13 +218,6 @@ function platformDecal(): THREE.CanvasTexture {
   const t = tex(c);
   t.flipY = false;
   return t;
-}
-
-/** Floor arm well: pit under the pedestal + a lid that slides shut over it. */
-export interface FloorWellSpec {
-  id: string;
-  x: number;
-  z: number;
 }
 
 /** Animated screen: static canvas + scanline sweep, flicker and live bars. */
@@ -425,11 +414,11 @@ function floorDecal(): THREE.CanvasTexture {
   const m = S / 14; // px per metre (14 m square)
   g.translate(R, R);
   g.clearRect(-R, -R, S, S);
-  // Hazard tape ring at 2.45 m
+  // Hazard tape ring just outside the ring aperture
   g.save();
   g.beginPath();
-  g.arc(0, 0, 2.5 * m, 0, Math.PI * 2);
-  g.arc(0, 0, 2.38 * m, 0, Math.PI * 2, true);
+  g.arc(0, 0, 2.82 * m, 0, Math.PI * 2);
+  g.arc(0, 0, 2.7 * m, 0, Math.PI * 2, true);
   g.clip();
   for (let i = 0; i < 180; i++) {
     const a = (i / 180) * Math.PI * 2;
@@ -448,7 +437,7 @@ function floorDecal(): THREE.CanvasTexture {
       const nx = Math.cos(a + Math.PI / 2) * off * m;
       const ny = Math.sin(a + Math.PI / 2) * off * m;
       g.beginPath();
-      g.moveTo(Math.cos(a) * 2.6 * m + nx, Math.sin(a) * 2.6 * m + ny);
+      g.moveTo(Math.cos(a) * 2.95 * m + nx, Math.sin(a) * 2.95 * m + ny);
       g.lineTo(Math.cos(a) * 5.8 * m + nx, Math.sin(a) * 5.8 * m + ny);
       g.stroke();
     }
@@ -463,7 +452,7 @@ function floorDecal(): THREE.CanvasTexture {
   ] as const) {
     g.save();
     g.rotate(a - Math.PI / 2);
-    g.fillText(txt, 0, 2.75 * m);
+    g.fillText(txt, 0, 3.08 * m);
     g.restore();
   }
   const t = tex(c);
@@ -538,11 +527,9 @@ function holoReactor(): THREE.Group {
 
 /**
  * @param hatches world (x, z) of each boot hatch
- * @param wells floor arms that stow into wells
  */
 export function createWorkshopEnvironment(
   hatches: Array<[number, number]>,
-  wells: FloorWellSpec[] = [],
   scanFeed: THREE.Texture | null = null,
 ): WorkshopEnvironment {
   const group = new THREE.Group();
@@ -633,62 +620,38 @@ export function createWorkshopEnvironment(
     liftPlates.push(lift);
   }
 
-  // ── Robot ring: one concentric trench the floor arms rise out of ────
-  // A shallow channel around the platform; each arm's elevator well opens
-  // in its floor, and a lid slides in under the platform once it stows.
-  const ringR = wells.length ? Math.hypot(wells[0].x, wells[0].z) : 1.45;
-  const r0 = ringR - RING_HALF_WIDTH;
-  const r1 = ringR + RING_HALF_WIDTH;
-  const CH = -0.012;
-  const chShape = new THREE.Shape();
-  chShape.absarc(0, 0, r1, 0, Math.PI * 2, false);
-  const inner = new THREE.Path();
-  inner.absarc(0, 0, r0, 0, Math.PI * 2, true);
-  chShape.holes.push(inner);
-  for (const w of wells) {
-    const h = new THREE.Path();
-    h.absarc(w.x, -w.z, WELL_RADIUS, 0, Math.PI * 2, true);
-    chShape.holes.push(h);
-  }
-  const channel = new THREE.Mesh(keep(new THREE.ShapeGeometry(chShape, 96)), darkSteel);
-  channel.rotation.x = -Math.PI / 2;
-  channel.position.y = CH;
-  group.add(channel);
-  const outerWall = new THREE.Mesh(keep(new THREE.CylinderGeometry(r1, r1, -CH, 128, 1, true)), darkSteel);
-  outerWall.material = keep(new THREE.MeshStandardMaterial({ color: 0x14171c, metalness: 0.7, roughness: 0.55, side: THREE.BackSide }));
-  outerWall.position.y = CH / 2;
-  group.add(outerWall);
-  const innerWall = new THREE.Mesh(keep(new THREE.CylinderGeometry(r0, r0, -CH, 128, 1, true)), darkSteel);
-  innerWall.position.y = CH / 2;
+  // ── Ring aperture: one wide annular pit round the platform ────────
+  // The floor arms stand in it, the parts stands telescope through it, and
+  // the aperture's plates close over it once the whole cell has stowed.
+  const PIT_DEPTH = 3;
+  const innerWall = new THREE.Mesh(
+    keep(new THREE.CylinderGeometry(APERTURE_INNER, APERTURE_INNER, PIT_DEPTH, 128, 1, true)),
+    darkSteel,
+  );
+  innerWall.position.y = -PIT_DEPTH / 2;
   group.add(innerWall);
+  const outerWall = new THREE.Mesh(
+    keep(new THREE.CylinderGeometry(APERTURE_OUTER, APERTURE_OUTER, PIT_DEPTH, 160, 1, true)),
+    pitMat,
+  );
+  outerWall.position.y = -PIT_DEPTH / 2;
+  group.add(outerWall);
+  const pitFloor = new THREE.Mesh(keep(new THREE.RingGeometry(APERTURE_INNER, APERTURE_OUTER, 160)), darkSteel);
+  pitFloor.rotation.x = -Math.PI / 2;
+  pitFloor.position.y = -PIT_DEPTH;
+  group.add(pitFloor);
+  // Lit edges on the deck either side of the opening
   for (const [a0, a1] of [
-    [r0 + 0.012, r0 + 0.02],
-    [r1 - 0.02, r1 - 0.012],
+    [APERTURE_INNER - 0.024, APERTURE_INNER - 0.014],
+    [APERTURE_OUTER + 0.014, APERTURE_OUTER + 0.024],
   ]) {
     const strip = new THREE.Mesh(keep(new THREE.RingGeometry(a0, a1, 160)), glowCyan);
     strip.rotation.x = -Math.PI / 2;
-    strip.position.y = CH + 0.0008;
+    strip.position.y = 0.0012;
     group.add(strip);
   }
-
-  const wellPit = keep(new THREE.CylinderGeometry(WELL_RADIUS, WELL_RADIUS, 2.6, 36, 1, true));
-  const lidGeo = keep(new THREE.CylinderGeometry(WELL_RADIUS + 0.01, WELL_RADIUS + 0.01, 0.025, 36));
-  const lids = new Map<string, { lid: THREE.Mesh; open: THREE.Vector3; closed: THREE.Vector3 }>();
-  for (const w of wells) {
-    const pit = new THREE.Mesh(wellPit, pitMat);
-    pit.position.set(w.x, CH - 1.3, w.z);
-    group.add(pit);
-    const toward = new THREE.Vector3(-w.x, 0, -w.z).normalize();
-    const lid = new THREE.Mesh(lidGeo, darkSteel);
-    lid.userData.dynamic = true;
-    // Flush with the channel floor; parks in under the platform
-    const y = CH - 0.002 - 0.0125;
-    const open = new THREE.Vector3(w.x, y, w.z).addScaledVector(toward, 0.5);
-    const closed = new THREE.Vector3(w.x, y, w.z);
-    lid.position.copy(open);
-    group.add(lid);
-    lids.set(w.id, { lid, open, closed });
-  }
+  const aperture = keep(new RingAperture(steel, amber));
+  group.add(aperture.group);
 
   // ── Bay walls, pilasters, conduits, ceiling ────────────────────────
   const wallTex = wallTextures();
@@ -1080,12 +1043,7 @@ export function createWorkshopEnvironment(
   return {
     group,
     liftPlates,
-    setWell: (id, stow) => {
-      const w = lids.get(id);
-      if (!w) return;
-      const close = THREE.MathUtils.smoothstep(stow, 0.9, 1);
-      w.lid.position.lerpVectors(w.open, w.closed, close);
-    },
+    setAperture: (open) => aperture.set(open),
     update: (dt) => {
       clock += dt;
       for (const m of animated) m.uniforms.uTime.value += dt;

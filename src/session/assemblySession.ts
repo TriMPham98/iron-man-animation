@@ -75,11 +75,12 @@ const DOFF_PREP_FROM = FLIGHT_CHECK_STEPS[FLIGHT_CHECK_STEPS.length - 1].at + 0.
 /**
  * Cell reset between cycles (s): every stand sinks with its part as soon as
  * the part is set down and every arm folds away once its last part is home
- * (both during the doff); the pad then sits empty for a beat before the
- * cell rises again for the next build.
+ * (both during the doff) and the floor's ring aperture turns shut over them;
+ * the pad then sits empty for a beat before the aperture opens again and the
+ * cell rises for the next build.
  */
 const RESET_HOLD_SEC = 0.5;
-const RESET_RISE_SEC = 2.8;
+const RESET_RISE_SEC = 3.6;
 
 
 const VIEWER_HINT =

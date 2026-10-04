@@ -12,10 +12,9 @@ import { createRenderer } from './scene/createRenderer';
 import { applyStudioEnvironment } from './scene/createStudioEnv';
 import { createAssemblySession } from './session/assemblySession';
 import { buildSuitUpPlan } from './animation/suitUpChoreography';
-import { floorCradlePorts } from './workshop/cradleStands';
 import { Workshop } from './workshop/Workshop';
-import { ROBOT_RING_RADIUS } from './workshop/fittingProgram';
-import { FOOT_HATCH_RADIUS, RING_HALF_WIDTH } from './workshop/workshopEnvironment';
+import { FOOT_HATCH_RADIUS } from './workshop/workshopEnvironment';
+import { APERTURE_INNER, APERTURE_OUTER } from './workshop/ringAperture';
 import { Suit } from './suit/Suit';
 import { SUIT_GROUND_CLEARANCE } from './suit/loadSuitModel';
 import { bindInput } from './ui/bindInput';
@@ -126,11 +125,9 @@ async function boot(): Promise<void> {
     [
       // Centre boot hatch
       [0, 0, FOOT_HATCH_RADIUS + 0.005],
-      // Flush ports the parts stands retract through
-      ...floorCradlePorts(),
     ],
-    // The concentric trench the floor arms rise from
-    [[ROBOT_RING_RADIUS - RING_HALF_WIDTH, ROBOT_RING_RADIUS + RING_HALF_WIDTH]],
+    // The ring aperture the floor arms and parts stands rise through
+    [[APERTURE_INNER, APERTURE_OUTER]],
   );
   const lights = createLights();
   scene.add(lights.group);

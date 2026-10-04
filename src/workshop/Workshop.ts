@@ -19,7 +19,6 @@ import {
   FIT_TASKS,
   fitTask,
   ROBOTS,
-  ROBOT_RING_RADIUS,
   taskForPiece,
   toolJob,
   type FitTask,
@@ -29,7 +28,8 @@ import {
 import { mergeStaticTree } from './mergeStatic';
 import { SuitScanView } from './suitScanView';
 import { createWorkshopDetail, type WorkshopDetail } from './workshopDetail';
-import { CradleStands, floorCradlePorts, STAND_RETRACT_SEC } from './cradleStands';
+import { CradleStands, STAND_RETRACT_SEC } from './cradleStands';
+import { APERTURE_SEC } from './ringAperture';
 import { DOFF_ARM_STOW_SEC, doffArmStowAt, doffStandSinkAt } from '../animation/doffSequence';
 import { createRobotMaterials, RobotArm, toolQuaternion, type ArmJoints } from './robotArm';
 
@@ -37,7 +37,6 @@ const JOINT_KEYS = ['yaw', 'shoulder', 'elbow', 'wristRoll', 'wristPitch', 'flan
 import {
   createWorkshopEnvironment,
   ROOM_HEIGHT,
-  RING_HALF_WIDTH,
   type WorkshopEnvironment,
 } from './workshopEnvironment';
 
@@ -86,6 +85,14 @@ const GO_HOME_GAP = 0.75;
 const RIVET_HOVER = 0.06;
 /** Spread of the grippers' start times as they come up for the doff (of the 0–1 prep). */
 const DOFF_PREP_STAGGER = 0.3;
+/**
+ * Share of the doff prep / the cell redeploy spent opening the ring
+ * aperture; the arms start up as it finishes (they rise from deep in the pit).
+ */
+const PREP_RING_OPEN = 0.45;
+const PREP_ARMS_FROM = 0.3;
+const REDEPLOY_RING_OPEN = 0.32;
+const REDEPLOY_ARMS_FROM = 0.25;
 /** Elevator travel so a folded arm clears the floor / ceiling. */
 const FLOOR_STOW_EXTRA = 1.35;
 const CEILING_STOW_EXTRA = 1.3;
@@ -96,10 +103,11 @@ const CEILING_STOW_EXTRA = 1.3;
  * Each arm runs a baked program of hold / move / attached / tool segments.
  * Grippers ride the part they carry; riveters ride the seated
  * part's frame while they work its seams. After its last job an arm folds
- * and drops into its floor well (or climbs its mast into the ceiling) so
- * the finished suit stands alone, as in the film. Parts stands sink
- * through flush floor ports (hangers into the ceiling) once emptied. Everything is a function
- * of the seed-clock time, so scrubbing is exact.
+ * and drops into the pit under the floor's ring aperture (or climbs its mast
+ * into the ceiling); parts stands sink into the same pit (hangers into the
+ * ceiling) once emptied, and when the whole cell is down the aperture turns
+ * shut so the finished suit stands alone on a flush floor, as in the film.
+ * Everything is a function of the seed-clock time, so scrubbing is exact.
  */
 export class Workshop {
   readonly group = new THREE.Group();
@@ -126,6 +134,10 @@ export class Workshop {
   private doffT: number | null = null;
   /** How far the grippers have come up for the doff (0–1, see prepareDoff). */
   private doffPrep = 0;
+  /** Build clock (seed s) by which every floor arm and stand is down. */
+  private floorDownAt = 0;
+  /** Doff clock (seed s, running backwards) by which the same is true. */
+  private doffFloorDownAt = -Infinity;
   private prepOrder: Array<{ id: RobotId; at: number }> | null = null;
   private readonly mats = createRobotMaterials();
   private readonly liftTasks: FitTask[];
@@ -153,7 +165,6 @@ export class Workshop {
         const w = this.toWorld(t.origin[0], 0, t.origin[2]);
         return [w.x, w.z] as [number, number];
       }),
-      ROBOTS.filter((r) => r.mount === 'floor').map((r) => ({ id: r.id, x: r.base[0], z: r.base[2] })),
       this.scanView.target.texture,
     );
     this.group.add(this.env.group);
@@ -216,11 +227,21 @@ export class Workshop {
         this.jobs.set(job.task, job);
       }
     }
-    const holes: Array<[number, number, number]> = [
-      ...floorCradlePorts(),
-    ];
-    const rings: Array<[number, number]> = [[ROBOT_RING_RADIUS - RING_HALF_WIDTH, ROBOT_RING_RADIUS + RING_HALF_WIDTH]];
-    this.stands = new CradleStands(this.mats, bounds, ROOM_HEIGHT, holes, rings);
+    this.stands = new CradleStands(this.mats, bounds, ROOM_HEIGHT);
+    // The ring aperture shuts once every floor arm and stand is down: on
+    // the build clock after the last one stows, on the doff clock (running
+    // backwards) once the last one has gone
+    const floorRobot = (id: RobotId) => robotStation(id).mount === 'floor';
+    for (const track of this.plan.robots) {
+      if (!floorRobot(track.id)) continue;
+      this.floorDownAt = Math.max(this.floorDownAt, track.stow[track.stow.length - 1]?.t ?? 0);
+      const at = this.doffStowAt.get(track.id);
+      if (at != null) this.doffFloorDownAt = Math.max(this.doffFloorDownAt, at - DOFF_ARM_STOW_SEC.floor);
+      for (const job of track.jobs) {
+        this.floorDownAt = Math.max(this.floorDownAt, job.lift + 0.35 + STAND_RETRACT_SEC);
+        this.doffFloorDownAt = Math.max(this.doffFloorDownAt, doffStandSinkAt(job) - STAND_RETRACT_SEC);
+      }
+    }
     mergeStaticTree(this.stands.group);
     this.group.add(this.stands.group);
   }
@@ -518,7 +539,6 @@ export class Workshop {
         arm.setSpindle(r.spindle);
         arm.setRecoil(0);
         this.updateMast(r.id, arm);
-        this.env.setWell(r.id, 0);
         continue;
       } else if (seg.kind === 'move') {
         const u = ease('inOut2', (t - seg.t0) / Math.max(1e-6, seg.t1 - seg.t0));
@@ -551,9 +571,9 @@ export class Workshop {
         }
       }
       this.updateMast(r.id, arm);
-      this.env.setWell(r.id, stow);
     }
     this.maxReachError = worst;
+    this.env.setAperture(this.apertureAt(t));
     this.lastT = t;
 
     // Boot lifts
@@ -590,10 +610,23 @@ export class Workshop {
     return Math.max(this.prepStow(id), THREE.MathUtils.smoothstep(at - t, 0, dur));
   }
 
+  /**
+   * Ring aperture opening at seed time `t`: open while anything on the
+   * floor is up, turning shut once the last floor arm and stand are down
+   * (on either clock); during the doff prep it opens ahead of the grippers.
+   */
+  private apertureAt(t: number): number {
+    if (this.doffT === null) return 1 - (t - this.floorDownAt) / APERTURE_SEC;
+    const shut = 1 - (this.doffFloorDownAt - this.doffT) / APERTURE_SEC;
+    return Math.min(shut, this.doffPrep / PREP_RING_OPEN);
+  }
+
   /** A gripper's stow while it comes up for the doff (staggered, 1 = still down). */
   private prepStow(id: RobotId): number {
     const at = this.doffPrepOrder().find((a) => a.id === id)?.at ?? 0;
-    return 1 - THREE.MathUtils.smoothstep(this.doffPrep, at, at + 1 - DOFF_PREP_STAGGER);
+    // The ring opens first; the grippers rise from deep in the pit after it
+    const from = PREP_ARMS_FROM + at * (1 - PREP_ARMS_FROM);
+    return 1 - THREE.MathUtils.smoothstep(this.doffPrep, from, from + (1 - DOFF_PREP_STAGGER) * (1 - PREP_ARMS_FROM));
   }
 
   /**
@@ -614,7 +647,7 @@ export class Workshop {
     this.doffPrep = THREE.MathUtils.clamp(u, 0, 1);
   }
 
-  /** Seed time (reversed clock) by which every doffed arm and stand is stowed. */
+  /** Seed time (reversed clock) by which every doffed arm and stand is stowed and the ring shut. */
   doffSettledAt(): number {
     let settled = Infinity;
     for (const [id, at] of this.doffStowAt) {
@@ -623,7 +656,8 @@ export class Workshop {
       settled = Math.min(settled, at - dur);
     }
     for (const job of this.jobs.values()) settled = Math.min(settled, doffStandSinkAt(job) - STAND_RETRACT_SEC);
-    return settled;
+    // …and the ring aperture has turned shut over them
+    return Math.min(settled, this.doffFloorDownAt - APERTURE_SEC);
   }
 
   /**
@@ -644,8 +678,8 @@ export class Workshop {
       arm.setStow(stow, this.stowDepth(arm));
       arm.setGripper(1);
       this.updateMast(id, arm);
-      this.env.setWell(id, stow);
     }
+    this.env.setAperture(u / PREP_RING_OPEN);
     this.lastT = Number.NaN;
   }
 
@@ -691,10 +725,12 @@ export class Workshop {
 
   /**
    * Reset handoff: 0 = every arm stowed (end of a cycle), 1 = deployed at
-   * home ready for the next one.
+   * home ready for the next one. The ring aperture opens first.
    */
   setRedeployProgress(u: number): void {
-    const stow = 1 - THREE.MathUtils.clamp(u, 0, 1);
+    this.env.setAperture(u / REDEPLOY_RING_OPEN);
+    const rise = THREE.MathUtils.clamp((u - REDEPLOY_ARMS_FROM) / (1 - REDEPLOY_ARMS_FROM), 0, 1);
+    const stow = 1 - rise;
     for (const st of ROBOTS) {
       const arm = this.arms.get(st.id)!;
       const h = this.homes.get(st.id)!;
@@ -704,9 +740,8 @@ export class Workshop {
       arm.setStow(stow, this.stowDepth(arm));
       arm.setGripper(1);
       this.updateMast(st.id, arm);
-      this.env.setWell(st.id, stow);
     }
-    this.stands.setDeployed(THREE.MathUtils.clamp(u, 0, 1));
+    this.stands.setDeployed(rise);
     this.lastT = Number.NaN;
   }
 
