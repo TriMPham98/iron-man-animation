@@ -77,70 +77,70 @@ export function seedOnset(o: SfxOnset, clips: readonly SeedClip[] = SEED_CLIPS):
  * of each source file; comments name the sound that sells the beat.
  */
 export const SFX_ONSETS = {
-  /** Boot lift: left ankle clamp bites. */
+  /** Clasp swell crest — left boot lift locks under the ankle. */
   bootL: { clip: 'clip-seed-v5-01', src: 0.4, fallback: 0.22 },
-  /** Boot lift: right ankle clamp. */
+  /** Second clasp bite — right boot. */
   bootR: { clip: 'clip-seed-v5-01', src: 0.58, fallback: 0.4 },
-  /** Clamshell slam — shin clamshells close. */
+  /** Ratchet strike — shin clamshells close. */
   shins: { clip: 'clip-seed-v5-02', src: 0.045, fallback: 1.223 },
-  /** Low clamshell slam — thigh clamshells close. */
+  /** Low ratchet strike — thigh clamshells close. */
   thighs: { clip: 'clip-seed-v5-04', src: 0.045, fallback: 2.749 },
-  /** Waist seal — pelvis halves seal with a pneumatic chuff. */
+  /** Conveyor-hiss crest — pneumatic waist seal. */
   hips: { clip: 'clip-seed-v5-03', src: 0.656, fallback: 3.091 },
-  /** Torso servo spin-up — the torso cell starts. */
+  /** Robot-arm servo start — the torso cell spins up. */
   torsoStart: { clip: 'clip-seed-v5-05', src: 0.02, fallback: 3.696 },
-  /** Plate seat #1 — lower back plate seats. */
+  /** Connect-hiss first accent — lower back plate seats. */
   backLower: { clip: 'clip-seed-v5-06', src: 0.82, fallback: 4.583 },
-  /** Torso servo accent — upper back plate locks. */
+  /** Robot-arm accent — upper back plate locks. */
   backClamp: { clip: 'clip-seed-v5-05', src: 1.4, fallback: 5.076 },
-  /** Plate seat #2 — abdomen plate seats. */
+  /** Connect-hiss accent — abdomen plate seats. */
   abdomen: { clip: 'clip-seed-v5-06', src: 1.46, fallback: 5.223 },
-  /** Torso servo accent — reactor housing seats (inner layer first). */
+  /** Robot-arm accent — reactor housing seats (inner layer first). */
   chestCore: { clip: 'clip-seed-v5-05', src: 1.718, fallback: 5.394 },
-  /** Chest slam — both pecs slam home over the housing. */
+  /** Impact — both pecs slam home over the housing. */
   chestSlam: { clip: 'clip-seed-v5-07', src: 0.17, fallback: 5.925 },
-  /** Reactor charge — arc reactor catches. */
+  /** Repulsor attack — arc reactor catches. */
   reactorIgnite: { clip: 'clip-seed-v5-08', src: 0.08, fallback: 6.496 },
-  /** Reactor bloom — reactor at full. */
+  /** Repulsor bloom — reactor at full. */
   reactorPeak: { clip: 'clip-seed-v5-08', src: 0.17, fallback: 6.586 },
-  /** Low clamshell slam — shoulder servos brace; pec rivets ride its clicks. */
+  /** Low ratchet strike — shoulder servos brace; pec rivets ride its clicks. */
   armBrace: { clip: 'clip-seed-v5-09', src: 0.045, fallback: 6.859 },
-  /** Pauldron drop #1 — left pauldron (shoulder before bicep). */
+  /** Metal two-hits #1 — left pauldron (shoulder before bicep). */
   pauldronL: { clip: 'clip-seed-v5-10', src: 0.43, fallback: 7.448 },
-  /** Pauldron drop #2 — right pauldron. */
+  /** Metal two-hits #2 — right pauldron. */
   pauldronR: { clip: 'clip-seed-v5-10', src: 0.73, fallback: 7.748 },
-  /** Arm clamp #1 — left upper-arm clamshell. */
+  /** Metal-tighten attack (+ motor accent) — left upper-arm clamshell. */
   upperArmL: { clip: 'clip-seed-v5-12', src: 0.02, fallback: 8.533 },
-  /** Arm clamp #2 — right upper-arm clamshell. */
+  /** Metal-tighten second bite — right upper-arm clamshell. */
   upperArmR: { clip: 'clip-seed-v5-12', src: 0.5, fallback: 9.013 },
-  /** Nut runner, left run — left forearm sleeve screws home. */
+  /** Drill bite — left forearm sleeve screws home. */
   forearmL: { clip: 'clip-seed-v5-13', src: 0.29, fallback: 9.337 },
-  /** Nut runner, right run — right forearm sleeve. */
+  /** Drill second run — right forearm sleeve. */
   forearmR: { clip: 'clip-seed-v5-13', src: 0.63, fallback: 9.677 },
-  /** Gauntlet snap #1 — left gauntlet. */
+  /** Metal-connect first hit — left gauntlet. */
   gauntletL: { clip: 'clip-seed-v5-15', src: 0.24, fallback: 10.175 },
-  /** Gauntlet snap #2 — right gauntlet. */
+  /** Metal-connect peak — right gauntlet. */
   gauntletR: { clip: 'clip-seed-v5-15', src: 0.38, fallback: 10.315 },
-  /** Helmet seat crest — helmet seats. */
+  /** Metal-resonate swell crest — helmet seats. */
   helmetSeat: { clip: 'clip-seed-v5-14', src: 1.02, fallback: 10.94 },
-  /** Arms-lock clunk — arms lock at the sides, faceplate latch releases. */
+  /** Clang pre-hit — arms lock at the sides, faceplate latch releases. */
   armsLock: { clip: 'clip-seed-v5-16', src: 0.813, fallback: 11.821 },
-  /** Faceplate clang — faceplate slams shut. */
+  /** Clang — faceplate slams shut. */
   faceplate: { clip: 'clip-seed-v5-16', src: 1.085, fallback: 12.093 },
   /** First BCI beep — eyes flicker on. */
   eyesOn: { clip: 'clip-seed-v5-17', src: 0.1, fallback: 12.175 },
   /** BCI phrase accent — eyes at full. */
   eyesFull: { clip: 'clip-seed-v5-17', src: 0.43, fallback: 12.505 },
-  /** Pressure vent blast — helmet pressure vents. */
+  /** Steam hiss — helmet pressure vents. */
   steamVent: { clip: 'clip-seed-v5-18', src: 0.1, fallback: 12.753 },
 } as const satisfies Record<string, SfxOnset>;
 
 export type SuitUpBeat = keyof typeof SFX_ONSETS;
 export type SuitUpBeats = Record<SuitUpBeat, number>;
 
-/** Ratchet click train (source seconds) — shared by all three clamshell clips. */
+/** Ratchet click train (source seconds) — shared by all three ratchet clips. */
 const RATCHET_CLICKS_SRC = [0.18, 0.273, 0.377, 0.47, 0.563, 0.644] as const;
-/** Nut-runner bites per hand (source seconds into mk3-drill). */
+/** Drill bites per hand (source seconds into drill-tighten). */
 const DRILL_L_SRC = [0.319, 0.441, 0.575] as const;
 const DRILL_R_SRC = [0.697, 0.784, 0.871, 0.952] as const;
 

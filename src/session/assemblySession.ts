@@ -16,10 +16,9 @@ import { evaluateFlightCheck } from '../animation/flightCheck';
 import { createCuePlayer, doffCues, doffOpeningCues, flightCues } from '../audio/actionSfx';
 import {
   applyDoff,
-  DOFF_EXTRACT_SEC,
+  DOFF_EXTRACT_RATE,
   DOFF_RELEASE_SEC,
   DOFF_STATUSES,
-  DOFF_TOTAL_SEC,
   doffBursts,
   doffEvents,
   evaluateDoff,
@@ -671,10 +670,12 @@ export function createAssemblySession(
     let lastDoffT = 0;
     let lastSeed = assembly.toSeed(rewindFrom);
     let statusIdx = 0;
-    const ease = gsap.parseEase('power1.inOut');
+    // Extraction runs the fitting backwards at the speed it was built
+    const extractSec = rewindFrom / DOFF_EXTRACT_RATE;
+    const totalSec = DOFF_RELEASE_SEC + extractSec;
     /** GSAP time of the suit-up shown at doff time `t`. */
     const fittingAt = (t: number) =>
-      t <= DOFF_RELEASE_SEC ? rewindFrom : rewindFrom * (1 - ease(Math.min(1, (t - DOFF_RELEASE_SEC) / DOFF_EXTRACT_SEC)));
+      Math.max(0, rewindFrom - Math.max(0, t - DOFF_RELEASE_SEC) * DOFF_EXTRACT_RATE);
     const renderDoff = () => {
       const t = clockProxy.t;
       const overlay = evaluateDoff(t, doffParts);
@@ -714,7 +715,26 @@ export function createAssemblySession(
     renderDoff();
 
     // 1) Power-down → faceplate → seal release, then the extraction
-    handoffTween.to(clockProxy, { t: DOFF_TOTAL_SEC, duration: DOFF_TOTAL_SEC, ease: 'none', onUpdate: renderDoff }, 0);
+    handoffTween.to(clockProxy, { t: totalSec, duration: totalSec, ease: 'none', onUpdate: renderDoff }, 0);
+    // Low motor bed under the extraction (no hiss): crossfaded takes of the hum
+    const humLen = 7.55;
+    for (let at = 0; at < extractSec - 0.5; at += humLen - 0.8) {
+      const left = extractSec - at;
+      const last = left <= humLen;
+      handoffTween.call(
+        () =>
+          cues.fire({
+            t: 0,
+            file: 'doff-hum.mp3',
+            volume: 0.32,
+            duration: Math.min(humLen, left),
+            fadeIn: at === 0 ? 0.4 : 0.8,
+            fadeOut: last ? 1.2 : 0.8,
+          }),
+        undefined,
+        DOFF_RELEASE_SEC + at,
+      );
+    }
 
     // 2) Camera: in on the helmet for the power-down and the faceplate,
     //    down the suit with the venting, then out to the hangar framing
@@ -723,7 +743,9 @@ export function createAssemblySession(
       handoffTween!.to(proxy, { ...pose, duration, ease: e, onUpdate: applyHandoffCam }, at);
     camTo(DOFF_HEAD_CAM, 0, 1.3);
     camTo(DOFF_VENT_CAM, 1.3, DOFF_RELEASE_SEC - 1.3 + 0.4, 'sine.inOut');
-    camTo(OPEN_WIDE_CAM, DOFF_RELEASE_SEC + 1.0, DOFF_EXTRACT_SEC - 1.0, 'power3.inOut');
+    // Hold on the suit while the arms work, out to the hangar as the last parts come off
+    const pull = Math.min(extractSec - 1, 5.5);
+    camTo(OPEN_WIDE_CAM, totalSec - pull, pull, 'power3.inOut');
   };
 
   const startSequence = () => {

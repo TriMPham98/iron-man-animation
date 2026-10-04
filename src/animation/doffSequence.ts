@@ -24,9 +24,11 @@ import type { FxBurst, SuitUpFrame } from './suitUpChoreography';
 
 /** Opening act: power-down → faceplate → seal release. */
 export const DOFF_RELEASE_SEC = 2.6;
-/** Extraction: the fitting played backwards to the cradles. */
-export const DOFF_EXTRACT_SEC = 7.2;
-export const DOFF_TOTAL_SEC = DOFF_RELEASE_SEC + DOFF_EXTRACT_SEC;
+/**
+ * The extraction plays the fitting backwards at the assembly's own speed
+ * (one second of suit-up per second), so it lasts as long as the build.
+ */
+export const DOFF_EXTRACT_RATE = 1;
 
 const POWER_DOWN = 0.1;
 const FACEPLATE_LATCH = 0.55;
