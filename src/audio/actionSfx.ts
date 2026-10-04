@@ -292,13 +292,13 @@ export function createCuePlayer(play: (req: PlayRequest) => void, maxJump = 0.5)
 
 /**
  * Cell redeploy before the next build (s from its start): slides as the
- * stands bring their parts back up (first third of the rise, see
- * CradleStands.setDeployed), the arms' motors, a connect as it locks.
+ * ring aperture's blades draw back (first 30%, see Workshop.setRedeployProgress),
+ * the motors as the stands and arms start up through it, a connect as it locks.
  */
 export function redeployCues(riseSec: number): SfxCue[] {
   return [
     { t: 0, file: 'metal-sliding.mp3', volume: 0.16, pitch: 0.86 },
-    { t: riseSec * 0.25, file: 'robot-movement.mp3', volume: 0.2, pitch: 0.9, duration: 2.2, fadeOut: 0.7 },
+    { t: riseSec * 0.3, file: 'robot-movement.mp3', volume: 0.2, pitch: 0.9, duration: 2.2, fadeOut: 0.7 },
     { t: riseSec - 0.15, file: 'metal-connect.mp3', volume: 0.14, pitch: 0.95 },
   ];
 }

@@ -200,9 +200,9 @@ export class CradleStands {
     return this.stands.find((s) => s.task.id === taskId)?.shift ?? 0;
   }
 
-  /** Reset handoff: all stands rise (u = 1 → fully deployed). */
+  /** Reset handoff: all stands rise (u = 0 → stowed, 1 → fully deployed), ahead of the arms. */
   setDeployed(u: number): void {
-    const k = 1 - THREE.MathUtils.smoothstep(u, 0.02, 0.34);
+    const k = 1 - THREE.MathUtils.smoothstep(u, 0, 0.45);
     for (const s of this.stands) this.setRetract(s, k);
   }
 }

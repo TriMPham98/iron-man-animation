@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { weather } from './robotMaterials';
 import { ROBOTS } from './fittingProgram';
+import { aperturePit } from './aperturePit';
 import { APERTURE_INNER, APERTURE_OUTER, RingAperture } from './ringAperture';
 
 /**
@@ -622,24 +623,8 @@ export function createWorkshopEnvironment(
 
   // ── Ring aperture: one wide annular pit round the platform ────────
   // The floor arms stand in it, the parts stands telescope through it, and
-  // the aperture's plates close over it once the whole cell has stowed.
-  const PIT_DEPTH = 3;
-  const innerWall = new THREE.Mesh(
-    keep(new THREE.CylinderGeometry(APERTURE_INNER, APERTURE_INNER, PIT_DEPTH, 128, 1, true)),
-    darkSteel,
-  );
-  innerWall.position.y = -PIT_DEPTH / 2;
-  group.add(innerWall);
-  const outerWall = new THREE.Mesh(
-    keep(new THREE.CylinderGeometry(APERTURE_OUTER, APERTURE_OUTER, PIT_DEPTH, 160, 1, true)),
-    pitMat,
-  );
-  outerWall.position.y = -PIT_DEPTH / 2;
-  group.add(outerWall);
-  const pitFloor = new THREE.Mesh(keep(new THREE.RingGeometry(APERTURE_INNER, APERTURE_OUTER, 160)), darkSteel);
-  pitFloor.rotation.x = -Math.PI / 2;
-  pitFloor.position.y = -PIT_DEPTH;
-  group.add(pitFloor);
+  // the aperture's iris blades close over it once the whole cell has stowed.
+  group.add(aperturePit(steel, keep));
   // Lit edges on the deck either side of the opening
   for (const [a0, a1] of [
     [APERTURE_INNER - 0.024, APERTURE_INNER - 0.014],

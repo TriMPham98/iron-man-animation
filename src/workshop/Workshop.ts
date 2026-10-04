@@ -29,7 +29,7 @@ import { mergeStaticTree } from './mergeStatic';
 import { SuitScanView } from './suitScanView';
 import { createWorkshopDetail, type WorkshopDetail } from './workshopDetail';
 import { CradleStands, STAND_RETRACT_SEC } from './cradleStands';
-import { APERTURE_SEC } from './ringAperture';
+import { APERTURE_SEC, APERTURE_UNDERSIDE } from './ringAperture';
 import { DOFF_ARM_STOW_SEC, doffArmStowAt, doffStandSinkAt } from '../animation/doffSequence';
 import { createRobotMaterials, RobotArm, toolQuaternion, type ArmJoints } from './robotArm';
 
@@ -87,14 +87,13 @@ const RIVET_HOVER = 0.06;
 const DOFF_PREP_STAGGER = 0.3;
 /**
  * Share of the doff prep / the cell redeploy spent opening the ring
- * aperture; the arms start up as it finishes (they rise from deep in the pit).
+ * aperture; nothing starts up through it until the blades are clear.
  */
-const PREP_RING_OPEN = 0.45;
-const PREP_ARMS_FROM = 0.3;
-const REDEPLOY_RING_OPEN = 0.32;
-const REDEPLOY_ARMS_FROM = 0.25;
-/** Elevator travel so a folded arm clears the floor / ceiling. */
-const FLOOR_STOW_EXTRA = 1.35;
+const PREP_RING_OPEN = 0.4;
+const REDEPLOY_RING_OPEN = 0.3;
+/** Floor arms: how far the top of the fold ends up under the aperture blades (m). */
+const FLOOR_STOW_CLEARANCE = 0.12;
+/** Elevator travel so a folded mast arm clears the ceiling. */
 const CEILING_STOW_EXTRA = 1.3;
 
 /**
@@ -625,8 +624,8 @@ export class Workshop {
   private prepStow(id: RobotId): number {
     const at = this.doffPrepOrder().find((a) => a.id === id)?.at ?? 0;
     // The ring opens first; the grippers rise from deep in the pit after it
-    const from = PREP_ARMS_FROM + at * (1 - PREP_ARMS_FROM);
-    return 1 - THREE.MathUtils.smoothstep(this.doffPrep, from, from + (1 - DOFF_PREP_STAGGER) * (1 - PREP_ARMS_FROM));
+    const from = PREP_RING_OPEN + at * (1 - PREP_RING_OPEN);
+    return 1 - THREE.MathUtils.smoothstep(this.doffPrep, from, from + (1 - DOFF_PREP_STAGGER) * (1 - PREP_RING_OPEN));
   }
 
   /**
@@ -702,7 +701,7 @@ export class Workshop {
 
   private stowDepth(arm: RobotArm): number {
     return arm.mount === 'floor'
-      ? arm.pedestal + FLOOR_STOW_EXTRA
+      ? arm.base.y + arm.foldedTop() - APERTURE_UNDERSIDE + FLOOR_STOW_CLEARANCE
       : ROOM_HEIGHT - arm.base.y + CEILING_STOW_EXTRA;
   }
 
@@ -729,7 +728,8 @@ export class Workshop {
    */
   setRedeployProgress(u: number): void {
     this.env.setAperture(u / REDEPLOY_RING_OPEN);
-    const rise = THREE.MathUtils.clamp((u - REDEPLOY_ARMS_FROM) / (1 - REDEPLOY_ARMS_FROM), 0, 1);
+    // Arms and stands only start up once the blades are clear
+    const rise = THREE.MathUtils.clamp((u - REDEPLOY_RING_OPEN) / (1 - REDEPLOY_RING_OPEN), 0, 1);
     const stow = 1 - rise;
     for (const st of ROBOTS) {
       const arm = this.arms.get(st.id)!;

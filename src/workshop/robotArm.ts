@@ -574,6 +574,29 @@ export class RobotArm {
     this.applyJoints();
   }
 
+  private foldedTopCache: number | null = null;
+
+  /**
+   * Height of the folded transport pose's highest point above the mount
+   * (m, measured off the geometry once): how far a floor arm has to drop
+   * to get its whole fold under the ring aperture.
+   */
+  foldedTop(): number {
+    if (this.foldedTopCache !== null) return this.foldedTopCache;
+    const saved = { ...this.joints };
+    const pos = this.group.position.clone();
+    Object.assign(this.joints, this.mount === 'ceiling' ? FOLDED_CEILING : FOLDED);
+    this.applyJoints();
+    this.group.position.set(0, 0, 0);
+    this.group.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(this.group, true);
+    this.foldedTopCache = this.mount === 'ceiling' ? -box.min.y : box.max.y;
+    this.group.position.copy(pos);
+    this.setJoints(saved);
+    this.group.updateMatrixWorld(true);
+    return this.foldedTopCache;
+  }
+
   /**
    * Stow 0 → 1: blend the current joints into the folded transport pose
    * (first 35%), then ride the elevator down into the floor well — or up

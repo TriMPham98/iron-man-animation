@@ -3,9 +3,10 @@ import * as THREE from 'three';
 /**
  * The cell floor's ring aperture: one wide annular opening round the
  * platform that every floor arm, parts stand and stowed part goes through.
- * Shut, it is a flush deck of curved sector plates; opening, the plates
- * slide out under the outer deck along a spiral, the whole ring turning as
- * it opens like a camera iris run backwards.
+ * Shut, it is a deck of curved iris blades, each lapping over the next like
+ * a camera diaphragm; opening, the blades slide out under the outer deck
+ * while the whole ring turns, their swept leading edges drawing back into
+ * a scalloped spiral.
  *
  * Plane coordinates (a, b) map to world (x, z).
  */
@@ -13,73 +14,161 @@ import * as THREE from 'three';
 /** Inner / outer radius of the opening (m): platform lip → past the parts stands. */
 export const APERTURE_INNER = 1.13;
 export const APERTURE_OUTER = 2.45;
-/** Sector plates (lined up with the deck's 24 panel seams). */
+/** Iris blades (lined up with the deck's 24 panel seams). */
 export const APERTURE_SEGMENTS = 24;
 /** Seconds the ring takes to open or shut. */
 export const APERTURE_SEC = 1.2;
 
-/** Shut plates run this far under each deck edge. */
+/** Shut blades run this far under each deck edge. */
 const LAP = 0.015;
-/** Radial run out from shut to parked (clear of the outer deck edge). */
-const TRAVEL = APERTURE_OUTER - APERTURE_INNER + 2 * LAP + 0.04;
 /** Turn of the ring over a full stroke (rad). */
 const TWIST = ((2 * Math.PI) / APERTURE_SEGMENTS) * 1.5;
-/** Plate top just under the deck, and its thickness. */
-const TOP = -0.004;
-const THICK = 0.012;
-/** Seam between neighbouring plates (m). */
-const SEAM = 0.003;
-/** Raised seal along each plate's inner (leading) edge. */
-const SEAL_W = 0.035;
+/** How far each blade's centre line sweeps round from inner to outer edge (rad). */
+const SWEEP = 0.5;
+/** Share of the next blade's pitch each blade runs on under it. */
+const OVERLAP = 0.25;
+/**
+ * Blade top at its leading edge (just under the deck), how far it steps
+ * down across one pitch, and its thickness: the next blade's leading edge
+ * sits on this one's trailing lap, so DROP must clear THICK.
+ */
+const TOP = -0.003;
+const DROP = 0.0075;
+const THICK = 0.005;
+/** Raised seal along each blade's exposed inner (leading) edge. */
+const SEAL_W = 0.03;
 const SEAL_H = 0.0025;
 
-const HALF = Math.PI / APERTURE_SEGMENTS;
+const PITCH = (2 * Math.PI) / APERTURE_SEGMENTS;
 const R0 = APERTURE_INNER - LAP;
 const R1 = APERTURE_OUTER + LAP;
+const S_END = 1 + OVERLAP;
+
+/** Lowest point of a shut blade's underside (world y): anything under the ring must clear it. */
+export const APERTURE_UNDERSIDE = TOP - DROP * S_END - THICK;
 
 const ease = (u: number) => {
   const k = THREE.MathUtils.clamp(u, 0, 1);
   return k * k * (3 - 2 * k);
 };
 
-/** Sector outline r0..r1 centred on angle 0, the seam trimmed off both sides. */
-function sector(r0: number, r1: number, n = 24): Array<[number, number]> {
+/** Blade-local polar angle at radius r and across-blade position s (0 leading edge → S_END trailing). */
+function bladeAngle(r: number, s: number): number {
+  return SWEEP * ((r - R0) / (R1 - R0) - 0.5) + (s - 0.5) * PITCH;
+}
+
+/** Blade top (local y) at across-blade position s. */
+const topAt = (s: number) => TOP - DROP * s;
+
+/** Plane point of a blade at (r, s), blade-local. */
+function local(r: number, s: number): [number, number] {
+  const a = bladeAngle(r, s);
+  return [r * Math.cos(a), r * Math.sin(a)];
+}
+
+/** Blade-local outline: leading edge out, outer arc, trailing edge in, inner arc. */
+function outline(n = 16): Array<[number, number]> {
   const pts: Array<[number, number]> = [];
-  const a0 = -HALF + SEAM / 2 / r0;
-  const a1 = HALF - SEAM / 2 / r0;
-  const b0 = -HALF + SEAM / 2 / r1;
-  const b1 = HALF - SEAM / 2 / r1;
-  for (let i = 0; i <= n; i++) {
-    const a = a0 + ((a1 - a0) * i) / n;
-    pts.push([r0 * Math.cos(a), r0 * Math.sin(a)]);
-  }
-  for (let i = n; i >= 0; i--) {
-    const a = b0 + ((b1 - b0) * i) / n;
-    pts.push([r1 * Math.cos(a), r1 * Math.sin(a)]);
-  }
+  for (let i = 0; i < n; i++) pts.push(local(R0 + ((R1 - R0) * i) / n, 0));
+  for (let i = 0; i < n; i++) pts.push(local(R1, (S_END * i) / n));
+  for (let i = n; i > 0; i--) pts.push(local(R0 + ((R1 - R0) * i) / n, S_END));
+  for (let i = n; i > 0; i--) pts.push(local(R0, (S_END * i) / n));
   return pts;
 }
 
-/** Plate i's placement at opening u: centre angle + twist, radial run. */
+/** Radial run that parks every blade clear of the outer deck edge. */
+const TRAVEL = (() => {
+  const pts = outline();
+  for (let run = 0; ; run += 0.01) {
+    if (pts.every(([a, b]) => Math.hypot(a + run, b) > APERTURE_OUTER + 0.04)) return run;
+  }
+})();
+
+/** Blade i's placement at opening u: ring angle, radial run. */
 function placement(i: number, u: number): { angle: number; run: number } {
   const k = ease(u);
-  return { angle: ((i + 0.5) / APERTURE_SEGMENTS) * Math.PI * 2 + TWIST * k, run: TRAVEL * k };
+  return { angle: i * PITCH + TWIST * k, run: TRAVEL * k };
 }
 
-/** Outline of plate i at opening u (0 shut → 1 open), plane coordinates. */
+/** Outline of blade i at opening u (0 shut → 1 open), plane coordinates. */
 export function aperturePlatePoints(i: number, u: number): Array<[number, number]> {
   const { angle, run } = placement(i, u);
   const c = Math.cos(angle);
   const s = Math.sin(angle);
-  return sector(R0, R1).map(([a, b]) => [(a + run) * c - b * s, (a + run) * s + b * c]);
+  return outline().map(([a, b]) => [(a + run) * c - b * s, (a + run) * s + b * c]);
 }
 
-function slab(outline: Array<[number, number]>, y0: number, y1: number): THREE.BufferGeometry {
-  const shape = new THREE.Shape(outline.map(([a, b]) => new THREE.Vector2(a, b)));
-  const geo = new THREE.ExtrudeGeometry(shape, { depth: y1 - y0, bevelEnabled: false, curveSegments: 4 });
-  // Shape (a, b, z) → world (a, −z, b): flat, thickness downward from y1
-  geo.rotateX(Math.PI / 2);
-  geo.translate(0, y1, 0);
+/**
+ * Top and underside (world y) of blade i at opening u over plane point
+ * (a, b), or null where the blade is not.
+ */
+export function apertureBladeSpan(i: number, u: number, a: number, b: number): { top: number; bottom: number } | null {
+  const { angle, run } = placement(i, u);
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const la = a * c + b * s - run;
+  const lb = -a * s + b * c;
+  const r = Math.hypot(la, lb);
+  if (r < R0 || r > R1) return null;
+  const sweep = SWEEP * ((r - R0) / (R1 - R0) - 0.5);
+  const x = (Math.atan2(lb, la) - sweep) / PITCH + 0.5;
+  if (x < 0 || x > S_END) return null;
+  return { top: topAt(x), bottom: topAt(x) - THICK };
+}
+
+/**
+ * One blade (or its seal) as a mesh: a stepped top surface over r0..r1 ×
+ * s0..s1, a leading-edge wall and an inner-edge wall. Shape (a, b) → world
+ * (a, y, b); the instance matrix turns it into place.
+ */
+function bladeGeometry(r0: number, r1: number, s0: number, s1: number, lift: number, depth: number, nr: number, ns: number): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  const quad = (a: number, b: number, c: number, d: number) => idx.push(a, b, c, a, c, d);
+  const vert = (r: number, s: number, y: number, u: number, v: number) => {
+    const [a, b] = local(r, s);
+    pos.push(a, y, b);
+    uv.push(u, v);
+    return pos.length / 3 - 1;
+  };
+  // Top
+  const base = pos.length / 3;
+  for (let i = 0; i <= nr; i++) {
+    for (let j = 0; j <= ns; j++) {
+      const r = r0 + ((r1 - r0) * i) / nr;
+      const s = s0 + ((s1 - s0) * j) / ns;
+      vert(r, s, topAt(s) + lift, i / nr, j / ns);
+    }
+  }
+  for (let i = 0; i < nr; i++) {
+    for (let j = 0; j < ns; j++) {
+      const a = base + i * (ns + 1) + j;
+      quad(a, a + 1, a + ns + 2, a + ns + 1);
+    }
+  }
+  // Leading-edge wall (s0), facing back along −s
+  const lead = pos.length / 3;
+  for (let i = 0; i <= nr; i++) {
+    const r = r0 + ((r1 - r0) * i) / nr;
+    vert(r, s0, topAt(s0) + lift, i / nr, 0);
+    vert(r, s0, topAt(s0) + lift - depth, i / nr, 0.04);
+  }
+  for (let i = 0; i < nr; i++) quad(lead + 2 * i, lead + 2 * i + 2, lead + 2 * i + 3, lead + 2 * i + 1);
+  // Inner-edge wall (r0), facing the platform
+  const inner = pos.length / 3;
+  for (let j = 0; j <= ns; j++) {
+    const s = s0 + ((s1 - s0) * j) / ns;
+    vert(r0, s, topAt(s) + lift, 0, j / ns);
+    vert(r0, s, topAt(s) + lift - depth, 0.03, j / ns);
+  }
+  for (let j = 0; j < ns; j++) quad(inner + 2 * j, inner + 2 * j + 1, inner + 2 * j + 3, inner + 2 * j + 2);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
   return geo;
 }
 
@@ -93,9 +182,10 @@ export class RingAperture {
 
   constructor(plateMat: THREE.Material, sealMat: THREE.Material) {
     this.group.name = 'ring-aperture';
-    this.plates = new THREE.InstancedMesh(slab(sector(R0, R1), TOP - THICK, TOP), plateMat, APERTURE_SEGMENTS);
+    this.plates = new THREE.InstancedMesh(bladeGeometry(R0, R1, 0, S_END, 0, THICK, 14, 8), plateMat, APERTURE_SEGMENTS);
+    const sr0 = APERTURE_INNER + 0.008;
     this.seals = new THREE.InstancedMesh(
-      slab(sector(APERTURE_INNER + 0.008, APERTURE_INNER + 0.008 + SEAL_W, 8), TOP, TOP + SEAL_H),
+      bladeGeometry(sr0, sr0 + SEAL_W, 0.02, 1, SEAL_H, SEAL_H, 1, 8),
       sealMat,
       APERTURE_SEGMENTS,
     );
@@ -108,7 +198,7 @@ export class RingAperture {
     this.set(0);
   }
 
-  /** Opening: 0 shut (flush deck) → 1 fully open. */
+  /** Opening: 0 shut (iris deck) → 1 fully open. */
   set(u: number): void {
     const k = THREE.MathUtils.clamp(u, 0, 1);
     if (k === this.u) return;

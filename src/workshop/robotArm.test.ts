@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { armForward, solveArmIK, toolQuaternion } from './robotArm';
+import { armForward, createRobotMaterials, RobotArm, solveArmIK, toolQuaternion } from './robotArm';
+import { armDims, ROBOTS } from './fittingProgram';
+import { APERTURE_UNDERSIDE } from './ringAperture';
 
 describe('solveArmIK', () => {
   const cases: Array<[number[], number[], number[]]> = [
@@ -25,5 +27,17 @@ describe('solveArmIK', () => {
     const q = toolQuaternion(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 1, 0));
     const j = solveArmIK(new THREE.Vector3(0, 0.4, 3), q);
     expect(j.error).toBeGreaterThan(0.5);
+  });
+});
+
+describe('RobotArm stow', () => {
+  it('drops every floor arm’s whole fold under the aperture blades', () => {
+    const mats = createRobotMaterials();
+    for (const st of ROBOTS.filter((s) => s.mount === 'floor')) {
+      const arm = new RobotArm(st.id, st.base, st.mount, st.pedestal, mats, st.tool, armDims(st));
+      arm.setStow(0.998, arm.base.y + arm.foldedTop() - APERTURE_UNDERSIDE + 0.005);
+      arm.group.updateMatrixWorld(true);
+      expect(new THREE.Box3().setFromObject(arm.group, true).max.y).toBeLessThan(APERTURE_UNDERSIDE);
+    }
   });
 });

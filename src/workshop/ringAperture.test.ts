@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { floorCradlePorts } from './cradleStands';
 import { ROBOTS } from './fittingProgram';
-import { APERTURE_INNER, APERTURE_OUTER, APERTURE_SEGMENTS, aperturePlatePoints } from './ringAperture';
+import {
+  APERTURE_INNER,
+  APERTURE_OUTER,
+  APERTURE_SEGMENTS,
+  APERTURE_UNDERSIDE,
+  apertureBladeSpan,
+  aperturePlatePoints,
+} from './ringAperture';
 import { PLATFORM_RADIUS } from './workshopEnvironment';
 
 /** Floor arm pedestal flange radius (m). */
@@ -44,19 +51,30 @@ describe('ring aperture', () => {
     }
   });
 
-  it('never runs one plate over another', () => {
-    for (const u of [0, 0.1, 0.3, 0.5, 0.7, 0.9, 1]) {
-      for (let i = 0; i < APERTURE_SEGMENTS; i++) {
-        const a = aperturePlatePoints(i, u);
-        const b = aperturePlatePoints((i + 1) % APERTURE_SEGMENTS, u);
-        // Sample the neighbour's interior (towards its centroid) and check none falls inside this plate
-        const c = b.reduce((s, p) => [s[0] + p[0] / b.length, s[1] + p[1] / b.length], [0, 0]);
-        for (const p of b) {
-          const q: [number, number] = [p[0] + (c[0] - p[0]) * 0.02, p[1] + (c[1] - p[1]) * 0.02];
-          expect(inside(q, a)).toBe(false);
+  it('laps each blade over the next without the two meeting', () => {
+    for (const u of [0, 0.1, 0.3, 0.5, 0.7, 0.9]) {
+      for (let k = 0; k < 2000; k++) {
+        const a = ((k * 7.31) % 360) * (Math.PI / 180);
+        const r = APERTURE_INNER - 0.01 + ((k * 0.618) % 1) * (APERTURE_OUTER - APERTURE_INNER + 1.5);
+        const [x, z] = [r * Math.cos(a), r * Math.sin(a)];
+        const spans = Array.from({ length: APERTURE_SEGMENTS }, (_, i) => [i, apertureBladeSpan(i, u, x, z)] as const).filter(
+          ([, s]) => s,
+        );
+        // At most two blades over any point, neighbours, one clear above the other
+        expect(spans.length).toBeLessThanOrEqual(2);
+        if (spans.length === 2) {
+          const [[i, a0], [j, b0]] = spans;
+          expect(Math.min((j - i + APERTURE_SEGMENTS) % APERTURE_SEGMENTS, (i - j + APERTURE_SEGMENTS) % APERTURE_SEGMENTS)).toBe(1);
+          const gap = Math.max(a0!.bottom - b0!.top, b0!.bottom - a0!.top);
+          expect(gap).toBeGreaterThan(0.0005);
         }
       }
     }
+  });
+
+  it('stays under the deck', () => {
+    expect(APERTURE_UNDERSIDE).toBeLessThan(0);
+    expect(APERTURE_UNDERSIDE).toBeGreaterThan(-0.025);
   });
 });
 
