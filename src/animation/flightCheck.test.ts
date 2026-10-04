@@ -92,6 +92,6 @@ describe('flight-control check', () => {
       if ((f.pose.lift ?? 0) < 0.1) continue;
       for (const [k, v] of Object.entries(f.flaps)) if (v > 0.2) moved.add(k.split('.')[0]);
     }
-    expect([...moved].sort()).toEqual(['back', 'calf', 'shoulder']);
+    expect([...moved].sort()).toEqual(['back', 'calf', 'shoulder', 'thigh']);
   });
 });

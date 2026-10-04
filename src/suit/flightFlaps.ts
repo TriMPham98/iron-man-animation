@@ -3,6 +3,7 @@ import type { FlapId } from '../animation/flightCheck';
 import type { ArmorPieceId } from './armorPieces';
 import type { ArmorPiece } from './waves';
 import { boneSpec } from './rig';
+import { cutSoup, soupFrom, soupGeometry, wallFor, type FlapCut, type Soup } from './flapCut';
 
 type V3 = [number, number, number];
 
@@ -25,8 +26,13 @@ interface FlapSpec {
   plates?: boolean;
   /** Override of {@link REGION_SLACK} (m). */
   slack?: number;
-  /** Hinge from the flap's bind bounds (+ optional straight lift first). */
-  hinge: (b: THREE.Box3) => Motion;
+  /** Clean-edged plate clipped out of the part's surface (see flapCut). */
+  cut?: FlapCut;
+  /**
+   * Hinge from the flap's bind bounds (+ optional straight lift first).
+   * `edge` is the middle of a cut plate's top edge on its outer skin.
+   */
+  hinge: (b: THREE.Box3, edge: THREE.Vector3) => Motion;
 }
 
 /**
@@ -64,33 +70,66 @@ const Z = new THREE.Vector3(0, 0, 1);
 const mid = (b: THREE.Box3, k: 'x' | 'y' | 'z') => (b.min[k] + b.max[k]) / 2;
 
 /**
- * Mark III flight-control surfaces: the twin shoulder-blade flaps, the
- * small flaps on top of each pauldron, and the calf plates. Flaps are the
- * model's own panels (connected panel components), so they part on the
- * existing panel lines.
+ * Mark III flight-control surfaces, after the film's flight test: twin
+ * shoulder-blade air brakes on the back, a rear spoiler on each pauldron,
+ * hamstring air brakes and the calf flaps. Each is a clean-edged plate cut
+ * from the suit's own outer shell (straight machined edges with a short side
+ * wall), hinged on its leading (top) edge so the trailing edge swings out
+ * into the airflow. Weapons housings and the flare plates use whole panels.
  */
 const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
   const s = side === 'L' ? 1 : -1;
   const xr = (a: number, b: number): [number, number] => (s > 0 ? [a, b] : [-b, -a]);
-  const [bx0, bx1] = xr(0.035, 0.16);
-  const [px0, px1] = xr(0.225, 0.33);
+  /** Outline seen from behind (x, y), mirrored for the right side. */
+  const back = (pts: Array<[number, number]>) => pts.map(([x, y]) => [s * x, y] as const);
+  /**
+   * Top-edge hinge on the outer skin, so the leading edge stays put and the
+   * trailing edge swings out behind the suit. (Hinged at the bounds' middle,
+   * the outer top edge would rise into the shell above and fight it.)
+   */
+  const topHinge = (angle: number) => (b: THREE.Box3, edge: THREE.Vector3) => ({
+    pivot: new THREE.Vector3(mid(b, 'x'), edge.y, edge.z),
+    axis: X,
+    angle,
+  });
   return [
     {
+      // Shoulder-blade air brake: the large plate either side of the spine
       id: `back.${side}`,
       piece: 'back.upper',
-      region: { min: [bx0, 1.29, -0.3], max: [bx1, 1.43, -0.13] },
-      // Hinged on the top edge; the lower edge swings out from the back
-      hinge: (b) => ({ pivot: new THREE.Vector3(mid(b, 'x'), b.max.y, mid(b, 'z')), axis: X, angle: 0.55 }),
+      cut: {
+        along: 'z',
+        outline: back([
+          [0.05, 1.49],
+          [0.172, 1.49],
+          [0.152, 1.33],
+          [0.066, 1.315],
+        ]),
+        depth: [-0.3, -0.07],
+        wall: 0.007,
+      },
+      hinge: topHinge(0.5),
     },
     {
+      // Shoulder air brake: the whole outer shell of the pauldron, hinged
+      // along its top edge, swings out sideways like a speed brake
       id: `shoulder.${side}`,
       piece: `pauldron.${side}`,
-      region: { min: [px0, 1.53, -0.1], max: [px1, 1.64, 0.1] },
-      // Hinged on the neck-side edge; the outer edge lifts
-      hinge: (b) => ({
-        pivot: new THREE.Vector3(s > 0 ? b.min.x : b.max.x, mid(b, 'y'), mid(b, 'z')),
+      cut: {
+        along: 'x',
+        outline: [
+          [-0.085, 1.592],
+          [0.07, 1.592],
+          [0.062, 1.47],
+          [-0.078, 1.47],
+        ],
+        depth: s > 0 ? [0.255, 0.4] : [-0.4, -0.255],
+        wall: 0.007,
+      },
+      hinge: (b, edge) => ({
+        pivot: new THREE.Vector3(edge.x, edge.y, mid(b, 'z')),
         axis: Z,
-        angle: 0.6 * s,
+        angle: 0.5 * s,
       }),
     },
     {
@@ -143,9 +182,42 @@ const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
       },
     },
     {
+      // Hamstring air brake on the back of the thigh
+      id: `thigh.${side}`,
+      piece: `thigh.${side}.back`,
+      cut: {
+        along: 'z',
+        outline: back([
+          [0.092, 0.875],
+          [0.172, 0.875],
+          [0.165, 0.725],
+          [0.098, 0.725],
+        ]),
+        depth: [-0.3, -0.04],
+        wall: 0.006,
+      },
+      hinge: topHinge(0.32),
+    },
+    {
+      // Calf flap: the upper calf plate only (as in the film), not the
+      // whole calf
       id: `calf.${side}`,
       piece: `shin.${side}.back`,
-      hinge: (b) => ({ pivot: new THREE.Vector3(mid(b, 'x'), b.max.y - 0.02, b.min.z + 0.03), axis: X, angle: 0.26 }),
+      cut: {
+        along: 'z',
+        outline: back([
+          // Edges stay on the back of the calf, clear of the grazing flanks
+          [0.104, 0.488],
+          [0.19, 0.488],
+          [0.197, 0.398],
+          [0.186, 0.252],
+          [0.114, 0.252],
+          [0.097, 0.398],
+        ]),
+        depth: [-0.3, -0.04],
+        wall: 0.006,
+      },
+      hinge: topHinge(0.3),
     },
   ];
 });
@@ -154,6 +226,12 @@ export interface Flap extends Motion {
   id: FlapId;
   piece: ArmorPiece;
   mesh: THREE.SkinnedMesh;
+  /**
+   * Side walls of a cut plate. Drawn only while this flap is open: at rest
+   * they sit in the neighbouring shell, and showing them because a sibling
+   * flap on the same part moved makes that shell flicker.
+   */
+  walls?: THREE.SkinnedMesh;
   /** Bind bounds of the flap's panels. */
   bounds: THREE.Box3;
 }
@@ -176,6 +254,23 @@ export function flapMotion(f: Flap, k: number, out: THREE.Matrix4): THREE.Matrix
     .multiply(_t.makeTranslation(f.pivot.x, f.pivot.y, f.pivot.z))
     .multiply(_r.makeRotationAxis(f.axis, f.angle * swing))
     .multiply(_t.makeTranslation(-f.pivot.x, -f.pivot.y, -f.pivot.z));
+}
+
+/**
+ * Middle of a cut plate's top edge on its outer skin: the vertices along
+ * the top of the outline, the outermost of them along the view axis.
+ */
+function outerTopEdge(plate: Soup, cut: FlapCut): THREE.Vector3 {
+  const ax = cut.along;
+  const out = cut.depth[0] + cut.depth[1] < 0 ? -1 : 1;
+  const verts = plate.flat().map((v) => v.p);
+  const top = Math.max(...verts.map((p) => p.y));
+  const rim = verts.filter((p) => p.y > top - 0.008);
+  const outer = Math.max(...rim.map((p) => out * p[ax]));
+  const skin = rim.filter((p) => out * p[ax] > outer - 0.006);
+  const c = new THREE.Vector3();
+  for (const p of skin) c.add(p);
+  return c.divideScalar(skin.length);
 }
 
 /** Index buffer of a geometry (synthesised for non-indexed). */
@@ -251,38 +346,16 @@ function subset(geo: THREE.BufferGeometry, index: ArrayLike<number>, keep: (t: n
 }
 
 /**
- * Two-sided copy of a subset: every triangle plus a back-to-back twin with
- * flipped normals. The model winds some plates inside-out (the hip drum
- * face reads only through the dark cavity shell while it is seated), so a
- * plate that travels clear of the suit must show both faces, lit properly.
+ * Same material, drawn from both sides. A duplicated back-to-back triangle
+ * sits on the plate and flickers against it; `DoubleSide` does not.
  */
-function twoSided(sub: THREE.BufferGeometry): THREE.BufferGeometry {
-  const idx = sub.index!.array;
-  const used = [...new Set(idx)];
-  const local = new Map(used.map((v, i) => [v, i] as const));
-  const n = used.length;
-  const out = new THREE.BufferGeometry();
-  for (const [name, attr] of Object.entries(sub.attributes)) {
-    const size = attr.itemSize;
-    const Arr = attr.array.constructor as new (n: number) => THREE.TypedArray;
-    const arr = new Arr(n * 2 * size);
-    used.forEach((v, i) => {
-      for (let k = 0; k < size; k++) {
-        const x = attr.getComponent(v, k);
-        arr[i * size + k] = x;
-        arr[(n + i) * size + k] = name === 'normal' ? -x : x;
-      }
-    });
-    out.setAttribute(name, new THREE.BufferAttribute(arr, size, attr.normalized));
-  }
-  const tris: number[] = [];
-  for (let t = 0; t < idx.length; t += 3) {
-    const [a, b, c] = [local.get(idx[t])!, local.get(idx[t + 1])!, local.get(idx[t + 2])!];
-    tris.push(a, b, c, n + a, n + c, n + b);
-  }
-  out.setIndex(tris);
-  out.boundingBox = sub.boundingBox!.clone();
-  return out;
+function bothSides(mat: THREE.Material | THREE.Material[]): THREE.Material | THREE.Material[] {
+  const one = (m: THREE.Material) => {
+    const c = m.clone();
+    c.side = THREE.DoubleSide;
+    return c;
+  };
+  return Array.isArray(mat) ? mat.map(one) : one(mat);
 }
 
 function skinned(geo: THREE.BufferGeometry, like: THREE.SkinnedMesh, name: string): THREE.SkinnedMesh {
@@ -320,6 +393,7 @@ export function buildFlightFlaps(pieces: readonly ArmorPiece[]): {
   >();
 
   for (const spec of FLAPS) {
+    if (spec.cut) continue;
     const piece = pieces.find((p) => p.id === spec.piece);
     if (!piece) continue;
     const src = piece.mesh as THREE.SkinnedMesh;
@@ -392,19 +466,54 @@ export function buildFlightFlaps(pieces: readonly ArmorPiece[]): {
     } else {
       mine = () => true;
     }
-    // Whole plates travel clear of the suit, so they show both faces
-    const flapGeo = spec.plates ? twoSided(subset(geo, index, mine)) : subset(geo, index, mine);
+    // Whole plates travel clear of the suit. Some are wound inside-out, so
+    // the plate is drawn from both sides without a second coplanar skin.
+    const flapGeo = subset(geo, index, mine);
     const mesh = skinned(flapGeo, src, `flap-${spec.id}`);
-    const h = spec.hinge(flapGeo.boundingBox!);
+    if (spec.plates) mesh.material = bothSides(src.material);
+    const h = spec.hinge(flapGeo.boundingBox!, flapGeo.boundingBox!.getCenter(new THREE.Vector3()));
     flaps.push({ id: spec.id, piece, mesh, bounds: flapGeo.boundingBox!.clone(), ...h });
+  }
+
+  // Clean-edged plates cut from whatever each part still has
+  const soups = new Map<ArmorPieceId, Soup>();
+  for (const spec of FLAPS) {
+    if (!spec.cut) continue;
+    const piece = pieces.find((p) => p.id === spec.piece);
+    if (!piece) continue;
+    const src = piece.mesh as THREE.SkinnedMesh;
+    let soup = soups.get(spec.piece);
+    if (!soup) {
+      const ids = taken.get(spec.piece);
+      const info = cache.get(spec.piece);
+      const index = info?.index ?? indexOf(src.geometry);
+      soup = soupFrom(src.geometry, index, (t) => !ids || !info || !ids.has(info.panel[t]));
+    }
+    const { plate, rest, edges } = cutSoup(soup, spec.cut);
+    soups.set(spec.piece, rest);
+    if (plate.length === 0) continue;
+    const depth = spec.cut.wall ?? 0.006;
+    // Plate walls sit a hair inside the cut so they don't share a face with the shell
+    const view = spec.cut.along === 'z' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+    const flapGeo = soupGeometry(plate);
+    const wallTris = wallFor(edges, depth, 0.0006, view);
+    const mesh = skinned(flapGeo, src, `flap-${spec.id}`);
+    const walls = wallTris.length ? skinned(soupGeometry(wallTris), src, `flap-walls-${spec.id}`) : undefined;
+    const h = spec.hinge(flapGeo.boundingBox!, outerTopEdge(plate, spec.cut));
+    flaps.push({ id: spec.id, piece, mesh, bounds: flapGeo.boundingBox!.clone(), walls, ...h });
   }
 
   // Remainders for parts that only lost some panels
   for (const [id, ids] of taken) {
+    if (soups.has(id)) continue;
     const piece = pieces.find((p) => p.id === id)!;
     const src = piece.mesh as THREE.SkinnedMesh;
     const { index, panel } = cache.get(id)!;
     rests.set(id, skinned(subset(src.geometry, index, (t) => !ids.has(panel[t])), src, `flap-rest-${id}`));
+  }
+  for (const [id, soup] of soups) {
+    const src = pieces.find((p) => p.id === id)!.mesh as THREE.SkinnedMesh;
+    rests.set(id, skinned(soupGeometry(soup), src, `flap-rest-${id}`));
   }
   return { flaps, rests };
 }

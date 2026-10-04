@@ -16,6 +16,8 @@ interface Emitter {
   kind: BurstKind;
   at: THREE.Vector3;
   dir: THREE.Vector3 | null;
+  /** Pressure jet: a tight, fast cone that holds its line before it billows. */
+  jet: boolean;
   remaining: number;
   /** Particles per second. */
   rate: number;
@@ -133,6 +135,8 @@ export class SuitParticles {
   private readonly vSeed = new Float32Array(this.vN);
   private readonly vRot = new Float32Array(this.vN);
   private readonly vSpin = new Float32Array(this.vN);
+  /** 1 for pressure-jet puffs (no buoyancy until they slow; spread on the deck). */
+  private readonly vJet = new Uint8Array(this.vN);
   private vNext = 0;
   private readonly steam: THREE.Points;
 
@@ -205,11 +209,13 @@ export class SuitParticles {
    * outward normal of the bolt being driven). Sparks spray over ~60 ms,
    * steam vents over ~0.25 s.
    */
-  burst(kind: BurstKind, at: THREE.Vector3, count: number, dir?: THREE.Vector3): void {
-    const n = kind === 'sparks' ? Math.round(count * 1.6) : Math.round(count * 1.3);
-    const span = kind === 'sparks' ? 0.06 : 0.25;
+  burst(kind: BurstKind, at: THREE.Vector3, count: number, dir?: THREE.Vector3, opts?: { jet?: boolean }): void {
+    const jet = kind === 'steam' && !!dir && !!opts?.jet;
+    const n = kind === 'sparks' ? Math.round(count * 1.6) : Math.round(count * (jet ? 2.2 : 1.3));
+    const span = kind === 'sparks' ? 0.06 : jet ? 0.32 : 0.25;
     this.emitters.push({
       kind,
+      jet,
       at: at.clone(),
       dir: dir ? dir.clone().normalize() : null,
       remaining: n,
@@ -244,13 +250,15 @@ export class SuitParticles {
     this.sBounce[k] = 0;
   }
 
-  private spawnSteam(at: THREE.Vector3, dir: THREE.Vector3 | null): void {
+  private spawnSteam(at: THREE.Vector3, dir: THREE.Vector3 | null, jet = false): void {
     const k = this.vNext;
     this.vNext = (this.vNext + 1) % this.vN;
     const v = this._v.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
-    if (dir) v.multiplyScalar(0.35).add(dir).normalize();
+    if (dir) v.multiplyScalar(jet ? 0.12 : 0.35).add(dir).normalize();
     // Jet leaves the vent fast, the air brakes it within a few tenths
-    v.multiplyScalar(1.1 + Math.random() * 1.0);
+    // (a pressure jet leaves much faster and carries its line further)
+    v.multiplyScalar(jet ? 2.0 + Math.random() * 1.2 : 1.1 + Math.random() * 1.0);
+    this.vJet[k] = jet ? 1 : 0;
     this.vPos.set([at.x, at.y, at.z], k * 3);
     this.vVel.set([v.x, v.y, v.z], k * 3);
     this.vMax[k] = this.vLife[k] = 1.1 + Math.random() * 1.1;
@@ -273,7 +281,7 @@ export class SuitParticles {
         e.acc -= 1;
         e.remaining--;
         if (e.kind === 'sparks') this.spawnSpark(e.at, e.dir);
-        else this.spawnSteam(e.at, e.dir);
+        else this.spawnSteam(e.at, e.dir, e.jet);
       }
       if (e.remaining <= 0) this.emitters.splice(i, 1);
     }
@@ -363,12 +371,28 @@ export class SuitParticles {
       // Turbulent curl (cheap: phase-shifted sines per puff) + buoyancy
       const s = this.vSeed[i] * 40;
       const tt = this.time * 1.7;
-      V[i3] = V[i3] * drag + Math.sin(tt + s) * 0.25 * step;
-      V[i3 + 1] = V[i3 + 1] * drag + (0.45 + 0.2 * Math.sin(tt * 0.7 + s)) * step;
-      V[i3 + 2] = V[i3 + 2] * drag + Math.cos(tt * 1.3 + s * 1.7) * 0.25 * step;
+      const jet = this.vJet[i] === 1;
+      // A jet core barely brakes for its first tenth of a second, and only
+      // starts to rise once it has slowed to a drift
+      const d = jet && age < 0.08 ? Math.exp(-0.9 * step) : drag;
+      const speed = Math.hypot(V[i3], V[i3 + 1], V[i3 + 2]);
+      const lift = jet ? Math.min(1, Math.max(0, 1 - speed / 0.6)) : 1;
+      V[i3] = V[i3] * d + Math.sin(tt + s) * 0.25 * step;
+      V[i3 + 1] = V[i3 + 1] * d + (0.45 + 0.2 * Math.sin(tt * 0.7 + s)) * lift * step;
+      V[i3 + 2] = V[i3 + 2] * d + Math.cos(tt * 1.3 + s * 1.7) * 0.25 * step;
       P[i3] += V[i3] * step;
       P[i3 + 1] += V[i3 + 1] * step;
       P[i3 + 2] += V[i3 + 2] * step;
+      // A jet that reaches the deck flattens and fans out across it
+      const floor = (Math.hypot(P[i3], P[i3 + 2]) < DECK_R ? DECK_Y : FLOOR_Y) + 0.015;
+      if (jet && P[i3 + 1] < floor && V[i3 + 1] < 0) {
+        P[i3 + 1] = floor;
+        const h = Math.hypot(V[i3], V[i3 + 2]) || 1e-3;
+        const fan = 0.3 * -V[i3 + 1];
+        V[i3] += (V[i3] / h) * fan + (Math.random() - 0.5) * fan * 0.8;
+        V[i3 + 2] += (V[i3 + 2] / h) * fan + (Math.random() - 0.5) * fan * 0.8;
+        V[i3 + 1] = 0;
+      }
       // Billow out as it thins; quick bloom in, long fade
       this.vSize[i] = this.vSize0[i] * (1 + 5.5 * Math.sqrt(age));
       this.vAlpha[i] = Math.min(1, age * 9) * Math.pow(u, 1.3);
@@ -386,6 +410,7 @@ export class SuitParticles {
     this.emitters.length = 0;
     this.sLife.fill(0);
     this.vLife.fill(0);
+    this.vJet.fill(0);
     this.headColor.fill(0);
     this.lineColor.fill(0);
     this.vAlpha.fill(0);

@@ -11,6 +11,7 @@ import {
   buildSuitUpPlan,
   evaluateCamera,
   evaluateSuitUp,
+  type SuitUpFrame,
   type SuitUpPlan,
 } from './suitUpChoreography';
 import type { Workshop } from '../workshop/Workshop';
@@ -105,7 +106,9 @@ export interface AssemblyController {
    * Pose suit + robot cell at a GSAP time without moving the transport or
    * the camera (the reverse "doffing" handoff between cycles drives this).
    */
-  renderSuitAt: (gsapT: number) => void;
+  renderSuitAt: (gsapT: number, edit?: (frame: SuitUpFrame) => void) => void;
+  /** Seed time of a GSAP time. */
+  toSeed: (gsapT: number) => number;
   /** GSAP time the seamless suit swaps in (last frame with real parts). */
   getFinalSwapTime: () => number;
 }
@@ -458,12 +461,14 @@ export function createAssemblyTimeline(
       userOwnsCamera = owns;
       return points;
     },
-    renderSuitAt: (gsapT: number) => {
+    renderSuitAt: (gsapT: number, edit?: (frame: SuitUpFrame) => void) => {
       const frame = evaluateSuitUp(plan, gsapT - offset);
+      edit?.(frame);
       suit.applyFrame(frame);
       workshop?.apply(frame);
     },
     getFinalSwapTime: () => finalSwapTime,
+    toSeed: (gsapT: number) => gsapT - offset,
     setUserOwnsCamera: (owns: boolean) => {
       userOwnsCamera = owns;
       // Releasing free-look does not by itself move the camera — callers that

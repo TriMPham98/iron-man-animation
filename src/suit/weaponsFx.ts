@@ -101,6 +101,27 @@ function inset(poly: Array<[number, number]>, d: number): Array<[number, number]
   });
 }
 
+/**
+ * Grow a convex outline by `d` on every side: scaled about its centroid so
+ * each edge stays parallel and moves out by at least `d`. (Pushing points
+ * radially leaves edges that run toward the centroid where they were, in
+ * the plane of the body's own face.)
+ */
+function grow(poly: Array<[number, number]>, d: number): Array<[number, number]> {
+  const cx = poly.reduce((a, p) => a + p[0], 0) / poly.length;
+  const cz = poly.reduce((a, p) => a + p[1], 0) / poly.length;
+  let h = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const [ax, az] = poly[i];
+    const [bx, bz] = poly[(i + 1) % poly.length];
+    const len = Math.hypot(bx - ax, bz - az);
+    if (len < 1e-6) continue;
+    h = Math.min(h, Math.abs((bx - ax) * (az - cz) - (bz - az) * (ax - cx)) / len);
+  }
+  const k = 1 + d / Math.max(h, 1e-3);
+  return poly.map(([x, z]) => [cx + (x - cx) * k, cz + (z - cz) * k]);
+}
+
 /** Vertical prism over an (x, z) outline from y0 to y1. */
 function prism(outline: Array<[number, number]>, y0: number, y1: number, m: THREE.Material): THREE.Mesh {
   const shape = new THREE.Shape(outline.map(([x, z]) => new THREE.Vector2(x, z)));
@@ -180,14 +201,15 @@ export class WeaponsFx {
 
     const rig = new THREE.Group();
     // Rail under the panel, launch tube, rocket nose in the muzzle
-    rig.add(box(0.012, 0.13, 0.03, m.gun, 0.006, 0, 0));
+    rig.add(box(0.012, 0.126, 0.03, m.gun, 0.006, 0, 0));
     const pod = new THREE.Group();
     pod.position.set(0.012, 0, 0);
-    pod.add(tube(0.016, 0.016, -0.07, 0.065, m.gun, 20));
-    pod.add(tube(0.018, 0.018, 0.048, 0.065, m.gold, 20));
-    pod.add(tube(0.018, 0.018, -0.07, -0.056, m.gold, 20));
-    pod.add(tube(0.012, 0.0, 0.065, 0.092, m.red, 16));
-    pod.add(tube(0.012, 0.012, 0.06, 0.066, m.steel, 16));
+    // End caps are staggered by a millimetre or more: two caps in one plane flicker
+    pod.add(tube(0.016, 0.016, -0.069, 0.064, m.gun, 20));
+    pod.add(tube(0.0175, 0.0175, 0.048, 0.065, m.gold, 20));
+    pod.add(tube(0.0175, 0.0175, -0.07, -0.056, m.gold, 20));
+    pod.add(tube(0.0115, 0.0, 0.067, 0.093, m.red, 16));
+    pod.add(tube(0.012, 0.012, 0.06, 0.0685, m.steel, 16));
     pod.add(box(0.006, 0.01, 0.008, m.lens, 0.015, 0.03, 0));
     rig.add(pod);
     return this.mount(`forearm.${side}`, flap, bind, rig);
@@ -213,10 +235,10 @@ export class WeaponsFx {
     const rig = new THREE.Group();
     // Body (contoured prism) + gold rim just under the lid
     rig.add(prism(foot, -H, 0, m.red));
-    rig.add(prism(inset(foot, -0.0015), -half - 0.006, -half - 0.002, m.gold));
+    rig.add(prism(grow(foot, 0.0015), -half - 0.006, -half - 0.002, m.gold));
     // Second gold band low on the exposed sleeve + a dark seam between
-    rig.add(prism(inset(foot, -0.001), -half - SILO_RISE * 0.86, -half - SILO_RISE * 0.8, m.gold));
-    rig.add(prism(inset(foot, -0.0006), -half - SILO_RISE * 0.5, -half - SILO_RISE * 0.47, m.gun));
+    rig.add(prism(grow(foot, 0.0012), -half - SILO_RISE * 0.86, -half - SILO_RISE * 0.8, m.gold));
+    rig.add(prism(grow(foot, 0.001), -half - SILO_RISE * 0.5, -half - SILO_RISE * 0.47, m.gun));
     // Front face: bezel plate and the rocket rack, aimed forward (+Z)
     // Rack sits on the silo's own front face
     const front = Math.max(...foot.map((q) => q[1]));
@@ -224,18 +246,22 @@ export class WeaponsFx {
     // Rack spans the silo's own front face (never wider than the silo)
     const fx = foot.filter((q) => q[1] > front - 0.003).map((q) => q[0]);
     const w = Math.min(0.055, (Math.max(...fx) - Math.min(...fx)) * 0.82);
-    const bezel = box(w, 0.032, 0.006, m.gun, cx, -0.021, front + 0.001);
+    const bezel = box(w, 0.042, 0.006, m.gun, cx, -0.0222, front + 0.001);
     rig.add(bezel);
     const rockets: THREE.Object3D[] = [];
-    for (let i = 0; i < 3; i++) {
-      for (let j = 0; j < 2; j++) {
+    // 2 × 3 rack; neighbouring collars must not touch (touching facets flicker)
+    const collar = Math.min(0.0054, w * 0.25 - 0.0008);
+    const band = Math.min(0.0064, collar - 0.0004);
+    const body = Math.min(0.0055, collar - 0.0012);
+    for (let i = 0; i < 2; i++) {
+      for (let j = 0; j < 3; j++) {
         const r = new THREE.Group();
-        r.position.set(cx + (i - 1) * w * 0.3, -0.013 - j * 0.016, front - 0.012);
+        r.position.set(cx + (i - 0.5) * w * 0.5, -0.01 - j * 0.0122, front - 0.012);
         r.rotation.x = Math.PI / 2; // tube +Y → forward
-        r.add(tube(0.0068, 0.0068, -0.004, 0.0, m.gold, 12)); // cell collar
-        r.add(tube(0.0055, 0.0055, 0.0, 0.016, m.steel, 10));
-        r.add(tube(0.0057, 0.0057, 0.011, 0.014, m.gold, 10)); // warhead band
-        r.add(tube(0.0055, 0.0, 0.016, 0.028, m.red, 10));
+        r.add(tube(collar, collar, -0.004, 0.0, m.gold, 12)); // cell collar
+        r.add(tube(body, body, 0.0008, 0.016, m.steel, 10));
+        r.add(tube(band, band, 0.011, 0.014, m.gold, 10)); // warhead band
+        r.add(tube(body, 0.0, 0.016, 0.028, m.red, 10));
         rig.add(r);
         rockets.push(r);
       }
@@ -258,7 +284,7 @@ export class WeaponsFx {
     // Plate radius in its own plane (it faces out along ±X); the drum is a
     // hair inside it so the face disk reads as a lid
     const size = b.getSize(new THREE.Vector3());
-    const r = (Math.min(size.y, size.z) / 2) * 0.96;
+    const r = (Math.min(size.y, size.z) / 2) * 0.93;
     // Drum frame: +Y along the plate normal, origin at the plate's centre
     const y = n;
     const x = new THREE.Vector3(0, 1, 0).cross(y).normalize();
@@ -272,8 +298,9 @@ export class WeaponsFx {
     const y0 = y1 - FLARE_PUSH - 0.02;
     const rig = new THREE.Group();
     rig.add(tube(r, r, y0, y1, m.red, 32, true));
-    rig.add(tube(r * 1.015, r * 1.015, y1 - 0.007, y1 - 0.003, m.gold, 32, true));
-    rig.add(tube(r * 1.01, r * 1.01, y0 + 0.004, y0 + 0.007, m.gold, 32, true));
+    // Bands stand a millimetre proud of the drum (closer, they flicker)
+    rig.add(tube(r + 0.0012, r + 0.0012, y1 - 0.007, y1 - 0.003, m.gold, 32, true));
+    rig.add(tube(r + 0.0012, r + 0.0012, y0 + 0.004, y0 + 0.007, m.gold, 32, true));
     const cells: THREE.Vector3[] = [];
     const portY = y1 - FLARE_PUSH * 0.55;
     for (let k = 0; k < 6; k++) {
@@ -283,8 +310,8 @@ export class WeaponsFx {
       const port = new THREE.Group();
       port.position.copy(dir).multiplyScalar(r).setY(portY);
       port.rotation.y = -a;
-      port.add(box(0.003, 0.012, 0.009, m.gold, 0.0005, 0, 0));
-      port.add(box(0.0035, 0.009, 0.0065, m.gun, 0.001, 0, 0));
+      port.add(box(0.003, 0.012, 0.009, m.gold, 0, 0, 0));
+      port.add(box(0.004, 0.009, 0.0065, m.gun, 0.0012, 0, 0));
       rig.add(port);
       cells.push(dir.clone().multiplyScalar(r + 0.004).setY(portY));
     }

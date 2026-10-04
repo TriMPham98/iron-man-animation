@@ -63,8 +63,14 @@ export class Suit {
   /** Frame with every part waiting on its cradle (reset target). */
   private restFrame: SuitUpFrame | null = null;
   private readonly frames = new Map<ArmorPieceId, THREE.Matrix4>();
-  /** Dark inner shell seen through open flaps (back faces of the suit). */
+  /**
+   * Dark inside of the shell, drawn wherever the armor is seen from behind
+   * (into an open flap, under a raised plate) so the suit never reads as
+   * hollow or see-through during the flight check.
+   */
   private cavity!: THREE.SkinnedMesh;
+  /** Back faces of each moving flap (it swings away from the cavity). */
+  private flapBacks = new Map<Flap, THREE.SkinnedMesh>();
   private flightFx!: FlightFx;
   private weapons!: WeaponsFx;
   private flightActive = false;
@@ -107,26 +113,47 @@ export class Suit {
     const skeleton = bindRig(suit.rig);
     const bindMatrix = suit.model.matrixWorld.clone();
     suit.modelInv.copy(bindMatrix).invert();
-    const cavity = new THREE.SkinnedMesh(
-      loaded.finalMesh.geometry,
-      new THREE.MeshStandardMaterial({ color: 0x0d0f12, metalness: 0.65, roughness: 0.5, side: THREE.BackSide }),
-    );
-    cavity.name = 'suit-cavity';
-    cavity.bindMode = THREE.DetachedBindMode;
-    cavity.frustumCulled = false;
-    cavity.visible = false;
-    suit.model.add(cavity);
-    suit.cavity = cavity;
     // Flight-check flaps: the model's own panels, split off their parts
     const split = buildFlightFlaps(suit.pieces);
     suit.flaps = split.flaps;
     suit.flapRests = split.rests;
     for (const f of split.flaps) suit.flapped.add(f.piece.id);
-    const flapMeshes = [...split.flaps.map((f) => f.mesh), ...split.rests.values()];
+    const flapMeshes = [
+      ...split.flaps.map((f) => f.mesh),
+      ...split.flaps.flatMap((f) => (f.walls ? [f.walls] : [])),
+      ...split.rests.values(),
+    ];
     for (const m of flapMeshes) suit.model.add(m);
+    // Interior shell: back faces only, pushed back in depth so where the
+    // model has two layers back to back (one facing in, one out) the outer
+    // face always wins and nothing flickers
+    const inside = new THREE.MeshStandardMaterial({
+      color: 0x14100f,
+      metalness: 0.6,
+      roughness: 0.55,
+      side: THREE.BackSide,
+      polygonOffset: true,
+      polygonOffsetFactor: 2,
+      polygonOffsetUnits: 4,
+    });
+    const shell = (geo: THREE.BufferGeometry, name: string) => {
+      const m = new THREE.SkinnedMesh(geo, inside);
+      m.name = name;
+      m.frustumCulled = false;
+      m.visible = false;
+      suit.model.add(m);
+      return m;
+    };
+    suit.cavity = shell(loaded.finalMesh.geometry, 'suit-cavity');
+    for (const f of split.flaps) {
+      const back = shell(f.mesh.geometry, `flap-back-${f.id}`);
+      back.matrixAutoUpdate = false;
+      suit.flapBacks.set(f, back);
+    }
     const meshes: THREE.SkinnedMesh[] = [
       ...flapMeshes,
-      cavity,
+      suit.cavity,
+      ...suit.flapBacks.values(),
       loaded.finalMesh,
       loaded.hologram,
       ...suit.pieces.map((p) => p.mesh as THREE.SkinnedMesh),
@@ -228,7 +255,8 @@ export class Suit {
       .set(b.at[0] - spec.head[0], b.at[1] - spec.head[1], b.at[2] - spec.head[2])
       .applyMatrix4(this._bm);
     const dir = b.dir ? this._dir.set(b.dir[0], b.dir[1], b.dir[2]).normalize() : undefined;
-    this.particles.burst(b.kind, this._v, b.count, dir);
+    // Suit vents fire as pressure jets along their vent direction
+    this.particles.burst(b.kind, this._v, b.count, dir, { jet: b.kind === 'steam' });
   }
 
   clearFx(): void {
@@ -274,28 +302,45 @@ export class Suit {
     this.flightActive = true;
     this.setPose(f.pose);
     if (this.finalModel) this.finalModel.visible = false;
-    this.cavity.visible = true;
+    // A part whose flaps are all seated shows as its original, unsplit
+    // mesh: no seams and no coincident flap / rest faces. It only splits
+    // while one of its flaps is moving. Nothing is drawn in the opening.
+    const openPieces = new Set<ArmorPieceId>();
+    for (const flap of this.flaps) {
+      if ((f.flaps[flap.id] ?? 0) > 1e-4) openPieces.add(flap.piece.id);
+    }
     for (const piece of this.pieces) {
       const mesh = piece.mesh as THREE.Mesh;
       mesh.matrix.identity();
       mesh.matrixWorldNeedsUpdate = true;
-      // Flapped parts show as remainder + flaps instead
-      mesh.visible = !this.flapped.has(piece.id);
+      mesh.visible = !openPieces.has(piece.id);
       setFitFx(mesh.material as THREE.Material, NO_CUT);
     }
-    for (const rest of this.flapRests.values()) rest.visible = true;
+    for (const [id, rest] of this.flapRests) rest.visible = openPieces.has(id);
+    this.cavity.visible = openPieces.size > 0;
     for (const flap of this.flaps) {
       const k = f.flaps[flap.id] ?? 0;
       const m = flap.mesh;
-      m.visible = true;
+      const back = this.flapBacks.get(flap)!;
+      m.visible = openPieces.has(flap.piece.id);
       m.matrixWorldNeedsUpdate = true;
+      back.visible = k > 1e-4;
       if (k <= 1e-4) {
         m.matrix.identity();
+        // Walls only exist once the plate has left the shell.
+        if (flap.walls) flap.walls.visible = false;
         continue;
       }
       // frame = dock · motion; mesh matrix = frame · dock⁻¹
       const frame = this.kin.dock(armorPieceDef(flap.piece.id).anchor, this._tf).multiply(flapMotion(flap, k, this._hm));
       this.kin.meshMatrix(flap.piece.id, frame, m.matrix);
+      back.matrix.copy(m.matrix);
+      back.matrixWorldNeedsUpdate = true;
+      if (flap.walls) {
+        flap.walls.visible = true;
+        flap.walls.matrix.copy(m.matrix);
+        flap.walls.matrixWorldNeedsUpdate = true;
+      }
     }
     this.flightFx.update(f, t, this.rig, this.modelInv, this.particles);
     this.weapons.update(f, t, this.rig, this.modelInv, this.particles);
@@ -304,10 +349,15 @@ export class Suit {
   private endFlightCheck(): void {
     if (!this.flightActive) return;
     this.flightActive = false;
-    this.cavity.visible = false;
     this.flightFx.hide();
     this.weapons.hide();
-    for (const m of [...this.flaps.map((f) => f.mesh), ...this.flapRests.values()]) m.visible = false;
+    this.cavity.visible = false;
+    for (const m of this.flapBacks.values()) m.visible = false;
+    for (const m of [
+      ...this.flaps.map((f) => f.mesh),
+      ...this.flaps.flatMap((f) => (f.walls ? [f.walls] : [])),
+      ...this.flapRests.values(),
+    ]) m.visible = false;
     for (const p of this.pieces) {
       p.mesh.matrix.identity();
       p.mesh.matrixWorldNeedsUpdate = true;

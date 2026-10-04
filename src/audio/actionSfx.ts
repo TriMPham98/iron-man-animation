@@ -1,15 +1,19 @@
 import type { SuitUpPlan } from '../animation/suitUpChoreography';
 import { FLIGHT_EVENTS, THRUSTER_BURN_SEC, type FlightEvent } from '../animation/flightCheck';
 import { STAND_RETRACT_SEC } from '../workshop/cradleStands';
+import type { DoffEvent } from '../animation/doffSequence';
 import type { PlayRequest } from './engine';
 
 /**
  * Action sound layer: one-shots tied to what is moving on screen, on top
  * of the director SFX mix (which carries the clamp transients the
- * choreography is cut to). Servo whine when an arm sets off, gripper
- * clicks, rivet crackle, vapour hiss with the steam, stands sinking and
- * ring lids shutting, the flight check's servos / flaps / repulsors /
- * thrusters, and the unclamp-and-set-down sounds of the doffing rewind.
+ * choreography is cut to). Arm servos as each arm sets off, gripper
+ * close / open, rivet strikes, arc sparks, pressure-vent blasts with the
+ * steam jets, stands sinking and port lids shutting; the flight check's
+ * servos / flaps / repulsors / thrusters; and the doff — power-down,
+ * faceplate, seal-release vents and lock releases, then the extraction's
+ * arm rises, pulls and set-downs. The suit-up and doff sets are
+ * synthesised (scripts/sfx/synth_suit_sfx.py).
  */
 export interface SfxCue {
   /** Seconds on the clock the layer is fired against. */
@@ -59,6 +63,39 @@ export const SFX_LENGTH: Record<string, number> = {
   'touchdown.mp3': 1.15,
   'spark-crackle.mp3': 0.84,
   'unclamp.mp3': 1.33,
+  // Synthesised suit-up / doffing set (scripts/sfx/synth_suit_sfx.py)
+  'mk3-arm-clamp.mp3': 1.44,
+  'mk3-arm-move.mp3': 1.12,
+  'mk3-arm-rise.mp3': 1.49,
+  'mk3-arm-servo-bed.mp3': 6.27,
+  'mk3-arm-stow.mp3': 2.22,
+  'mk3-boot-lift.mp3': 2.12,
+  'mk3-boot-sink.mp3': 1.83,
+  'mk3-chest-slam.mp3': 1.65,
+  'mk3-clamshell.mp3': 1.36,
+  'mk3-doff-vent.mp3': 0.37,
+  'mk3-drill.mp3': 1.36,
+  'mk3-extract.mp3': 0.63,
+  'mk3-faceplate-open.mp3': 1.20,
+  'mk3-faceplate.mp3': 2.80,
+  'mk3-gauntlet.mp3': 1.15,
+  'mk3-grip.mp3': 0.52,
+  'mk3-helmet-seat.mp3': 2.59,
+  'mk3-latch.mp3': 0.39,
+  'mk3-lock-release.mp3': 0.39,
+  'mk3-pauldron.mp3': 1.91,
+  'mk3-plate-seat.mp3': 2.38,
+  'mk3-port-lid.mp3': 0.55,
+  'mk3-power-down.mp3': 1.75,
+  'mk3-reactor.mp3': 1.72,
+  'mk3-release.mp3': 0.47,
+  'mk3-rivet.mp3': 0.42,
+  'mk3-set-down.mp3': 0.50,
+  'mk3-sparks.mp3': 0.65,
+  'mk3-stand-sink.mp3': 1.23,
+  'mk3-torso-servo.mp3': 2.59,
+  'mk3-vent.mp3': 0.86,
+  'mk3-waist-seal.mp3': 1.70,
 };
 
 /** Stable per-robot pitch so each arm has its own servo voice. */
@@ -93,50 +130,71 @@ export function assemblyCues(plan: SuitUpPlan): SfxCue[] {
   for (const r of plan.robots) {
     const p = voice(r.id);
     for (const job of r.jobs) {
-      cues.push({ t: job.depart, file: 'servo-whine.mp3', volume: 0.2, pitch: p });
-      cues.push({ t: job.grasp, file: 'light-attach.mp3', volume: 0.22, pitch: 1.15 });
-      cues.push({ t: job.release, file: 'light-attach.mp3', volume: 0.14, pitch: 1.35 });
+      cues.push({ t: job.depart, file: 'mk3-arm-move.mp3', volume: 0.22, pitch: p });
+      cues.push({ t: job.grasp, file: 'mk3-grip.mp3', volume: 0.3, pitch: p });
+      cues.push({ t: job.release, file: 'mk3-release.mp3', volume: 0.22, pitch: p });
       // Its stand sinks once the part is lifted clear, the port lid shuts
-      cues.push({ t: job.lift + 0.35, file: 'metal-sliding.mp3', volume: 0.12, pitch: 0.78 });
-      cues.push({ t: job.lift + 0.35 + STAND_RETRACT_SEC * 0.85, file: 'medium-close.mp3', volume: 0.1, pitch: 1.25 });
+      cues.push({ t: job.lift + 0.35, file: 'mk3-stand-sink.mp3', volume: 0.14 });
+      cues.push({ t: job.lift + 0.35 + STAND_RETRACT_SEC * 0.85, file: 'mk3-port-lid.mp3', volume: 0.16 });
     }
     for (const tool of r.tools) {
-      cues.push({ t: tool.depart, file: 'servo-whine.mp3', volume: 0.18, pitch: p * 1.05 });
-      for (const s of tool.strikes) cues.push({ t: s, file: 'spark-crackle.mp3', volume: 0.22 });
+      cues.push({ t: tool.depart, file: 'mk3-arm-move.mp3', volume: 0.18, pitch: p * 1.05 });
+      for (const s of tool.strikes) cues.push({ t: s, file: 'mk3-rivet.mp3', volume: 0.28 });
     }
     const stow = stowSpan(plan, r.id);
-    if (stow) {
-      cues.push({ t: stow[0], file: 'robot-movement.mp3', volume: 0.2, pitch: 0.82 * p, duration: 2, fadeOut: 0.6 });
-      cues.push({ t: stow[1], file: 'medium-close.mp3', volume: 0.16, pitch: 0.9 });
-    }
+    if (stow) cues.push({ t: stow[0], file: 'mk3-arm-stow.mp3', volume: 0.22, pitch: p });
   }
   for (const b of plan.bursts) {
-    if (b.kind === 'sparks') cues.push({ t: b.t, file: 'spark-crackle.mp3', volume: 0.28 });
-    else cues.push({ t: b.t, file: 'steam-hiss.mp3', volume: 0.3, pitch: 0.95 });
+    if (b.kind === 'sparks') cues.push({ t: b.t, file: 'mk3-sparks.mp3', volume: 0.3 });
+    else cues.push({ t: b.t, file: 'mk3-vent.mp3', volume: 0.32, duration: 0.6, fadeOut: 0.2 });
   }
   return thin(cues);
 }
 
 /**
- * Cues for the doffing rewind (seed seconds, fired as the clock runs
- * backwards through them): arms rise out of the ring, every part is
- * unclamped, carried off and set down on its stand, stands rise.
+ * Cues for the doffing extraction (seed seconds, fired as the clock runs
+ * backwards through them): arms rise out of the ring, every loosened part
+ * is pulled off the suit, carried away and set down on its stand, and the
+ * boots ride the lift down into the hatch. Dry: discrete mechanical events
+ * only, no hiss or noise beds.
  */
 export function doffCues(plan: SuitUpPlan): SfxCue[] {
-  // Kept sparse and dry: one low servo as each arm comes up, a dry
-  // unclamp per part, a soft set-down click. No hiss / noise beds — the
-  // continuous low motor hum is started by the session.
   const cues: SfxCue[] = [];
   for (const r of plan.robots) {
     const p = voice(r.id);
     const stow = stowSpan(plan, r.id);
-    if (stow) cues.push({ t: stow[1] - 0.05, file: 'servo-whine.mp3', volume: 0.16, pitch: 0.8 * p, fadeOut: 0.5 });
+    // Backwards, the end of the stow is where the arm starts to rise
+    if (stow) cues.push({ t: stow[1] - 0.05, file: 'mk3-arm-rise.mp3', volume: 0.2, pitch: p });
     for (const job of r.jobs) {
-      cues.push({ t: job.contact, file: 'unclamp-dry.mp3', volume: 0.34, pitch: p });
-      cues.push({ t: job.grasp, file: 'flap-latch.mp3', volume: 0.3, pitch: 0.8 });
+      cues.push({ t: job.contact + 0.02, file: 'mk3-extract.mp3', volume: 0.36, pitch: p });
+      cues.push({ t: job.grasp, file: 'mk3-set-down.mp3', volume: 0.3, pitch: p });
     }
   }
-  return thin(cues, 0.3);
+  for (const f of plan.fits) {
+    if (f.kind === 'lift') cues.push({ t: f.contact, file: 'mk3-boot-sink.mp3', volume: 0.34 });
+  }
+  return thin(cues, 0.25);
+}
+
+/** Cues for the doff's opening act (doff seconds, see doffSequence). */
+export function doffOpeningCues(events: readonly DoffEvent[]): SfxCue[] {
+  const cues = events.flatMap((e): SfxCue[] => {
+    switch (e.kind) {
+      case 'powerDown':
+        return [{ t: e.t, file: 'mk3-power-down.mp3', volume: 0.5 }];
+      case 'faceplateLatch':
+        return [{ t: e.t, file: 'mk3-latch.mp3', volume: 0.55 }];
+      case 'faceplateOpen':
+        return [{ t: e.t, file: 'mk3-faceplate-open.mp3', volume: 0.42 }];
+      case 'vent':
+        return [{ t: e.t, file: 'mk3-doff-vent.mp3', volume: 0.42 }];
+      case 'release':
+        return [{ t: e.t, file: 'mk3-lock-release.mp3', volume: 0.3, pitch: 0.92 + 0.16 * ((e.t * 7.3) % 1) }];
+      default:
+        return [];
+    }
+  });
+  return thin(cues, 0.06);
 }
 
 /** Crossfaded takes of the thruster burn covering `span` seconds from `t0`. */

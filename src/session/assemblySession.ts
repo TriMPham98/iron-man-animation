@@ -13,7 +13,21 @@ import type { SuitUpPlan } from '../animation/suitUpChoreography';
 import type { Workshop } from '../workshop/Workshop';
 import { diagnosticStatusForProgress } from '../suit/diagnosticScan';
 import { evaluateFlightCheck } from '../animation/flightCheck';
-import { createCuePlayer, doffCues, flightCues } from '../audio/actionSfx';
+import { createCuePlayer, doffCues, doffOpeningCues, flightCues } from '../audio/actionSfx';
+import {
+  applyDoff,
+  DOFF_EXTRACT_SEC,
+  DOFF_RELEASE_SEC,
+  DOFF_STATUSES,
+  DOFF_TOTAL_SEC,
+  doffBursts,
+  doffEvents,
+  evaluateDoff,
+  type DoffPart,
+} from '../animation/doffSequence';
+import { gy } from '../animation/sequenceClock';
+import { armorPieceDef } from '../suit/armorPieces';
+import { FIT_TASKS } from '../workshop/fittingProgram';
 import { createFlightPanel } from '../ui/flightPanel';
 import { statusForIntegrityProgress } from '../suit/waves';
 import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
@@ -37,19 +51,10 @@ const SHOWCASE_ORBIT_SEC = 35;
  * (same window as the orbit ease-out).
  */
 const SPIN_EASE_OUT_RAD = 0.275;
-/**
- * Doffing handoff: the whole fitting runs backwards, mechanically — arms
- * rise from the ring, unclamp each part and carry it back to its stand,
- * boots sink through the hatch — ending exactly on the next cycle's first
- * frame. Wall-clock length of that rewind.
- */
-const HANDOFF_REWIND_SEC = 7.2;
-/**
- * Hangar pull hero → open wide. Long enough to read as continuous cinema
- * after the orbit settle; ends with the last plates so assembly t=0 has no
- * empty-pad hold.
- */
-const HANDOFF_CAM_SEC = 4.2;
+/** Doff camera: close on the helmet for the power-down and the faceplate. */
+const DOFF_HEAD_CAM = { x: 0.7, y: gy(1.7), z: 2.0, lx: 0, ly: gy(1.6), lz: 0, fov: 30 } as const;
+/** Doff camera: pulls down the suit with the seal-release vents. */
+const DOFF_VENT_CAM = { x: 1.05, y: gy(1.12), z: 2.6, lx: 0, ly: gy(0.86), lz: 0, fov: 33 } as const;
 
 
 const VIEWER_HINT =
@@ -500,6 +505,21 @@ export function createAssemblySession(
   const cues = createCuePlayer((req) => audioTimeline?.engine.play(req));
   const flightSfx = flightCues();
   const doffSfx = plan ? doffCues(plan) : [];
+  // Each part's height orders the seal-release wave; its insert stroke
+  // converts the released gap into channel units
+  const doffParts: DoffPart[] = suit.pieces.map((p) => {
+    const def = armorPieceDef(p.id);
+    const stroke = Math.hypot(...def.insert.v) || 0.1;
+    const b = suit.pieceBounds(p.id);
+    return {
+      id: p.id,
+      y: b ? (b.min.y + b.max.y) / 2 : 1,
+      perMetre: 1 / stroke,
+      lift: FIT_TASKS.some((t) => t.kind === 'lift' && t.pieces.includes(p.id)),
+    };
+  });
+  const doffFx = doffBursts();
+  const doffOpenSfx = doffOpeningCues(doffEvents(doffParts));
   let lastFlightT = Number.NaN;
   /** Camera height offset currently applied for the hover. */
   let flightCamLift = 0;
@@ -585,9 +605,12 @@ export function createAssemblySession(
   /**
    * After the finished-suit idle 360° (or R from complete):
    * Diagnostic already ran over the orbit ease-out (if the full spin played).
-   * 1) The fitting runs backwards — arms come up from the ring, take every
-   *    part off and set it back on its stand, boots sink into the hatch
-   * 2) Camera eases out to the hangar framing as the last parts come off
+   * 1) Doffing (see doffSequence): power-down, faceplate up, the seals vent
+   *    down the suit and every lock lets go; then the fitting runs
+   *    backwards — arms come up from the ring, take every part off and set
+   *    it back on its stand, boots sink into the hatch
+   * 2) Camera works in on the helmet, down with the vents, then out to the
+   *    hangar framing as the last parts come off
    * 3) Drain integrity + restart assembly on the exact same frame
    */
   const softRestartFromShowcase = () => {
@@ -603,7 +626,6 @@ export function createAssemblySession(
     // JARVIS re-entry + integrity drain while plates are bursting clear.
     // Do not call setIntegrity/setDebugProgress here — they would cancel the drain.
     ui.resetJarvisChrome({ softProgress: true });
-    ui.setStatus('STANDBY // HANGAR LOCK');
     ui.setReplayEnabled(false);
     ui.setSkipEnabled(true);
     ui.setHintVisible(false);
@@ -645,13 +667,30 @@ export function createAssemblySession(
     // Rewind from the last frame with real parts to GSAP 0 (= what play()
     // renders first), so the next cycle starts without a cut.
     const rewindFrom = Math.max(0, assembly.getFinalSwapTime() - 0.02);
-    const rewind = { t: rewindFrom };
-    // Seed clock = GSAP − offset; doffing cues fire as it runs backwards
-    const seedOffset = assembly.getFinalSwapTime() - (plan?.finalSwapAt ?? 0);
-    let lastSeed = rewindFrom - seedOffset;
-    ui.setStatus('DOFFING SEQUENCE // RESET');
-    // Low motor bed under the whole rewind (no hiss)
-    cues.fire({ t: 0, file: 'doff-hum.mp3', volume: 0.32, duration: HANDOFF_REWIND_SEC, fadeOut: 1.2 });
+    const clockProxy = { t: 0 };
+    let lastDoffT = 0;
+    let lastSeed = assembly.toSeed(rewindFrom);
+    let statusIdx = 0;
+    const ease = gsap.parseEase('power1.inOut');
+    /** GSAP time of the suit-up shown at doff time `t`. */
+    const fittingAt = (t: number) =>
+      t <= DOFF_RELEASE_SEC ? rewindFrom : rewindFrom * (1 - ease(Math.min(1, (t - DOFF_RELEASE_SEC) / DOFF_EXTRACT_SEC)));
+    const renderDoff = () => {
+      const t = clockProxy.t;
+      const overlay = evaluateDoff(t, doffParts);
+      const gsapT = fittingAt(t);
+      assembly.renderSuitAt(gsapT, (frame) => applyDoff(frame, overlay));
+      // Opening act on the doff clock, extraction on the (backwards) seed clock
+      cues.between(doffOpenSfx, lastDoffT, t);
+      for (const b of doffFx) if (b.t > lastDoffT && b.t <= t) suit.emitBurst(b);
+      const seed = assembly.toSeed(gsapT);
+      cues.between(doffSfx, lastSeed, seed);
+      lastSeed = seed;
+      lastDoffT = t;
+      while (statusIdx < DOFF_STATUSES.length && DOFF_STATUSES[statusIdx].t <= t) {
+        ui.setStatus(DOFF_STATUSES[statusIdx++].text);
+      }
+    };
     handoffTween = gsap.timeline({
       onComplete: () => {
         handoffTween = null;
@@ -672,41 +711,19 @@ export function createAssemblySession(
         clockStart = clock.getElapsedTime();
       },
     });
+    renderDoff();
 
-    // 1) Mechanical reverse fitting (eased so it starts and lands gently)
-    handoffTween.to(
-      rewind,
-      {
-        t: 0,
-        duration: HANDOFF_REWIND_SEC,
-        ease: 'power1.inOut',
-        onUpdate: () => {
-          assembly.renderSuitAt(rewind.t);
-          const seed = rewind.t - seedOffset;
-          cues.between(doffSfx, lastSeed, seed);
-          lastSeed = seed;
-        },
-      },
-      0,
-    );
+    // 1) Power-down → faceplate → seal release, then the extraction
+    handoffTween.to(clockProxy, { t: DOFF_TOTAL_SEC, duration: DOFF_TOTAL_SEC, ease: 'none', onUpdate: renderDoff }, 0);
 
-    // 2) Camera eases out to the hangar framing as the last parts come off
-    handoffTween.to(
-      proxy,
-      {
-        x: OPEN_WIDE_CAM.x,
-        y: OPEN_WIDE_CAM.y,
-        z: OPEN_WIDE_CAM.z,
-        lx: OPEN_WIDE_CAM.lx,
-        ly: OPEN_WIDE_CAM.ly,
-        lz: OPEN_WIDE_CAM.lz,
-        fov: OPEN_WIDE_CAM.fov,
-        duration: HANDOFF_CAM_SEC,
-        ease: 'power3.inOut',
-        onUpdate: applyHandoffCam,
-      },
-      HANDOFF_REWIND_SEC - HANDOFF_CAM_SEC,
-    );
+    // 2) Camera: in on the helmet for the power-down and the faceplate,
+    //    down the suit with the venting, then out to the hangar framing
+    //    while the arms take the parts away
+    const camTo = (pose: Readonly<typeof proxy>, at: number, duration: number, e = 'power2.inOut') =>
+      handoffTween!.to(proxy, { ...pose, duration, ease: e, onUpdate: applyHandoffCam }, at);
+    camTo(DOFF_HEAD_CAM, 0, 1.3);
+    camTo(DOFF_VENT_CAM, 1.3, DOFF_RELEASE_SEC - 1.3 + 0.4, 'sine.inOut');
+    camTo(OPEN_WIDE_CAM, DOFF_RELEASE_SEC + 1.0, DOFF_EXTRACT_SEC - 1.0, 'power3.inOut');
   };
 
   const startSequence = () => {

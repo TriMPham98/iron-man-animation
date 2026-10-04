@@ -10,7 +10,8 @@ import type { FlightPose } from '../suit/rigPose';
  * then everything at once, then flight:
  *
  *   hand + neck servos → repulsor alignment (L, R, both) → stabilizer
- *   flaps (shoulder, dorsal, calf) → weapons (a forearm armor panel rises on
+ *   flaps (one rolling sweep down the suit: shoulder, dorsal, thigh, calf)
+ *   → weapons (a forearm armor panel rises on
  *   the anti-tank launcher; each trapezius cap rises on a forward-facing
  *   mini-rocket silo; the round hip plates push out on their flare drums,
  *   which turn and test-pop) → all surfaces (every flap and every weapon
@@ -37,6 +38,9 @@ export type FlapId =
   | 'shoulder.R'
   | 'calf.L'
   | 'calf.R'
+  /** Hamstring air brake on the back of each thigh. */
+  | 'thigh.L'
+  | 'thigh.R'
   /** Forearm armor panel that rises as the anti-tank launcher's housing. */
   | 'launcher.L'
   | 'launcher.R'
@@ -79,21 +83,27 @@ export const HOVER_HEIGHT = 0.45;
 /** Step starts (flight-check seconds). */
 const AT_SERVOS = 0.6;
 const AT_REPULSORS = 4.6;
-const AT_SHOULDER = 9.4;
-const AT_DORSAL = 11.6;
-const AT_CALF = 13.8;
-const AT_WEAPONS = 16.0;
-const AT_ALL = 22.9;
-const AT_HOVER = 25.4;
+/**
+ * All the stabilizers in one step: a single sweep down the suit, each pair
+ * of surfaces starting as the one above it reaches full travel. (Three
+ * separate steps cost the hover ~3.5 s.)
+ */
+const AT_STABILIZERS = 9.4;
+const AT_WEAPONS = 12.8;
+const AT_ALL = 19.7;
+const AT_HOVER = 22.2;
 const AT_NOMINAL = 32.75;
 
 /** Status lines with the time each step starts. */
 export const FLIGHT_CHECK_STEPS: ReadonlyArray<{ at: number; status: string; item: string; group: string }> = [
   { at: AT_SERVOS, status: 'FLIGHT CONTROL CHECK · HAND + NECK SERVOS', item: 'HAND / NECK SERVOS', group: 'SERVOS' },
   { at: AT_REPULSORS, status: 'REPULSOR ALIGNMENT · L / R', item: 'REPULSORS L / R', group: 'HANDS' },
-  { at: AT_SHOULDER, status: 'FLIGHT STABILIZERS · SHOULDER FLAPS', item: 'SHOULDER FLAPS', group: 'STABILIZERS' },
-  { at: AT_DORSAL, status: 'FLIGHT STABILIZERS · DORSAL FLAPS', item: 'DORSAL FLAPS', group: 'STABILIZERS' },
-  { at: AT_CALF, status: 'FLIGHT STABILIZERS · CALF FLAPS', item: 'CALF FLAPS', group: 'STABILIZERS' },
+  {
+    at: AT_STABILIZERS,
+    status: 'FLIGHT STABILIZERS · SHOULDER / DORSAL / LEG FLAPS',
+    item: 'STABILIZER FLAPS',
+    group: 'STABILIZERS',
+  },
   { at: AT_WEAPONS, status: 'WEAPONS · ARMING CHECK', item: 'LAUNCHER / SILOS / FLARES', group: 'WEAPONS' },
   { at: AT_ALL, status: 'ALL SURFACES + WEAPONS · FULL DEFLECTION', item: 'FULL DEFLECTION', group: 'ALL SYSTEMS' },
   { at: AT_HOVER, status: 'BOOT THRUSTERS · HOVER TEST · STABILIZERS LIVE', item: 'HOVER TEST', group: 'THRUSTERS' },
@@ -163,9 +173,9 @@ const IGNITE = AT_HOVER + 1.0;
 const SPOOL = IGNITE + 0.6;
 const LIFTOFF = IGNITE + 0.9;
 const HOVER = IGNITE + 2.2;
-const DESCEND = IGNITE + 4.5;
-const TOUCHDOWN = IGNITE + 5.9;
-const CUTOFF = IGNITE + 6.2;
+const DESCEND = IGNITE + 7.7;
+const TOUCHDOWN = IGNITE + 9.1;
+const CUTOFF = IGNITE + 9.4;
 /** Seconds the boot thrusters burn (lift-off spool → cut-off). */
 export const THRUSTER_BURN_SEC = CUTOFF - LIFTOFF + 0.3;
 
@@ -182,6 +192,10 @@ const GUSTS: ReadonlyArray<readonly [number, 'pitch' | 'roll', number, number, n
   [HOVER + 0.5, 'roll', -0.12, 1.5, 0.8],
   [HOVER + 1.4, 'pitch', -0.08, 1.7, 0.8],
   [HOVER + 2.0, 'roll', 0.09, 1.4, 0.7],
+  // Long hold: a big cross-gust from the right, caught and levelled
+  [HOVER + 3.1, 'roll', -0.14, 1.7, 0.9],
+  [HOVER + 3.3, 'pitch', 0.07, 1.9, 0.9],
+  [HOVER + 4.5, 'roll', 0.08, 1.5, 0.7],
   [DESCEND + 0.2, 'pitch', -0.06, 1.8, 0.9],
 ];
 /** Boots come together only for the hover (as in the film). */
@@ -258,12 +272,10 @@ const GAZE: ReadonlyArray<readonly [number, number, number, number, number?]> = 
   [R + 1.1, 0.32, 0.08, 0.03, 0.8], // left palm
   [R + 2.0, -0.32, 0.08, -0.03, 1.0], // right palm
   [R + 3.0, 0, 0.02, 0, 0.8], // both, dead ahead
-  [AT_SHOULDER + 0.05, 0.4, 0.1, -0.04, 0.8], // left shoulder flap
-  [AT_SHOULDER + 0.75, -0.4, 0.1, 0.04, 1.1], // right
-  [AT_SHOULDER + 1.75, 0, 0, 0, 0.8],
-  [AT_DORSAL + 0.1, 0, 0.04, 0, 0.8], // can't see the back — waits it out
-  [AT_CALF + 0.1, 0, 0.24, 0, 0.9], // down at the calves
-  [AT_CALF + 1.6, 0, 0, 0, 0.8],
+  [AT_STABILIZERS + 0.05, 0.4, 0.1, -0.04, 0.8], // left shoulder flap
+  [AT_STABILIZERS + 0.75, -0.4, 0.1, 0.04, 1.0], // right
+  [AT_STABILIZERS + 1.8, 0, 0.24, 0, 0.9], // down as the sweep reaches the legs
+  [AT_STABILIZERS + 3.0, 0, 0, 0, 0.8],
   [W + 0.5, 0.34, 0.14, 0.03, 0.8], // left launcher
   [W + 1.2, -0.34, 0.14, -0.03, 1.0], // right launcher
   [W + 2.0, 0, -0.04, 0, 0.8], // silos, eyes front
@@ -273,6 +285,8 @@ const GAZE: ReadonlyArray<readonly [number, number, number, number, number?]> = 
   [IGNITE + 0.5, 0, -0.03, 0, 0.9], // eyes up for the lift
   [HOVER + 0.8, 0.14, 0, 0, 1.0], // one easy look round
   [HOVER + 2.2, 0, 0, 0, 1.0],
+  [HOVER + 3.4, -0.12, 0.05, 0, 1.0], // toward the gust as it hits
+  [HOVER + 5.0, 0, 0, 0, 1.0],
   [DESCEND + 0.2, 0, 0.16, 0, 0.9], // watches the deck come up
   [TOUCHDOWN + 0.25, 0, 0, 0, 0.75],
 ];
@@ -308,11 +322,16 @@ const ARMS: Keys = [
 const STAGGER = 0.35;
 const lag = (k: Stroke) => at(STAGGER, k);
 const FIST_R = lag(FIST_L);
-const SHOULDER_L = at(AT_SHOULDER, [0.1, 0.65, 1.25, 1.75]);
+/** Stabilizer sweep: each pair starts `SWEEP` s after the one above it. */
+const SWEEP = 0.5;
+const stab = (row: number) => at(AT_STABILIZERS + row * SWEEP, [0.1, 0.65, 1.25, 1.75]);
+const SHOULDER_L = stab(0);
 const SHOULDER_R = lag(SHOULDER_L);
-const BACK_L = at(AT_DORSAL, [0.1, 0.65, 1.25, 1.75]);
+const BACK_L = stab(1);
 const BACK_R = lag(BACK_L);
-const CALF_L = at(AT_CALF, [0.1, 0.65, 1.25, 1.75]);
+const THIGH_L = stab(2);
+const THIGH_R = lag(THIGH_L);
+const CALF_L = stab(2.6);
 const CALF_R = lag(CALF_L);
 
 /** Full deflection: every flap and every weapon out together, held, stowed. */
@@ -338,6 +357,8 @@ export const FLIGHT_EVENTS: readonly FlightEvent[] = ([
   ...([
     [CALF_L, 'L'],
     [CALF_R, 'R'],
+    [THIGH_L, 'L'],
+    [THIGH_R, 'R'],
     [BACK_L, 'L'],
     [BACK_R, 'R'],
     [SHOULDER_L, 'L'],
@@ -600,6 +621,10 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
     'trap.R': Math.max(flap(SILOS), all),
     'calf.L': Math.max(flap(CALF_L), all, fwd, 0.5 * rollL),
     'calf.R': Math.max(flap(CALF_R), all, fwd, 0.5 * rollR),
+    // Hamstring brakes lead the calf flaps a beat on the leg check and
+    // share the pitch trim with them in flight
+    'thigh.L': Math.max(flap(THIGH_L), all, 0.8 * fwd, 0.4 * rollL),
+    'thigh.R': Math.max(flap(THIGH_R), all, 0.8 * fwd, 0.4 * rollR),
     'flare.L': Math.max(flap(FLARE_DRUMS), all),
     'flare.R': Math.max(flap(FLARE_DRUMS), all),
   };

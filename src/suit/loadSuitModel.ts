@@ -3,6 +3,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { armorPieceDef, cutArmor, type PieceBuffers } from './armorPieces';
+import { fillArmpits } from './armpitFill';
 import { boneIndex, computeSkinWeights, skinWeightsAt } from './rig';
 import { createRig, type SuitRig } from './rigPose';
 import { createHologramMaterial } from './suitEffects';
@@ -322,6 +323,8 @@ export async function loadSuitModel(
     },
   });
   body.dispose();
+  // Red, not gold, inside the armpits (seen once the arms come up)
+  fillArmpits(cut, material);
   onProgress?.(0.94);
   await yieldToPaint();
 

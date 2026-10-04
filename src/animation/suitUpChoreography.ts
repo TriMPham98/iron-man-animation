@@ -77,70 +77,70 @@ export function seedOnset(o: SfxOnset, clips: readonly SeedClip[] = SEED_CLIPS):
  * of each source file; comments name the sound that sells the beat.
  */
 export const SFX_ONSETS = {
-  /** Clasp swell crest — left boot lift locks under the ankle. */
+  /** Boot lift: left ankle clamp bites. */
   bootL: { clip: 'clip-seed-v5-01', src: 0.4, fallback: 0.22 },
-  /** Second clasp bite — right boot. */
+  /** Boot lift: right ankle clamp. */
   bootR: { clip: 'clip-seed-v5-01', src: 0.58, fallback: 0.4 },
-  /** Ratchet strike — shin clamshells close. */
+  /** Clamshell slam — shin clamshells close. */
   shins: { clip: 'clip-seed-v5-02', src: 0.045, fallback: 1.223 },
-  /** Low ratchet strike — thigh clamshells close. */
+  /** Low clamshell slam — thigh clamshells close. */
   thighs: { clip: 'clip-seed-v5-04', src: 0.045, fallback: 2.749 },
-  /** Conveyor-hiss crest — pneumatic waist seal. */
+  /** Waist seal — pelvis halves seal with a pneumatic chuff. */
   hips: { clip: 'clip-seed-v5-03', src: 0.656, fallback: 3.091 },
-  /** Robot-arm servo start — the torso cell spins up. */
+  /** Torso servo spin-up — the torso cell starts. */
   torsoStart: { clip: 'clip-seed-v5-05', src: 0.02, fallback: 3.696 },
-  /** Connect-hiss first accent — lower back plate seats. */
+  /** Plate seat #1 — lower back plate seats. */
   backLower: { clip: 'clip-seed-v5-06', src: 0.82, fallback: 4.583 },
-  /** Robot-arm accent — upper back plate locks. */
+  /** Torso servo accent — upper back plate locks. */
   backClamp: { clip: 'clip-seed-v5-05', src: 1.4, fallback: 5.076 },
-  /** Connect-hiss accent — abdomen plate seats. */
+  /** Plate seat #2 — abdomen plate seats. */
   abdomen: { clip: 'clip-seed-v5-06', src: 1.46, fallback: 5.223 },
-  /** Robot-arm accent — reactor housing seats (inner layer first). */
+  /** Torso servo accent — reactor housing seats (inner layer first). */
   chestCore: { clip: 'clip-seed-v5-05', src: 1.718, fallback: 5.394 },
-  /** Impact — both pecs slam home over the housing. */
+  /** Chest slam — both pecs slam home over the housing. */
   chestSlam: { clip: 'clip-seed-v5-07', src: 0.17, fallback: 5.925 },
-  /** Repulsor attack — arc reactor catches. */
+  /** Reactor charge — arc reactor catches. */
   reactorIgnite: { clip: 'clip-seed-v5-08', src: 0.08, fallback: 6.496 },
-  /** Repulsor bloom — reactor at full. */
+  /** Reactor bloom — reactor at full. */
   reactorPeak: { clip: 'clip-seed-v5-08', src: 0.17, fallback: 6.586 },
-  /** Low ratchet strike — shoulder servos brace; pec rivets ride its clicks. */
+  /** Low clamshell slam — shoulder servos brace; pec rivets ride its clicks. */
   armBrace: { clip: 'clip-seed-v5-09', src: 0.045, fallback: 6.859 },
-  /** Metal two-hits #1 — left pauldron (shoulder before bicep). */
+  /** Pauldron drop #1 — left pauldron (shoulder before bicep). */
   pauldronL: { clip: 'clip-seed-v5-10', src: 0.43, fallback: 7.448 },
-  /** Metal two-hits #2 — right pauldron. */
+  /** Pauldron drop #2 — right pauldron. */
   pauldronR: { clip: 'clip-seed-v5-10', src: 0.73, fallback: 7.748 },
-  /** Metal-tighten attack (+ motor accent) — left upper-arm clamshell. */
+  /** Arm clamp #1 — left upper-arm clamshell. */
   upperArmL: { clip: 'clip-seed-v5-12', src: 0.02, fallback: 8.533 },
-  /** Metal-tighten second bite — right upper-arm clamshell. */
+  /** Arm clamp #2 — right upper-arm clamshell. */
   upperArmR: { clip: 'clip-seed-v5-12', src: 0.5, fallback: 9.013 },
-  /** Drill bite — left forearm sleeve screws home. */
+  /** Nut runner, left run — left forearm sleeve screws home. */
   forearmL: { clip: 'clip-seed-v5-13', src: 0.29, fallback: 9.337 },
-  /** Drill second run — right forearm sleeve. */
+  /** Nut runner, right run — right forearm sleeve. */
   forearmR: { clip: 'clip-seed-v5-13', src: 0.63, fallback: 9.677 },
-  /** Metal-connect first hit — left gauntlet. */
+  /** Gauntlet snap #1 — left gauntlet. */
   gauntletL: { clip: 'clip-seed-v5-15', src: 0.24, fallback: 10.175 },
-  /** Metal-connect peak — right gauntlet. */
+  /** Gauntlet snap #2 — right gauntlet. */
   gauntletR: { clip: 'clip-seed-v5-15', src: 0.38, fallback: 10.315 },
-  /** Metal-resonate swell crest — helmet seats. */
+  /** Helmet seat crest — helmet seats. */
   helmetSeat: { clip: 'clip-seed-v5-14', src: 1.02, fallback: 10.94 },
-  /** Clang pre-hit — arms lock at the sides, faceplate latch releases. */
+  /** Arms-lock clunk — arms lock at the sides, faceplate latch releases. */
   armsLock: { clip: 'clip-seed-v5-16', src: 0.813, fallback: 11.821 },
-  /** Clang — faceplate slams shut. */
+  /** Faceplate clang — faceplate slams shut. */
   faceplate: { clip: 'clip-seed-v5-16', src: 1.085, fallback: 12.093 },
   /** First BCI beep — eyes flicker on. */
   eyesOn: { clip: 'clip-seed-v5-17', src: 0.1, fallback: 12.175 },
   /** BCI phrase accent — eyes at full. */
   eyesFull: { clip: 'clip-seed-v5-17', src: 0.43, fallback: 12.505 },
-  /** Steam hiss — helmet pressure vents. */
+  /** Pressure vent blast — helmet pressure vents. */
   steamVent: { clip: 'clip-seed-v5-18', src: 0.1, fallback: 12.753 },
 } as const satisfies Record<string, SfxOnset>;
 
 export type SuitUpBeat = keyof typeof SFX_ONSETS;
 export type SuitUpBeats = Record<SuitUpBeat, number>;
 
-/** Ratchet click train (source seconds) — shared by all three ratchet clips. */
+/** Ratchet click train (source seconds) — shared by all three clamshell clips. */
 const RATCHET_CLICKS_SRC = [0.18, 0.273, 0.377, 0.47, 0.563, 0.644] as const;
-/** Drill bites per hand (source seconds into drill-tighten). */
+/** Nut-runner bites per hand (source seconds into mk3-drill). */
 const DRILL_L_SRC = [0.319, 0.441, 0.575] as const;
 const DRILL_R_SRC = [0.697, 0.784, 0.871, 0.952] as const;
 
@@ -666,20 +666,21 @@ export function buildSuitUpPlan(clips: readonly SeedClip[] = SEED_CLIPS): SuitUp
   const one = (t: number, kind: FxBurst['kind'], bone: BoneName, at: Vec3, count: number, dir?: Vec3) =>
     bursts.push({ t, kind, bone, at, count, dir });
 
-  one(B.bootL, 'steam', 'foot.L', [0.16, 0.03, 0.0], 16, [0.6, 0.1, 0.4]);
-  one(B.bootR, 'steam', 'foot.R', [-0.16, 0.03, 0.0], 16, [-0.6, 0.1, 0.4]);
+  // Pressure vents blast straight down off the suit (and fan out on the deck)
+  one(B.bootL, 'steam', 'foot.L', [0.16, 0.06, 0.0], 16, [0.35, -1, 0.15]);
+  one(B.bootR, 'steam', 'foot.R', [-0.16, 0.06, 0.0], 16, [-0.35, -1, 0.15]);
   // Clamshell seams: sparks where front meets back on both sides of the limb
   both(B.shins, 'sparks', (s) => `shin.${s}`, [0.215, 0.36, -0.03], 16, [1, 0.2, 0]);
   both(B.shins + 0.02, 'sparks', (s) => `shin.${s}`, [0.075, 0.3, -0.03], 8, [-0.3, 0.2, 1]);
   both(B.thighs, 'sparks', (s) => `thigh.${s}`, [0.205, 0.7, 0.0], 16, [1, 0.2, 0]);
-  both(B.hips, 'steam', () => 'hips', [0.19, 0.93, 0.0], 14, [1, 0.1, 0]);
+  both(B.hips, 'steam', () => 'hips', [0.2, 0.93, 0.0], 14, [0.3, -1, 0.02]);
   one(B.hips, 'sparks', 'hips', [0.195, 0.9, 0.0], 14, [1, 0.3, 0]);
   both(B.backLower, 'sparks', () => 'spine', [0.15, 1.12, -0.1], 12, [0.6, 0.2, -1]);
   both(B.backClamp, 'sparks', () => 'chest', [0.17, 1.33, -0.15], 16, [0.5, 0.2, -1]);
   both(B.abdomen, 'sparks', () => 'spine', [0.15, 1.1, 0.1], 10, [0.6, 0, 0.8]);
   one(B.chestCore, 'sparks', 'chest', [0, 1.5, 0.17], 14, [0, 0.6, 1]);
   both(B.chestSlam, 'sparks', () => 'chest', [0.085, 1.33, 0.16], 30, [1, 0.3, 0.6]);
-  both(B.chestSlam + 0.02, 'steam', () => 'chest', [0.16, 1.45, -0.06], 14, [0.7, 0.6, -0.3]);
+  both(B.chestSlam + 0.02, 'steam', () => 'chest', [0.2, 1.42, -0.08], 14, [0.35, -1, -0.25]);
   one(B.pauldronL, 'sparks', 'upperArm.L', [0.25, 1.52, 0.0], 22, [0.5, 1, 0.4]);
   one(B.pauldronR, 'sparks', 'upperArm.R', [-0.25, 1.52, 0.0], 22, [-0.5, 1, 0.4]);
   one(B.upperArmL, 'sparks', 'upperArm.L', [0.3, 1.36, -0.03], 18, [1, 0.4, 0]);
@@ -692,10 +693,10 @@ export function buildSuitUpPlan(clips: readonly SeedClip[] = SEED_CLIPS): SuitUp
   }
   one(B.gauntletL, 'sparks', 'hand.L', [0.375, 1.03, 0.03], 16, [0, 0.6, 1]);
   one(B.gauntletR, 'sparks', 'hand.R', [-0.375, 1.03, 0.03], 16, [0, 0.6, 1]);
-  both(B.helmetSeat, 'steam', () => 'neck', [0.08, 1.58, -0.07], 14, [0.8, 0.4, -0.5]);
+  both(B.helmetSeat, 'steam', () => 'neck', [0.08, 1.58, -0.1], 14, [0.25, -1, -0.45]);
   both(B.faceplate, 'sparks', () => 'head', [0.075, 1.7, 0.06], 10, [1, 0.2, 0.5]);
-  both(B.steamVent, 'steam', () => 'neck', [0.07, 1.6, -0.09], 26, [0.5, 0.5, -0.8]);
-  both(B.steamVent + 0.04, 'steam', () => 'chest', [0.17, 1.42, -0.08], 14, [0.8, 0.5, -0.4]);
+  both(B.steamVent, 'steam', () => 'neck', [0.07, 1.6, -0.11], 26, [0.2, -1, -0.5]);
+  both(B.steamVent + 0.04, 'steam', () => 'chest', [0.2, 1.42, -0.09], 14, [0.35, -1, -0.25]);
   bursts.sort((a, b) => a.t - b.t);
 
   // ── Camera shake on the heavy beats ───────────────────────────────
