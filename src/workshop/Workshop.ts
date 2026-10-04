@@ -30,7 +30,7 @@ import { SuitScanView } from './suitScanView';
 import { createWorkshopDetail, type WorkshopDetail } from './workshopDetail';
 import { CradleStands, STAND_RETRACT_SEC } from './cradleStands';
 import { APERTURE_SEC, APERTURE_UNDERSIDE } from './ringAperture';
-import { DOFF_ARM_STOW_SEC, doffArmStowAt, doffStandSinkAt } from '../animation/doffSequence';
+import { DOFF_ARM_STOW_SEC, doffArmStowAt, doffFloorDownAt, doffStandSinkAt } from '../animation/doffSequence';
 import { createRobotMaterials, RobotArm, toolQuaternion, type ArmJoints } from './robotArm';
 
 const JOINT_KEYS = ['yaw', 'shoulder', 'elbow', 'wristRoll', 'wristPitch', 'flangeRoll'] as const;
@@ -136,8 +136,8 @@ export class Workshop {
   /** Build clock (seed s) by which every floor arm and stand is down. */
   private floorDownAt = 0;
   /** Doff clock (seed s, running backwards) by which the same is true. */
-  private doffFloorDownAt = -Infinity;
-  private prepOrder: Array<{ id: RobotId; at: number }> | null = null;
+  private doffFloorDownAt = Infinity;
+  private prepOrder: Array<{ id: RobotId; at: number; rise: number }> | null = null;
   private readonly mats = createRobotMaterials();
   private readonly liftTasks: FitTask[];
   private lastT = Number.NaN;
@@ -230,17 +230,12 @@ export class Workshop {
     // The ring aperture shuts once every floor arm and stand is down: on
     // the build clock after the last one stows, on the doff clock (running
     // backwards) once the last one has gone
-    const floorRobot = (id: RobotId) => robotStation(id).mount === 'floor';
-    for (const track of this.plan.robots) {
-      if (!floorRobot(track.id)) continue;
+    const floorTracks = this.plan.robots.filter((track) => robotStation(track.id).mount === 'floor');
+    for (const track of floorTracks) {
       this.floorDownAt = Math.max(this.floorDownAt, track.stow[track.stow.length - 1]?.t ?? 0);
-      const at = this.doffStowAt.get(track.id);
-      if (at != null) this.doffFloorDownAt = Math.max(this.doffFloorDownAt, at - DOFF_ARM_STOW_SEC.floor);
-      for (const job of track.jobs) {
-        this.floorDownAt = Math.max(this.floorDownAt, job.lift + 0.35 + STAND_RETRACT_SEC);
-        this.doffFloorDownAt = Math.max(this.doffFloorDownAt, doffStandSinkAt(job) - STAND_RETRACT_SEC);
-      }
+      for (const job of track.jobs) this.floorDownAt = Math.max(this.floorDownAt, job.lift + 0.35 + STAND_RETRACT_SEC);
     }
+    this.doffFloorDownAt = doffFloorDownAt(floorTracks, STAND_RETRACT_SEC);
     mergeStaticTree(this.stands.group);
     this.group.add(this.stands.group);
   }
@@ -622,9 +617,7 @@ export class Workshop {
 
   /** A gripper's stow while it comes up for the doff (staggered, 1 = still down). */
   private prepStow(id: RobotId): number {
-    const at = this.doffPrepOrder().find((a) => a.id === id)?.at ?? 0;
-    // The ring opens first; the grippers rise from deep in the pit after it
-    const from = PREP_RING_OPEN + at * (1 - PREP_RING_OPEN);
+    const from = this.doffPrepOrder().find((a) => a.id === id)?.rise ?? PREP_RING_OPEN;
     return 1 - THREE.MathUtils.smoothstep(this.doffPrep, from, from + (1 - DOFF_PREP_STAGGER) * (1 - PREP_RING_OPEN));
   }
 
@@ -682,14 +675,40 @@ export class Workshop {
     this.lastT = Number.NaN;
   }
 
-  /** Grippers in the order {@link prepareDoff} raises them, each with its start (0–1). */
-  doffPrepOrder(): ReadonlyArray<{ id: RobotId; at: number }> {
+  /**
+   * Grippers in the order {@link prepareDoff} raises them — the one the doff
+   * needs first comes up first — each with its stagger slot `at` (0–0.3) and
+   * the prep progress `rise` at which it starts up (after the ring is open).
+   */
+  doffPrepOrder(): ReadonlyArray<{ id: RobotId; at: number; rise: number }> {
     if (!this.prepOrder) {
-      const grippers = ROBOTS.filter((st) => this.doffStowAt.get(st.id) != null);
+      const grippers = ROBOTS.filter((st) => this.doffStowAt.get(st.id) != null).sort(
+        (a, b) => this.lastStopAt(b.id) - this.lastStopAt(a.id),
+      );
       const n = Math.max(1, grippers.length - 1);
-      this.prepOrder = grippers.map((st, i) => ({ id: st.id, at: (DOFF_PREP_STAGGER * i) / n }));
+      this.prepOrder = grippers.map((st, i) => {
+        const at = (DOFF_PREP_STAGGER * i) / n;
+        return { id: st.id, at, rise: PREP_RING_OPEN + at * (1 - PREP_RING_OPEN) };
+      });
     }
     return this.prepOrder;
+  }
+
+  /** Seed time an arm's build program comes to rest for good (its doff starts here, backwards). */
+  private lastStopAt(id: RobotId): number {
+    const segs = this.programs.get(id)!;
+    return segs[segs.length - 1].t0;
+  }
+
+  /**
+   * Seed time of the first gripper move of the doff (clock running
+   * backwards): everything later in the build is idle tail with the cell
+   * standing still.
+   */
+  doffFirstMoveAt(): number {
+    let at = -Infinity;
+    for (const { id } of this.doffPrepOrder()) at = Math.max(at, this.lastStopAt(id));
+    return at;
   }
 
   /** Final parked pose of an arm's program (where it starts stowing). */

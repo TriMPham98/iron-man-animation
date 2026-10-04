@@ -51,6 +51,25 @@ const SHOWCASE_ORBIT_SEC = 35;
  * (same window as the orbit ease-out).
  */
 const SPIN_EASE_OUT_RAD = 0.275;
+/** Full-speed yaw rate of the showcase turn (rad/s). */
+const SPIN_RATE = (Math.PI * 2) / SHOWCASE_ORBIT_SEC;
+/** Wall seconds of full-speed turn before the ease-out. */
+const SPIN_FULL_SEC = (Math.PI * 2 - SPIN_EASE_OUT_RAD) / SPIN_RATE;
+/**
+ * The ease-out decelerates evenly to rest over its last yaw (twice the
+ * full-speed time for that arc), so it lands in a fixed time with no crawl
+ * at the end; the head-to-toe diagnostic runs at an even pace across it.
+ */
+const SPIN_EASE_OUT_SEC = (2 * SPIN_EASE_OUT_RAD) / SPIN_RATE;
+/** Wall seconds of the whole showcase turn. */
+const SHOWCASE_TURN_SEC = SPIN_FULL_SEC + SPIN_EASE_OUT_SEC;
+
+/** Yaw travelled (rad) and ease-out progress (0–1) `t` wall seconds into the turn. */
+function showcaseYaw(t: number): { yaw: number; ease: number } {
+  if (t <= SPIN_FULL_SEC) return { yaw: SPIN_RATE * Math.max(0, t), ease: 0 };
+  const ease = Math.min(1, (t - SPIN_FULL_SEC) / SPIN_EASE_OUT_SEC);
+  return { yaw: Math.PI * 2 - SPIN_EASE_OUT_RAD * (1 - ease) * (1 - ease), ease };
+}
 /** Doff camera: close on the helmet for the power-down and the faceplate. */
 const DOFF_HEAD_CAM = { x: 0.7, y: gy(1.7), z: 2.0, lx: 0, ly: gy(1.6), lz: 0, fov: 30 } as const;
 /**
@@ -72,6 +91,13 @@ const DOFF_CAM_LAG = 1.8;
  * suit apart, as the turn settles (the riveters stay down).
  */
 const DOFF_PREP_FROM = FLIGHT_CHECK_STEPS[FLIGHT_CHECK_STEPS.length - 1].at + 0.1;
+/**
+ * The doff's reversed fitting clock starts running inside the opening act,
+ * so the build's idle tail (systems online, the stance settling) plays out
+ * under the power-down and the vents, and the first gripper moves in just as
+ * the seals finish letting go. It never starts before this (doff s).
+ */
+const DOFF_CLOCK_EARLIEST = 0.45;
 /**
  * Cell reset between cycles (s): every stand sinks with its part as soon as
  * the part is set down and every arm folds away once its last part is home
@@ -183,12 +209,14 @@ export function createAssemblySession(
    */
   let completeSpinActive = false;
   let completeSpinAccum = 0;
+  /** Wall seconds into the showcase turn (frozen by Space). */
+  let completeSpinT = 0;
   /** True when Space froze showcase spin (not a free-look cancel). */
   let showcaseSpinPaused = false;
   /**
    * Wireframe diagnostic armed for the current showcase orbit ease-out.
    * Starts when remaining yaw enters {@link SPIN_EASE_OUT_RAD}; ends with
-   * the orbit (progress 1 as remaining → 0).
+   * the orbit (progress 1 as it comes to rest).
    */
   let orbitScanArmed = false;
   let lastOrbitScanStatus = '';
@@ -263,14 +291,12 @@ export function createAssemblySession(
   };
 
   /**
-   * Drive scan 0→1 over the spin ease-out window.
-   * `remainingRad` is yaw left in the 360° (ease begins at SPIN_EASE_OUT_RAD).
+   * Drive scan 0→1 over the spin ease-out window, at an even pace in time.
    * Geometry is prebuilt at orbit start — arming only toggles visibility.
    */
-  const updateOrbitDiagnostic = (remainingRad: number) => {
+  const updateOrbitDiagnostic = (t: number) => {
     if (reducedMotion) return;
-    const span = SPIN_EASE_OUT_RAD;
-    if (remainingRad > span + 1e-6) {
+    if (t <= 0) {
       // Still full-speed orbit — no scan yet
       return;
     }
@@ -280,8 +306,6 @@ export function createAssemblySession(
       suit.startDiagnosticScan();
       lastOrbitScanStatus = '';
     }
-    // remaining: span → 0  ⇒  progress: 0 → 1 (finishes with the ease)
-    const t = THREE.MathUtils.clamp(1 - remainingRad / span, 0, 1);
     suit.setDiagnosticScanProgress(t);
     const line = diagnosticStatusForProgress(t);
     if (line !== lastOrbitScanStatus) {
@@ -298,7 +322,7 @@ export function createAssemblySession(
    * a Space pause freezes it mid-step and drags cancel it with the orbit.
    */
   const updateFlightCheck = () => {
-    const t = (completeSpinAccum / (Math.PI * 2)) * SHOWCASE_ORBIT_SEC;
+    const t = completeSpinT;
     const f = evaluateFlightCheck(t);
     suit.setFlightCheck(f, t);
     // Keep the suit framed while it hovers: the orbit pivot and the lens
@@ -315,7 +339,7 @@ export function createAssemblySession(
     cues.between(flightSfx, lastFlightT, t);
     // The grippers come up for the doff as the check wraps up
     if (workshop && t > DOFF_PREP_FROM) {
-      workshop.prepareDoff((t - DOFF_PREP_FROM) / (SHOWCASE_ORBIT_SEC - DOFF_PREP_FROM));
+      workshop.prepareDoff((t - DOFF_PREP_FROM) / (SHOWCASE_TURN_SEC - DOFF_PREP_FROM));
       cues.between(doffPrepSfx, lastFlightT, t);
     }
     lastFlightT = t;
@@ -344,6 +368,7 @@ export function createAssemblySession(
     lastFlightT = Number.NaN;
     completeSpinActive = false;
     completeSpinAccum = 0;
+    completeSpinT = 0;
     showcaseSpinPaused = false;
     // Never leave OrbitControls auto-spin on — we own the showcase orbit.
     controls.autoRotate = false;
@@ -358,6 +383,7 @@ export function createAssemblySession(
     stopOrbitDiagnostic();
     completeSpinActive = true;
     completeSpinAccum = 0;
+    completeSpinT = 0;
     showcaseSpinPaused = false;
     controls.autoRotate = false;
     // Warm wireframe while the long full-speed orbit runs so ease-out is free
@@ -558,9 +584,10 @@ export function createAssemblySession(
   const doffOpenSfx = doffOpeningCues(doffEvents(doffParts));
   const doffPrepSfx = workshop
     ? doffPrepCues(
-        workshop.doffPrepOrder().map(({ id, at }) => ({
+        // Each servo cue as its arm starts up out of the ring
+        workshop.doffPrepOrder().map(({ id, rise }) => ({
           id,
-          t: DOFF_PREP_FROM + at * (SHOWCASE_ORBIT_SEC - DOFF_PREP_FROM),
+          t: DOFF_PREP_FROM + rise * (SHOWCASE_TURN_SEC - DOFF_PREP_FROM),
         })),
       )
     : [];
@@ -741,15 +768,19 @@ export function createAssemblySession(
     let lastDoffT = 0;
     let lastSeed = assembly.toSeed(rewindFrom);
     let statusIdx = 0;
+    // Start the reversed clock early enough that the first gripper move
+    // lands as the opening act ends (no dead beat while the tail rewinds)
+    const idleTail = workshop ? Math.max(0, lastSeed - workshop.doffFirstMoveAt()) / DOFF_EXTRACT_RATE : 0;
+    const clockFrom = Math.max(DOFF_CLOCK_EARLIEST, DOFF_RELEASE_SEC - idleTail);
     // Extraction runs the fitting backwards at the speed it was built
     const extractSec = rewindFrom / DOFF_EXTRACT_RATE;
-    const extractEnd = DOFF_RELEASE_SEC + extractSec;
+    const extractEnd = clockFrom + extractSec;
     // The cell clock runs on past the build's first frame until the last
     // stand has sunk and the last arm has folded away
     const cellTail = workshop ? Math.max(0, assembly.toSeed(0) - workshop.doffSettledAt()) + 0.1 : 0;
     const totalSec = extractEnd + cellTail;
     /** GSAP time of the cell (unclamped: negative through the tail) at doff time `t`. */
-    const cellAt = (t: number) => rewindFrom - Math.max(0, t - DOFF_RELEASE_SEC) * DOFF_EXTRACT_RATE;
+    const cellAt = (t: number) => rewindFrom - Math.max(0, t - clockFrom) * DOFF_EXTRACT_RATE;
     /** GSAP time of the suit-up shown at doff time `t`. */
     const fittingAt = (t: number) => Math.max(0, cellAt(t));
     // Grippers not yet up (R before the turn finished) come up through the opening act
@@ -803,7 +834,7 @@ export function createAssemblySession(
     handoffTween.to(clockProxy, { t: totalSec, duration: totalSec, ease: 'none', onUpdate: renderDoff }, 0);
     // Low motor bed under the extraction (no hiss): crossfaded takes of the hum
     const humLen = 7.55;
-    const humSec = extractSec + cellTail;
+    const humSec = totalSec - DOFF_RELEASE_SEC;
     for (let at = 0; at < humSec - 0.5; at += humLen - 0.8) {
       const left = humSec - at;
       const last = left <= humLen;
@@ -1093,7 +1124,7 @@ export function createAssemblySession(
   });
 
   /**
-   * Manually yaws the camera around the suit for {@link SHOWCASE_ORBIT_SEC},
+   * Manually yaws the camera around the suit for {@link SHOWCASE_TURN_SEC},
    * then soft-restarts. (Disabled while AUDIO LOOP is on.)
    *
    * Wireframe diagnostic starts when remaining yaw enters
@@ -1122,27 +1153,17 @@ export function createAssemblySession(
     const dt = Math.min(0.05, Math.max(0, deltaSec));
     if (dt <= 0) return true;
 
-    // Ease spin down as the turn completes so the handoff doesn’t cut hard.
-    // Tiny floor so we always finish the last degrees (never stall at ease=0).
-    const remaining = Math.PI * 2 - completeSpinAccum;
-    let speedMul = 1;
-    let easeU = 0; // 0 = full speed, 1 = fully settled
-    if (remaining < SPIN_EASE_OUT_RAD && remaining > 0) {
-      const t = remaining / SPIN_EASE_OUT_RAD;
-      // Smoothstep ease-out of angular speed
-      const ease = t * t * (3 - 2 * t);
-      speedMul = Math.max(0.045, ease);
-      easeU = 1 - t;
-    } else if (remaining <= 0) {
-      speedMul = 0;
-      easeU = 1;
-    }
+    // Ease spin down as the turn completes so the handoff doesn’t cut hard:
+    // an even deceleration that comes to rest on the exact frame the turn
+    // ends (no crawl through the last degrees)
+    completeSpinT = Math.min(SHOWCASE_TURN_SEC, completeSpinT + dt);
+    const { yaw, ease: easeU } = showcaseYaw(completeSpinT);
 
-    // Diagnostic locked to the same ease-out window as speedMul
-    updateOrbitDiagnostic(Math.max(0, remaining));
+    // Diagnostic locked to the same ease-out window
+    updateOrbitDiagnostic(easeU);
 
     // Same sign as OrbitControls._rotateLeft (theta decreases → CW from above)
-    const angle = (-(Math.PI * 2) / SHOWCASE_ORBIT_SEC) * dt * speedMul;
+    const angle = -(yaw - completeSpinAccum);
 
     // Orbit about the cinematic pivot; keep controls.target in sync
     const pivot = lookTarget;
@@ -1183,13 +1204,13 @@ export function createAssemblySession(
     camera.lookAt(lookTarget);
     controls.target.copy(lookTarget);
 
-    completeSpinAccum += Math.abs(angle);
+    completeSpinAccum = yaw;
     updateFlightCheck();
 
-    // Finish when full turn is done, or last ~1° of ease (avoids infinite crawl)
-    if (completeSpinAccum >= Math.PI * 2 - 1e-3 || remaining <= 0.02) {
+    // Finish when the turn has come to rest
+    if (completeSpinT >= SHOWCASE_TURN_SEC) {
       // Land scan at 1, seal hero framing, then dematerialize → hangar open
-      updateOrbitDiagnostic(0);
+      updateOrbitDiagnostic(1);
       applyHeroEndCam();
       stopCompleteSpinTracking();
       softRestartFromShowcase();

@@ -57,6 +57,21 @@ export function doffArmStowAt(track: Pick<RobotTrack, 'jobs'>): number | null {
   return track.jobs.length ? track.jobs[0].depart - ARM_STOW_DELAY : null;
 }
 
+/**
+ * Seed time by which every floor arm and stand of `tracks` is down on the
+ * doff clock. The clock runs backwards, so this is the earliest finish (the
+ * last one reached), never the latest: the ring may only shut after it.
+ */
+export function doffFloorDownAt(tracks: ReadonlyArray<Pick<RobotTrack, 'jobs'>>, standSec: number): number {
+  let at = Infinity;
+  for (const track of tracks) {
+    const stow = doffArmStowAt(track);
+    if (stow != null) at = Math.min(at, stow - DOFF_ARM_STOW_SEC.floor);
+    for (const job of track.jobs) at = Math.min(at, doffStandSinkAt(job) - standSec);
+  }
+  return at;
+}
+
 const POWER_DOWN = 0.1;
 const FACEPLATE_LATCH = 0.55;
 const FACEPLATE_OPEN = [0.62, 1.45] as const;
