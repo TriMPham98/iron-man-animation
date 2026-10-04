@@ -151,7 +151,8 @@ function burnTakes(t0: number, span: number): SfxCue[] {
     return {
       t: t0 + i * step,
       file: 'thruster-burn.mp3',
-      volume: 0.65,
+      // Sits well above the flight-control servos it plays under
+      volume: 1,
       duration: last ? Math.min(len, span - i * step) : len,
       fadeIn: i === 0 ? 0.05 : xf,
       fadeOut: last ? 0.7 : xf,
@@ -168,10 +169,10 @@ export function flightCues(): SfxCue[] {
         return [{ t: e.t, file: 'servo-whir.mp3', volume: both(e) ? 0.45 : 0.35, pitch: both(e) ? 0.9 : 1.05 }];
       case 'flapOpen':
         // Quick, light control-surface actuator — not a clunk
-        return [{ t: e.t, file: 'flap-servo.mp3', volume: both(e) ? 0.5 : 0.4, pitch: both(e) ? 0.95 : 1.05 }];
+        return [{ t: e.t, file: 'flap-servo.mp3', volume: both(e) ? 0.38 : 0.3, pitch: both(e) ? 0.95 : 1.05 }];
       case 'flapClose':
         return [
-          { t: e.t, file: 'flap-servo.mp3', volume: both(e) ? 0.4 : 0.3, pitch: 0.9 },
+          { t: e.t, file: 'flap-servo.mp3', volume: both(e) ? 0.32 : 0.25, pitch: 0.9 },
           { t: e.t + 0.42, file: 'flap-latch.mp3', volume: 0.35 },
         ];
       case 'weaponDeploy':
@@ -183,7 +184,7 @@ export function flightCues(): SfxCue[] {
       case 'repulsor':
         return [{ t: e.t - 0.04, file: 'repulsor.mp3', volume: both(e) ? 0.75 : 0.6 }];
       case 'ignite':
-        return [{ t: e.t, file: 'thruster-ignite.mp3', volume: 0.7 }];
+        return [{ t: e.t, file: 'thruster-ignite.mp3', volume: 0.95 }];
       case 'liftoff':
         // Burn runs through the whole hover to the cut-off: the clip is
         // shorter than that, so overlapping takes crossfade into each other

@@ -27,6 +27,17 @@ export interface FlightPose extends SuitPose {
   headYaw?: number;
   /** Whole-suit hover above the platform (m) — thruster test. */
   lift?: number;
+  /**
+   * In-flight attitude (rad) about the centre of mass: + pitch leans the
+   * suit forward, + roll leans it to its own right.
+   */
+  pitch?: number;
+  roll?: number;
+  /** In-flight drift off the pad centre (m, model space). */
+  driftX?: number;
+  driftZ?: number;
+  /** Breathing phase −1…1 (chest swell, shoulders, a settling head). */
+  breath?: number;
   /** 0 = modelled stance (~30 cm between the boots), 1 = feet together. */
   legsIn?: number;
   /**
@@ -128,6 +139,13 @@ export function bindRig(rig: SuitRig): THREE.Skeleton {
   return rig.skeleton;
 }
 
+/** Breathing amplitude (rad) per bone at breath = 1. */
+const BREATH_SPINE = 0.006;
+const BREATH_CHEST = 0.014;
+const BREATH_SHOULDER = 0.008;
+/** Hover tilt pivot (bind space): about the hips. */
+const CENTRE_OF_MASS = new THREE.Vector3(0, 1.0, 0);
+const _p = new THREE.Vector3();
 const _qa = new THREE.Quaternion();
 const _qb = new THREE.Quaternion();
 const _X = new THREE.Vector3(1, 0, 0);
@@ -161,7 +179,8 @@ export function applyPose(rig: SuitRig, pose: FlightPose): void {
   ] as const) {
     setAxisAngles(
       b[`upperArm.${side}`],
-      [_Z, s * STANCE_ARM_RAISE * st],
+      // Shoulders ride the breath a touch
+      [_Z, s * (STANCE_ARM_RAISE * st + BREATH_SHOULDER * (pose.breath ?? 0))],
       [_X, -STANCE_ARM_FORWARD * st],
     );
     setAxisAngles(b[`forearm.${side}`], [_X, -STANCE_ELBOW * st]);
@@ -195,8 +214,24 @@ export function applyPose(rig: SuitRig, pose: FlightPose): void {
     });
   }
 
-  setAxisAngles(b.chest, [_X, -CHEST_RECOIL * pose.chestRecoil]);
-  setAxisAngles(b.head, [_X, pose.headPitch], [_Y, pose.headYaw ?? 0]);
-  // Root sits at the origin in the bind pose; hover moves the whole rig
-  rig.root.position.y = pose.lift ?? 0;
+  // Breathing: the chest swells (rocks back a hair) and the head
+  // counters it so the gaze stays level
+  const breath = pose.breath ?? 0;
+  setAxisAngles(b.spine, [_X, -BREATH_SPINE * breath]);
+  setAxisAngles(b.chest, [_X, -CHEST_RECOIL * pose.chestRecoil - BREATH_CHEST * breath]);
+  setAxisAngles(b.head, [_X, pose.headPitch + (BREATH_SPINE + BREATH_CHEST) * breath * 0.8], [_Y, pose.headYaw ?? 0]);
+
+  // Root sits at the origin in the bind pose; hover moves the whole rig and
+  // tilts it about the centre of mass (not the soles)
+  const pitch = pose.pitch ?? 0;
+  const roll = pose.roll ?? 0;
+  _qa.setFromAxisAngle(_X, pitch);
+  _qb.setFromAxisAngle(_Z, roll);
+  rig.root.quaternion.multiplyQuaternions(_qa, _qb);
+  _p.copy(CENTRE_OF_MASS).applyQuaternion(rig.root.quaternion);
+  rig.root.position.set(
+    (pose.driftX ?? 0) + CENTRE_OF_MASS.x - _p.x,
+    (pose.lift ?? 0) + CENTRE_OF_MASS.y - _p.y,
+    (pose.driftZ ?? 0) + CENTRE_OF_MASS.z - _p.z,
+  );
 }
