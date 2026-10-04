@@ -50,6 +50,8 @@ interface Motion {
 
 /** How far the trapezius rocket silo rises out of the shoulder (m). */
 export const SILO_RISE = 0.04;
+/** How far the outer forearm panel rises on the launcher (m). */
+export const LAUNCHER_LIFT = 0.05;
 /** How far the round hip plate pushes out on its flare drum (m). */
 export const FLARE_PUSH = 0.05;
 
@@ -94,16 +96,20 @@ const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
   });
   return [
     {
-      // Shoulder-blade air brake: the large plate either side of the spine
+      // Shoulder-blade air brake: the large plate either side of the spine.
+      // Like the calf, its edges stay where the shell faces the view: the
+      // outer corner is clipped off the blade's fold under the pauldron,
+      // where an edge would run along the neighbouring armor and fight it
       id: `back.${side}`,
       piece: 'back.upper',
       cut: {
         along: 'z',
         outline: back([
-          [0.05, 1.49],
-          [0.172, 1.49],
-          [0.152, 1.33],
-          [0.066, 1.315],
+          [0.058, 1.48],
+          [0.132, 1.48],
+          [0.142, 1.45],
+          [0.135, 1.34],
+          [0.072, 1.326],
         ]),
         depth: [-0.3, -0.07],
         wall: 0.007,
@@ -111,19 +117,20 @@ const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
       hinge: topHinge(0.5),
     },
     {
-      // Shoulder air brake: the whole outer shell of the pauldron, hinged
-      // along its top edge, swings out sideways like a speed brake
+      // Shoulder air brake: the outer face of the pauldron, hinged along
+      // its top edge, swings out sideways like a speed brake. Kept off the
+      // pauldron's rounded front and back, and cut from the outer skin only
       id: `shoulder.${side}`,
       piece: `pauldron.${side}`,
       cut: {
         along: 'x',
         outline: [
-          [-0.085, 1.592],
-          [0.07, 1.592],
-          [0.062, 1.47],
-          [-0.078, 1.47],
+          [-0.06, 1.582],
+          [0.04, 1.582],
+          [0.036, 1.486],
+          [-0.056, 1.486],
         ],
-        depth: s > 0 ? [0.255, 0.4] : [-0.4, -0.255],
+        depth: s > 0 ? [0.27, 0.4] : [-0.4, -0.27],
         wall: 0.007,
       },
       hinge: (b, edge) => ({
@@ -133,15 +140,34 @@ const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
       }),
     },
     {
-      // Outer forearm panel rises straight out on the launcher rail
+      // Outer forearm panel rises straight out on the launcher rail. Cut
+      // just inside its raised rim (the rim stays on the forearm), so the
+      // whole plate lifts clean instead of a patchwork of panels that left
+      // half its surface behind for the launcher to pass through
       id: `launcher.${side}`,
       piece: `forearm.${side}`,
-      region: { min: [xr(0.355, 0.41)[0], 1.17, -0.09], max: [xr(0.355, 0.41)[1], 1.31, 0.0] },
+      cut: {
+        along: 'x',
+        outline: [
+          [-0.02, 1.264],
+          [-0.042, 1.289],
+          [-0.068, 1.285],
+          [-0.076, 1.276],
+          [-0.077, 1.249],
+          [-0.071, 1.219],
+          [-0.014, 1.216],
+          [-0.013, 1.232],
+        ],
+        depth: s > 0 ? [0.35, 0.46] : [-0.46, -0.35],
+        // The face slants across the window: outer skin (and its liner) only
+        skin: 0.006,
+        wall: 0.006,
+      },
       hinge: (b) => ({
         pivot: new THREE.Vector3(mid(b, 'x'), b.max.y, mid(b, 'z')),
         axis: Z,
         angle: 0.1 * s,
-        lift: forearmNormal(side).multiplyScalar(0.04),
+        lift: forearmNormal(side).multiplyScalar(LAUNCHER_LIFT),
         liftEnd: 0.7,
         swingStart: 0.6,
       }),
@@ -182,16 +208,17 @@ const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
       },
     },
     {
-      // Hamstring air brake on the back of the thigh
+      // Hamstring air brake on the back of the thigh, its outer edge in
+      // off the thigh's flank (as the calf flap)
       id: `thigh.${side}`,
       piece: `thigh.${side}.back`,
       cut: {
         along: 'z',
         outline: back([
-          [0.092, 0.875],
-          [0.172, 0.875],
-          [0.165, 0.725],
-          [0.098, 0.725],
+          [0.094, 0.872],
+          [0.16, 0.872],
+          [0.155, 0.728],
+          [0.1, 0.728],
         ]),
         depth: [-0.3, -0.04],
         wall: 0.006,

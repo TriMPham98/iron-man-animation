@@ -4666,3 +4666,215 @@ body.scene-revealed #scene-canvas {
     display: none;
   }
 }
+
+/*
+  Cycle scrubber (bottom)
+  ───────────────────────
+  One bar across assembly → flight check → disassembly. Out of frame while
+  the cycle plays; rises when the pointer nears the bottom, while held or
+  while scrubbing.
+*/
+.cycle-scrubber {
+  --cs-assembly: var(--cyan);
+  --cs-flight: var(--gold-bright);
+  --cs-doff: #ff6a4d;
+  position: fixed;
+  left: 50%;
+  bottom: max(1rem, env(safe-area-inset-bottom, 0px) + 0.6rem);
+  z-index: 46;
+  width: min(46rem, calc(100vw - 2rem));
+  padding: 0.45rem 0.7rem 0.55rem;
+  font-family: var(--mono);
+  color: var(--muted);
+  background: linear-gradient(180deg, rgba(6, 16, 26, 0.82) 0%, rgba(3, 8, 14, 0.74) 100%);
+  border: 1px solid rgba(126, 232, 255, 0.22);
+  border-radius: 2px;
+  box-shadow: 0 0 24px rgba(126, 232, 255, 0.1), inset 0 1px 0 rgba(184, 244, 255, 0.08);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  transform: translateX(-50%) translateY(0.6rem);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.32s ease,
+    transform 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    bottom 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  user-select: none;
+  touch-action: none;
+}
+.cycle-scrubber.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+body.director-mode .cycle-scrubber {
+  bottom: calc(min(32vh, 16rem) + 0.75rem);
+}
+
+.cs-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.9rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.56rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.cs-phase {
+  font-family: var(--jarvis);
+  font-size: 0.6rem;
+  letter-spacing: 0.24em;
+  color: var(--cs-assembly);
+  text-shadow: 0 0 10px rgba(126, 232, 255, 0.35);
+  transition: color 0.25s ease;
+}
+.cycle-scrubber[data-phase='flight'] .cs-phase {
+  color: var(--cs-flight);
+  text-shadow: 0 0 10px rgba(232, 197, 71, 0.35);
+}
+.cycle-scrubber[data-phase='doff'] .cs-phase {
+  color: var(--cs-doff);
+  text-shadow: 0 0 10px rgba(255, 106, 77, 0.35);
+}
+.cs-keys {
+  flex: 1;
+  text-align: center;
+  font-size: 0.5rem;
+  letter-spacing: 0.14em;
+  color: rgba(232, 228, 217, 0.32);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cs-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--cyan-bright);
+  letter-spacing: 0.1em;
+}
+.cycle-scrubber.is-held .cs-time::before {
+  content: 'HOLD ';
+  color: var(--gold-bright);
+}
+
+.cs-track {
+  position: relative;
+  display: flex;
+  gap: 3px;
+  height: 1.3rem;
+  cursor: pointer;
+  outline: none;
+}
+.cs-track:focus-visible {
+  box-shadow: 0 0 0 1px var(--cyan-dim);
+}
+.cs-seg {
+  --c: var(--cs-assembly);
+  position: relative;
+  flex: 1 1 0;
+  min-width: 2.5rem;
+  overflow: hidden;
+  background: rgba(126, 232, 255, 0.05);
+  border-bottom: 1px solid rgba(126, 232, 255, 0.16);
+}
+.cs-seg[data-phase='flight'] {
+  --c: var(--cs-flight);
+}
+.cs-seg[data-phase='doff'] {
+  --c: var(--cs-doff);
+}
+.cs-seg[hidden] {
+  display: none;
+}
+.cs-fill {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 100%;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--c) 22%, transparent) 100%);
+  border-bottom: 2px solid var(--c);
+  opacity: 0.55;
+}
+.cs-seg.is-current .cs-fill {
+  opacity: 1;
+}
+.cs-label {
+  position: absolute;
+  left: 0.45rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.5rem;
+  letter-spacing: 0.2em;
+  color: rgba(232, 228, 217, 0.42);
+  white-space: nowrap;
+  pointer-events: none;
+  transition: color 0.2s ease;
+}
+.cs-label em {
+  font-style: normal;
+  margin-right: 0.45em;
+  color: var(--c);
+  opacity: 0.7;
+}
+.cs-seg.is-current .cs-label {
+  color: var(--text);
+}
+.cs-playhead {
+  position: absolute;
+  top: -0.2rem;
+  bottom: -0.2rem;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--cyan-bright);
+  box-shadow: 0 0 8px rgba(126, 232, 255, 0.8);
+  pointer-events: none;
+}
+.cycle-scrubber[data-phase='flight'] .cs-playhead {
+  background: var(--gold-bright);
+  box-shadow: 0 0 8px rgba(232, 197, 71, 0.8);
+}
+.cycle-scrubber[data-phase='doff'] .cs-playhead {
+  background: var(--cs-doff);
+  box-shadow: 0 0 8px rgba(255, 106, 77, 0.8);
+}
+.cs-hover {
+  position: absolute;
+  bottom: calc(100% + 0.35rem);
+  transform: translateX(-50%);
+  padding: 0.18rem 0.4rem;
+  font-size: 0.5rem;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+  color: var(--cyan-bright);
+  background: rgba(3, 8, 14, 0.92);
+  border: 1px solid rgba(126, 232, 255, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.cycle-scrubber.is-hovering .cs-hover,
+.cycle-scrubber.is-dragging .cs-hover {
+  opacity: 1;
+}
+
+/* Toast steps above the scrubber while it is up */
+body:has(.cycle-scrubber.is-visible) .hud-toast {
+  bottom: max(6.6rem, env(safe-area-inset-bottom, 0px) + 6rem);
+}
+
+@media (max-width: 640px) {
+  .cs-keys {
+    display: none;
+  }
+  .cs-label {
+    font-size: 0.44rem;
+    letter-spacing: 0.12em;
+  }
+}
+
+body.reduced-motion .cycle-scrubber {
+  transition: opacity 0.12s ease;
+}
+body:has(.cycle-scrubber.is-visible) .jarvis-telemetry {
+  bottom: max(5.2rem, env(safe-area-inset-bottom, 0px) + 4.6rem);
+}

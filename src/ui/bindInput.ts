@@ -4,6 +4,8 @@ import type { Suit } from '../suit/Suit';
 import type { ArmorPiece } from '../suit/waves';
 import type { AudioTimelinePanel } from './audioTimelinePanel';
 import type { OverlayHandles } from './overlay';
+import type { CycleScrubber } from './cycleScrubber';
+import type { AssemblySession } from '../session/assemblySession';
 
 export interface BindInputOptions {
   canvas: HTMLCanvasElement;
@@ -15,7 +17,9 @@ export interface BindInputOptions {
     clear: () => void;
     apply: (root: THREE.Object3D, path?: THREE.Vector3[] | null) => void;
   };
-  session: {
+  /** Cycle scrub bar (shown while scrubbing from the keyboard). */
+  scrubber?: Pick<CycleScrubber, 'poke'>;
+  session: Pick<AssemblySession, 'getCycle' | 'seekCycle'> & {
     startSequence: () => void;
     skipToEnd: () => void;
     togglePause: () => void;
@@ -41,14 +45,14 @@ export interface BindInputOptions {
  * hero pullback. Shift = coarse.
  */
 const SCRUB_STEP_SEC = 0.05;
-const SCRUB_STEP_COARSE_SEC = 0.25;
+const SCRUB_STEP_COARSE_SEC = 1;
 
 /**
  * Keyboard (R / S / Space / ← →) + director pointer pick raycast.
  * Ignores picks after drag so orbit does not select a plate.
  */
 export function bindInput(options: BindInputOptions): void {
-  const { canvas, camera, suit, ui, controls, pick, session, audioTimeline } =
+  const { canvas, camera, suit, ui, controls, pick, session, audioTimeline, scrubber } =
     options;
 
   // Fast raycast → piece lookup (mesh.uuid → piece)
@@ -104,6 +108,19 @@ export function bindInput(options: BindInputOptions): void {
       const step = e.shiftKey ? SCRUB_STEP_COARSE_SEC : SCRUB_STEP_SEC;
       const delta = e.key === 'ArrowLeft' ? -step : step;
       session.scrubBySeconds(delta);
+      scrubber?.poke();
+      return;
+    }
+
+    // 1 / 2 / 3 — jump to the start of assembly / flight check / disassembly
+    if ((e.key === '1' || e.key === '2' || e.key === '3') && !e.repeat) {
+      if (isTypingTarget(e.target)) return;
+      e.preventDefault();
+      const { phases } = session.getCycle();
+      const starts = [0, phases.assembly, phases.assembly + phases.flight];
+      session.seekCycle(starts[Number(e.key) - 1]);
+      scrubber?.poke();
+      ui.showToast(['ASSEMBLY', 'FLIGHT CHECK', 'DISASSEMBLY'][Number(e.key) - 1]);
       return;
     }
 

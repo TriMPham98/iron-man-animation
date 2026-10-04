@@ -7,7 +7,8 @@ import type { FitTiming, FxBurst, RobotTrack, SuitUpFrame } from './suitUpChoreo
  * Doffing: the finished suit is taken off the way it went on, but with its
  * own opening act before the robots come back for the parts.
  *
- *   power-down (eyes gutter out, repulsors fade, reactor drops to standby)
+ *   power-down (eyes gutter out, repulsors fade; the arc reactor surges,
+ *     browns out and winds down coil by coil to a standby glow)
  *   → faceplate unlatches and swings up
  *   → pressure seals vent: jets blast straight down off the suit, collar to
  *     boots, and every part's locks let go in the same wave — each plate
@@ -73,6 +74,18 @@ export function doffFloorDownAt(tracks: ReadonlyArray<Pick<RobotTrack, 'jobs'>>,
 }
 
 const POWER_DOWN = 0.1;
+/** Arc reactor: coils wind down and go dark one by one, then the core collapses (doff s). */
+export const REACTOR_SPIN = [0.5, 1.2] as const;
+export const REACTOR_COLLAPSE = [1.2, 1.38] as const;
+/** Standby glow the reactor keeps until its housing comes off. */
+const REACTOR_STANDBY = 0.12;
+/** Brown-out: the core dips and catches twice before it starts to fail. */
+const BROWNOUT: ReadonlyArray<readonly [number, number]> = [
+  [0.28, 0.35],
+  [0.31, 0.95],
+  [0.36, 0.25],
+  [0.4, 0.85],
+];
 const FACEPLATE_LATCH = 0.55;
 const FACEPLATE_OPEN = [0.62, 1.45] as const;
 /** Seal-release wave: crown at the start, soles at the end. */
@@ -87,6 +100,27 @@ const smooth = (a: number, b: number, t: number) => {
   const u = clamp01((t - a) / (b - a));
   return u * u * (3 - 2 * u);
 };
+
+/** Arc reactor core power at doff time `t`: surge, brown-out, wind-down, collapse to standby. */
+export function reactorCore(t: number): number {
+  if (t < BROWNOUT[0][0]) return 1;
+  if (t < REACTOR_SPIN[0]) {
+    let v = 1;
+    for (const [at, k] of BROWNOUT) if (t >= at) v = k;
+    return v;
+  }
+  const wind = 0.85 - 0.5 * smooth(REACTOR_SPIN[0], REACTOR_SPIN[1], t);
+  return wind - (wind - REACTOR_STANDBY) * smooth(REACTOR_COLLAPSE[0], REACTOR_COLLAPSE[1], t);
+}
+
+/**
+ * Share of the reactor's light carried by its power-down overlay (the glass
+ * itself is dimmed under it so the coils read): in as the surge starts, out
+ * once the core has sat at standby for a beat.
+ */
+export function reactorOverlayShare(t: number): number {
+  return smooth(0.12, 0.3, t) * (1 - smooth(REACTOR_COLLAPSE[1] + 0.4, REACTOR_COLLAPSE[1] + 1.2, t));
+}
 
 /** When the release wave reaches a bind height. */
 export function releaseAt(y: number): number {
@@ -138,8 +172,8 @@ export function evaluateDoff(t: number, parts: readonly DoffPart[]): DoffOverlay
     systems: {
       eyes: flicker,
       repulsors: 1 - smooth(POWER_DOWN, POWER_DOWN + 0.6, t),
-      // Reactor sags to a standby glow that stays lit until the housing comes off
-      reactor: 1 - 0.88 * smooth(POWER_DOWN + 0.1, POWER_DOWN + 1.1, t),
+      // Reactor winds down to a standby glow that stays lit until the housing comes off
+      reactor: reactorCore(t) * (1 - 0.7 * reactorOverlayShare(t)),
     },
   };
 }
@@ -171,9 +205,12 @@ const VENTS: ReadonlyArray<{ bone: BoneName; at: Vec3; dir: Vec3; count: number;
   { bone: 'foot.R', at: [-0.16, 0.07, 0.0], dir: [-0.35, -1, 0.15], count: 14 },
 ];
 
-/** Seal-release bursts on the doff clock (`t` = doff seconds). */
+/** Seal-release bursts (and the reactor's collapse spark) on the doff clock (`t` = doff seconds). */
 export function doffBursts(): FxBurst[] {
-  const out: FxBurst[] = [];
+  // A few sparks off the reactor ring as its core collapses
+  const out: FxBurst[] = [
+    { t: REACTOR_COLLAPSE[0] + 0.01, kind: 'sparks', bone: 'chest', at: [0, 1.436, 0.18], count: 9, dir: [0, -0.2, 1] },
+  ];
   for (const v of VENTS) {
     const t = releaseAt(v.at[1]) - 0.02;
     out.push({ t, kind: 'steam', bone: v.bone, at: v.at, count: v.count, dir: v.dir });
@@ -194,18 +231,21 @@ export function doffBursts(): FxBurst[] {
 /** Sound events of the opening act (doff seconds). */
 export interface DoffEvent {
   t: number;
-  kind: 'powerDown' | 'faceplateLatch' | 'faceplateOpen' | 'vent' | 'release' | 'armRise';
+  kind: 'powerDown' | 'reactorSpinDown' | 'reactorCollapse' | 'faceplateLatch' | 'faceplateOpen' | 'vent' | 'release' | 'armRise';
 }
 
 export function doffEvents(parts: readonly DoffPart[]): DoffEvent[] {
   const ev: DoffEvent[] = [
     { t: POWER_DOWN, kind: 'powerDown' },
+    { t: REACTOR_SPIN[0], kind: 'reactorSpinDown' },
+    { t: REACTOR_COLLAPSE[0], kind: 'reactorCollapse' },
     { t: FACEPLATE_LATCH, kind: 'faceplateLatch' },
     { t: FACEPLATE_OPEN[0], kind: 'faceplateOpen' },
   ];
   // One vent cue per jet height (pairs fire together)
   const seen = new Set<number>();
   for (const b of doffBursts()) {
+    if (b.kind !== 'steam') continue;
     const k = Math.round(b.t * 20);
     if (seen.has(k)) continue;
     seen.add(k);
@@ -218,7 +258,7 @@ export function doffEvents(parts: readonly DoffPart[]): DoffEvent[] {
 /** JARVIS lines for the doff (doff seconds). */
 export const DOFF_STATUSES: ReadonlyArray<{ t: number; text: string }> = [
   { t: 0, text: 'DOFFING SEQUENCE INITIATED' },
-  { t: POWER_DOWN + 0.2, text: 'SYSTEMS TO STANDBY' },
+  { t: POWER_DOWN + 0.2, text: 'ARC REACTOR · POWER DOWN' },
   { t: FACEPLATE_LATCH, text: 'FACEPLATE RELEASE' },
   { t: RELEASE_WAVE[0], text: 'PRESSURE SEALS · VENTING' },
   { t: DOFF_RELEASE_SEC, text: 'ARMOR EXTRACTION' },

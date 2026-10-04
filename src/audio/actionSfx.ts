@@ -170,6 +170,11 @@ export function doffOpeningCues(events: readonly DoffEvent[]): SfxCue[] {
       case 'powerDown':
         // Servo spinning down as the systems drop to standby
         return [{ t: e.t, file: 'servo-whine.mp3', volume: 0.3, pitch: 0.7, fadeOut: 0.8 }];
+      case 'reactorSpinDown':
+        // The reactor's coils winding down: a motor run at low pitch, fading
+        return [{ t: e.t, file: 'electric-motor.mp3', volume: 0.22, pitch: 0.55, duration: 0.85, fadeIn: 0.05, fadeOut: 0.6 }];
+      case 'reactorCollapse':
+        return [{ t: e.t, file: 'spark-crackle.mp3', volume: 0.16, pitch: 0.85, duration: 0.4, fadeOut: 0.2 }];
       case 'faceplateLatch':
         return [{ t: e.t, file: 'flap-latch.mp3', volume: 0.45 }];
       case 'faceplateOpen':

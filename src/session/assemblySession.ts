@@ -13,7 +13,7 @@ import type { SuitUpPlan } from '../animation/suitUpChoreography';
 import type { Workshop } from '../workshop/Workshop';
 import { diagnosticStatusForProgress } from '../suit/diagnosticScan';
 import { evaluateFlightCheck, FLIGHT_CHECK_STEPS } from '../animation/flightCheck';
-import { createCuePlayer, doffCues, doffOpeningCues, doffPrepCues, flightCues, redeployCues } from '../audio/actionSfx';
+import { createCuePlayer, doffCues, doffOpeningCues, doffPrepCues, flightCues, redeployCues, type SfxCue } from '../audio/actionSfx';
 import {
   applyDoff,
   DOFF_EXTRACT_RATE,
@@ -70,8 +70,11 @@ function showcaseYaw(t: number): { yaw: number; ease: number } {
   const ease = Math.min(1, (t - SPIN_FULL_SEC) / SPIN_EASE_OUT_SEC);
   return { yaw: Math.PI * 2 - SPIN_EASE_OUT_RAD * (1 - ease) * (1 - ease), ease };
 }
-/** Doff camera: close on the helmet for the power-down and the faceplate. */
-const DOFF_HEAD_CAM = { x: 0.7, y: gy(1.7), z: 2.0, lx: 0, ly: gy(1.6), lz: 0, fov: 30 } as const;
+/**
+ * Doff camera: close on the helmet and chest for the power-down (the arc
+ * reactor winding down) and the faceplate.
+ */
+const DOFF_HEAD_CAM = { x: 0.7, y: gy(1.66), z: 2.0, lx: 0, ly: gy(1.54), lz: 0, fov: 30 } as const;
 /**
  * Doff camera: eases back to the whole suit, helmet to boots, as the seals
  * vent down it (the extraction then rides the assembly's own path).
@@ -109,8 +112,12 @@ const RESET_HOLD_SEC = 0.5;
 const RESET_RISE_SEC = 3.6;
 
 
+/** A camera pose as the cinematic paths author it. */
+type CamPose = { x: number; y: number; z: number; lx: number; ly: number; lz: number; fov: number };
+const CAM_KEYS = ['x', 'y', 'z', 'lx', 'ly', 'lz', 'fov'] as const;
+
 const VIEWER_HINT =
-  'Drag to orbit · R replay · Space pause · S skip · M mute · L loop · ←→ scrub';
+  'Drag to orbit · R replay · Space pause · S skip · M mute · L loop · ←→ scrub · 1 2 3 phase';
 const DIRECTOR_HINT =
   'Drag to orbit · plate · RECLASS · AUDIO scrub · A add · [ ] wave · M mute · L loop · ←→ · R · Space · S';
 
@@ -130,7 +137,23 @@ export interface AssemblySessionOptions {
   plan?: SuitUpPlan;
 }
 
+/** The three phases of a cycle, in order. */
+export type CyclePhase = 'assembly' | 'flight' | 'doff';
+/** Phase lengths on the cycle clock (s). */
+export interface CyclePhases {
+  assembly: number;
+  flight: number;
+  doff: number;
+  total: number;
+}
+
 export interface AssemblySession {
+  /** Cycle clock (s), current phase, phase lengths and whether it is running. */
+  getCycle: () => { t: number; phase: CyclePhase; phases: CyclePhases; playing: boolean };
+  /** Seek anywhere in assembly → flight check → disassembly, held there. */
+  seekCycle: (t: number) => void;
+  /** Play / hold the cycle wherever it is. */
+  setCyclePlaying: (play: boolean) => void;
   startSequence: () => void;
   skipToEnd: () => void;
   togglePause: () => void;
@@ -208,7 +231,6 @@ export function createAssemblySession(
    * Space pauses/resumes the spin without restarting (R still replays).
    */
   let completeSpinActive = false;
-  let completeSpinAccum = 0;
   /** Wall seconds into the showcase turn (frozen by Space). */
   let completeSpinT = 0;
   /** True when Space froze showcase spin (not a free-look cancel). */
@@ -244,13 +266,12 @@ export function createAssemblySession(
     OPEN_WIDE_CAM.ly,
     OPEN_WIDE_CAM.lz,
   );
-  const _idealOffset = new THREE.Vector3();
-  const _curOffset = new THREE.Vector3();
 
   const killHandoff = () => {
     handoffTween?.kill();
     handoffTween = null;
     workshop?.setDoffClock(null);
+    suit.setReactorPowerDown(null);
     suit.stopDiagnosticScan();
   };
 
@@ -327,19 +348,12 @@ export function createAssemblySession(
     suit.setFlightCheck(f, t);
     // Keep the suit framed while it hovers: the orbit pivot and the lens
     // ride up with it (and come back down as it lands)
-    const lift = f.active ? f.pose.lift ?? 0 : 0;
-    const dy = lift - flightCamLift;
-    if (Math.abs(dy) > 1e-6) {
-      flightCamLift = lift;
-      lookTarget.y += dy;
-      camera.position.y += dy * 0.75;
-      controls.target.copy(lookTarget);
-      camera.lookAt(lookTarget);
-    }
+    flightCamLift = f.active ? f.pose.lift ?? 0 : 0;
     cues.between(flightSfx, lastFlightT, t);
-    // The grippers come up for the doff as the check wraps up
-    if (workshop && t > DOFF_PREP_FROM) {
-      workshop.prepareDoff((t - DOFF_PREP_FROM) / (SHOWCASE_TURN_SEC - DOFF_PREP_FROM));
+    // The grippers come up for the doff as the check wraps up (held down
+    // before then, so a scrub back from the prep stows them again)
+    if (workshop) {
+      workshop.prepareDoff(Math.max(0, (t - DOFF_PREP_FROM) / (SHOWCASE_TURN_SEC - DOFF_PREP_FROM)));
       cues.between(doffPrepSfx, lastFlightT, t);
     }
     lastFlightT = t;
@@ -367,11 +381,39 @@ export function createAssemblySession(
     lastFlightStatus = '';
     lastFlightT = Number.NaN;
     completeSpinActive = false;
-    completeSpinAccum = 0;
     completeSpinT = 0;
     showcaseSpinPaused = false;
     // Never leave OrbitControls auto-spin on — we own the showcase orbit.
     controls.autoRotate = false;
+  };
+
+  /**
+   * The showcase turn at `t` wall seconds in, as a pure function of `t` so it
+   * plays and scrubs alike: the camera orbits the hero framing about its
+   * pivot (lifted with the hover), the flight check and the doff prep run on
+   * the same clock and the diagnostic sweeps the ease-out.
+   */
+  const renderShowcase = (t: number, opts?: { scrub?: boolean }) => {
+    completeSpinT = THREE.MathUtils.clamp(t, 0, SHOWCASE_TURN_SEC);
+    const { yaw, ease } = showcaseYaw(completeSpinT);
+    if (opts?.scrub) lastFlightT = Number.NaN;
+    // Scrubbed back out of the ease-out: the flight check takes over again
+    if (ease <= 0 && orbitScanArmed) stopOrbitDiagnostic();
+    // Diagnostic locked to the ease-out window
+    updateOrbitDiagnostic(ease);
+    updateFlightCheck();
+    // Same sign as OrbitControls._rotateLeft (theta decreases → CW from above)
+    _spinOffset.copy(_heroPos).sub(_heroLook).applyAxisAngle(_spinAxis, -yaw);
+    lookTarget.copy(_heroLook);
+    lookTarget.y += flightCamLift;
+    camera.position.copy(_heroLook).add(_spinOffset);
+    camera.position.y += flightCamLift * 0.75;
+    if (Math.abs(camera.fov - HERO_END_CAM.fov) > 1e-4) {
+      camera.fov = HERO_END_CAM.fov;
+      camera.updateProjectionMatrix();
+    }
+    camera.lookAt(lookTarget);
+    controls.target.copy(lookTarget);
   };
 
   const startCompleteSpinTracking = () => {
@@ -382,7 +424,6 @@ export function createAssemblySession(
     }
     stopOrbitDiagnostic();
     completeSpinActive = true;
-    completeSpinAccum = 0;
     completeSpinT = 0;
     showcaseSpinPaused = false;
     controls.autoRotate = false;
@@ -483,10 +524,12 @@ export function createAssemblySession(
   };
 
   const syncDebugPauseLabel = () => {
-    // Complete showcase: Space freeze; assembly: GSAP pause.
-    const paused = assemblyComplete
-      ? showcaseSpinPaused || !completeSpinActive
-      : assembly.isPaused() || !assembly.isPlaying();
+    // Doff: its timeline; complete showcase: Space freeze; assembly: GSAP pause.
+    const paused = handoffTween
+      ? handoffTween.paused()
+      : assemblyComplete
+        ? showcaseSpinPaused || !completeSpinActive
+        : assembly.isPaused() || !assembly.isPlaying();
     ui.setDebugPaused(paused);
     audioTimeline?.setPaused(paused);
   };
@@ -564,7 +607,11 @@ export function createAssemblySession(
   };
 
   // Action sound layer (servos, flaps, thrusters, unclamps) on the engine
-  const cues = createCuePlayer((req) => audioTimeline?.engine.play(req));
+  /** Held while scrubbing so a seek never fires the cues it passes over. */
+  let sfxMuted = false;
+  const cues = createCuePlayer((req) => {
+    if (!sfxMuted) audioTimeline?.engine.play(req);
+  });
   const flightSfx = flightCues();
   const doffSfx = plan ? doffCues(plan) : [];
   // Each part's height orders the seal-release wave; its insert stroke
@@ -676,6 +723,39 @@ export function createAssemblySession(
     clockStart = clock.getElapsedTime();
   };
 
+  /** Timing of the doff + cell reset (doff seconds), fixed for a built timeline. */
+  const doffTiming = () => {
+    // Rewind from the last frame with real parts to GSAP 0 (= what play()
+    // renders first), so the next cycle starts without a cut.
+    const rewindFrom = Math.max(0, assembly.getFinalSwapTime() - 0.02);
+    const seedFrom = assembly.toSeed(rewindFrom);
+    // Start the reversed clock early enough that the first gripper move
+    // lands as the opening act ends (no dead beat while the tail rewinds)
+    const idleTail = workshop ? Math.max(0, seedFrom - workshop.doffFirstMoveAt()) / DOFF_EXTRACT_RATE : 0;
+    const clockFrom = Math.max(DOFF_CLOCK_EARLIEST, DOFF_RELEASE_SEC - idleTail);
+    // Extraction runs the fitting backwards at the speed it was built
+    const extractEnd = clockFrom + rewindFrom / DOFF_EXTRACT_RATE;
+    // The cell clock runs on past the build's first frame until the last
+    // stand has sunk and the last arm has folded away
+    const cellTail = workshop ? Math.max(0, assembly.toSeed(0) - workshop.doffSettledAt()) + 0.1 : 0;
+    const totalSec = extractEnd + cellTail;
+    const riseAt = totalSec + RESET_HOLD_SEC;
+    const endSec = workshop ? riseAt + RESET_RISE_SEC : totalSec;
+    return { rewindFrom, seedFrom, clockFrom, extractEnd, totalSec, riseAt, endSec };
+  };
+
+  /** Authored doff camera (before the drift onto the reversed path) at doff time `t`. */
+  const doffPoseAt = (t: number, out: CamPose): CamPose => {
+    const sine = (u: number) => 0.5 - 0.5 * Math.cos(Math.PI * THREE.MathUtils.clamp(u, 0, 1));
+    const a = sine(t / 1.5);
+    const b = sine((t - 1.5) / (DOFF_RELEASE_SEC - 1.5 + 0.9));
+    for (const k of CAM_KEYS) {
+      const head = HERO_END_CAM[k] + (DOFF_HEAD_CAM[k] - HERO_END_CAM[k]) * a;
+      out[k] = head + (DOFF_VENT_CAM[k] - head) * b;
+    }
+    return out;
+  };
+
   /**
    * After the finished-suit idle 360° (or R from complete):
    * Diagnostic already ran over the orbit ease-out (if the full spin played).
@@ -687,8 +767,11 @@ export function createAssemblySession(
    * 2) Camera works in on the helmet, down with the vents, then out to the
    *    hangar framing as the last parts come off
    * 3) Drain integrity + restart assembly on the exact same frame
+   *
+   * Everything on screen is a function of the doff clock, so the handoff can
+   * be scrubbed both ways (`opts.paused` builds it held at its first frame).
    */
-  const softRestartFromShowcase = () => {
+  const softRestartFromShowcase = (opts?: { paused?: boolean }) => {
     killHandoff();
     stopOrbitDiagnostic();
     stopCompleteSpinTracking();
@@ -707,46 +790,59 @@ export function createAssemblySession(
     ui.fadeTitle(false);
     ui.setSystemsOnline(false);
     audioStop();
-    syncDebugPauseLabel();
 
     // Seamless suit → its seated parts for the reverse fitting
     suit.resumeAssemblyVisuals();
-
     // Always pull from authored hero end (orbit seals this pose) so the
     // hangar open ease is a clean, repeatable loop join.
     applyHeroEndCam();
-    const proxy = {
-      x: HERO_END_CAM.x,
-      y: HERO_END_CAM.y,
-      z: HERO_END_CAM.z,
-      lx: HERO_END_CAM.lx,
-      ly: HERO_END_CAM.ly,
-      lz: HERO_END_CAM.lz,
-      fov: HERO_END_CAM.fov,
-    };
+    // Orbit would fight the cinematic handoff
+    controls.enabled = false;
+
+    const { rewindFrom, seedFrom, clockFrom, extractEnd, totalSec, riseAt, endSec } = doffTiming();
+    /** GSAP time of the cell (unclamped: negative through the tail) at doff time `t`. */
+    const cellAt = (t: number) => rewindFrom - Math.max(0, t - clockFrom) * DOFF_EXTRACT_RATE;
+    /** GSAP time of the suit-up shown at doff time `t`. */
+    const fittingAt = (t: number) => Math.max(0, cellAt(t));
+    // Grippers not yet up (R before the turn finished) come up through the opening act
+    const prep0 = workshop?.doffPrepProgress() ?? 1;
+    const endOverlay = evaluateDoff(totalSec, doffParts);
 
     /**
-     * Opening act: the authored doff poses (proxy). Extraction: the
-     * assembly's own camera path run backwards with the fitting (no
-     * shakes), followed with a lag so it drifts rather than retracing every
-     * move; it settles on the open-wide frame through the cell reset, which
-     * is where the next cycle starts.
+     * Camera: the authored poses through the opening act, then the
+     * assembly's own path run backwards with the fitting (no shakes),
+     * followed with a lag so it drifts rather than retracing every move; it
+     * settles on the open-wide frame through the cell reset, which is where
+     * the next cycle starts. The lag is integrated in fixed steps from the
+     * start, so a scrubbed frame matches the played one.
      */
-    const camClock = { t: 0 };
-    const smooth = { ...proxy };
+    const pose: CamPose = { ...HERO_END_CAM };
+    const smooth: CamPose = { ...HERO_END_CAM };
     let smoothT = 0;
-    const keys = Object.keys(proxy) as Array<keyof typeof proxy>;
-    const applyHandoffCam = () => {
-      const t = camClock.t;
+    const CAM_STEP = 1 / 60;
+    const stepCam = (t: number, dt: number) => {
+      doffPoseAt(t, pose);
       const k = THREE.MathUtils.smoothstep(t, DOFF_RELEASE_SEC, DOFF_RELEASE_SEC + DOFF_PATH_BLEND);
-      const path = k > 0 ? assembly.cameraAt(fittingAt(t), false) : null;
+      const path = k > 0 ? assembly.cameraAt(fittingAt(Math.min(t, totalSec)), false) : null;
       // Tighter lag through the reset so it lands exactly on open-wide
       const lag = t > extractEnd ? DOFF_CAM_LAG / 2 : DOFF_CAM_LAG;
-      const a = t <= DOFF_RELEASE_SEC ? 1 : 1 - Math.exp(-Math.max(0, t - smoothT) / lag);
-      for (const key of keys) {
-        const target = path ? proxy[key] + (path[key] - proxy[key]) * k : proxy[key];
+      const a = t <= DOFF_RELEASE_SEC ? 1 : 1 - Math.exp(-dt / lag);
+      for (const key of CAM_KEYS) {
+        const target = path ? pose[key] + (path[key] - pose[key]) * k : pose[key];
         smooth[key] += (target - smooth[key]) * a;
       }
+    };
+    const cameraTo = (t: number) => {
+      if (t < smoothT || t - smoothT > 0.25) {
+        // Jumped (scrub): re-run the lag from the top
+        Object.assign(smooth, HERO_END_CAM);
+        smoothT = 0;
+      }
+      while (smoothT + CAM_STEP < t) {
+        smoothT += CAM_STEP;
+        stepCam(smoothT, CAM_STEP);
+      }
+      stepCam(t, t - smoothT);
       smoothT = t;
       camera.position.set(smooth.x, smooth.y, smooth.z);
       lookTarget.set(smooth.lx, smooth.ly, smooth.lz);
@@ -758,58 +854,87 @@ export function createAssemblySession(
       }
     };
 
-    // Orbit would fight the cinematic handoff
-    controls.enabled = false;
-
-    // Rewind from the last frame with real parts to GSAP 0 (= what play()
-    // renders first), so the next cycle starts without a cut.
-    const rewindFrom = Math.max(0, assembly.getFinalSwapTime() - 0.02);
-    const clockProxy = { t: 0 };
-    let lastDoffT = 0;
-    let lastSeed = assembly.toSeed(rewindFrom);
-    let statusIdx = 0;
-    // Start the reversed clock early enough that the first gripper move
-    // lands as the opening act ends (no dead beat while the tail rewinds)
-    const idleTail = workshop ? Math.max(0, lastSeed - workshop.doffFirstMoveAt()) / DOFF_EXTRACT_RATE : 0;
-    const clockFrom = Math.max(DOFF_CLOCK_EARLIEST, DOFF_RELEASE_SEC - idleTail);
-    // Extraction runs the fitting backwards at the speed it was built
-    const extractSec = rewindFrom / DOFF_EXTRACT_RATE;
-    const extractEnd = clockFrom + extractSec;
-    // The cell clock runs on past the build's first frame until the last
-    // stand has sunk and the last arm has folded away
-    const cellTail = workshop ? Math.max(0, assembly.toSeed(0) - workshop.doffSettledAt()) + 0.1 : 0;
-    const totalSec = extractEnd + cellTail;
-    /** GSAP time of the cell (unclamped: negative through the tail) at doff time `t`. */
-    const cellAt = (t: number) => rewindFrom - Math.max(0, t - clockFrom) * DOFF_EXTRACT_RATE;
-    /** GSAP time of the suit-up shown at doff time `t`. */
-    const fittingAt = (t: number) => Math.max(0, cellAt(t));
-    // Grippers not yet up (R before the turn finished) come up through the opening act
-    const prep0 = workshop?.doffPrepProgress() ?? 1;
-    const renderDoff = () => {
-      const t = clockProxy.t;
-      const overlay = evaluateDoff(t, doffParts);
-      const seed = assembly.toSeed(cellAt(t));
-      if (workshop) {
-        workshop.setDoffClock(seed);
-        workshop.setDoffPrep(prep0 + (1 - prep0) * THREE.MathUtils.smoothstep(t, 0, DOFF_RELEASE_SEC * 0.8));
-      }
-      assembly.renderSuitAt(fittingAt(t), (frame) => applyDoff(frame, overlay));
-      // Parts set back down ride their stands away
-      if (workshop) suit.rideStands((task) => workshop.standShift(task));
-      // Opening act on the doff clock, extraction on the (backwards) seed clock
-      cues.between(doffOpenSfx, lastDoffT, t);
-      for (const b of doffFx) if (b.t > lastDoffT && b.t <= t) suit.emitBurst(b);
-      cues.between(doffSfx, lastSeed, seed);
-      lastSeed = seed;
-      lastDoffT = t;
-      while (statusIdx < DOFF_STATUSES.length && DOFF_STATUSES[statusIdx].t <= t) {
-        ui.setStatus(DOFF_STATUSES[statusIdx++].text);
-      }
+    /** JARVIS line in force at doff time `t`. */
+    const statusAt = (t: number): string => {
+      if (workshop && t >= riseAt) return 'CELL DEPLOY // NEXT FITTING';
+      if (workshop && t >= extractEnd) return 'CELL STOW // PARTS TO STORAGE';
+      let line = DOFF_STATUSES[0].text;
+      for (const s of DOFF_STATUSES) if (s.t <= t) line = s.text;
+      return line;
     };
+    let lastStatus = '';
+    let lastDoffT = 0;
+    let lastSeed = seedFrom;
+    // Low motor bed under the extraction (no hiss): crossfaded takes of the hum
+    const humLen = 7.55;
+    const humSec = totalSec - DOFF_RELEASE_SEC;
+    const hum: SfxCue[] = [];
+    for (let at = 0; at < humSec - 0.5; at += humLen - 0.8) {
+      const left = humSec - at;
+      hum.push({
+        t: DOFF_RELEASE_SEC + at,
+        file: 'doff-hum.mp3',
+        volume: 0.32,
+        duration: Math.min(humLen, left),
+        fadeIn: at === 0 ? 0.4 : 0.8,
+        fadeOut: left <= humLen ? 1.2 : 0.8,
+      });
+    }
+    const resetSfx = workshop ? redeployCues(RESET_RISE_SEC).map((c) => ({ ...c, t: riseAt + c.t })) : [];
+
+    const render = () => {
+      const t = doffClock.t;
+      const scrub = sfxMuted;
+      if (t <= totalSec) {
+        // 1) Power-down → faceplate → seal release, then the extraction
+        //    (stands sinking with their parts, arms folding away as they finish)
+        const overlay = evaluateDoff(t, doffParts);
+        const seed = assembly.toSeed(cellAt(t));
+        if (workshop) {
+          workshop.setDoffClock(seed);
+          workshop.setDoffPrep(prep0 + (1 - prep0) * THREE.MathUtils.smoothstep(t, 0, DOFF_RELEASE_SEC * 0.8));
+        }
+        assembly.renderSuitAt(fittingAt(t), (frame) => applyDoff(frame, overlay));
+        suit.setReactorPowerDown(t);
+        // Parts set back down ride their stands away
+        if (workshop) suit.rideStands((task) => workshop.standShift(task));
+        // Opening act on the doff clock, extraction on the (backwards) seed clock
+        cues.between(doffOpenSfx, lastDoffT, t);
+        if (!scrub) for (const b of doffFx) if (b.t > lastDoffT && b.t <= t) suit.emitBurst(b);
+        cues.between(doffSfx, lastSeed, seed);
+        lastSeed = seed;
+      } else if (workshop) {
+        // 2) Cell reset on the open-wide frame: a beat on the empty pad, then
+        //    the cell redeploys for the next build
+        workshop.setDoffClock(null);
+        suit.setReactorPowerDown(null);
+        assembly.renderSuitAt(0, (frame) => applyDoff(frame, endOverlay));
+        const u = THREE.MathUtils.clamp((t - riseAt) / RESET_RISE_SEC, 0, 1);
+        workshop.setRedeployProgress(0.5 - 0.5 * Math.cos(Math.PI * u));
+        suit.rideStands((task) => workshop.standShift(task));
+        lastSeed = assembly.toSeed(cellAt(totalSec));
+      }
+      cues.between(hum, lastDoffT, t);
+      cues.between(resetSfx, lastDoffT, t);
+      lastDoffT = t;
+      const line = statusAt(t);
+      if (line !== lastStatus) {
+        lastStatus = line;
+        ui.setStatus(line);
+      }
+      cameraTo(t);
+    };
+
+    const doffClock = { t: 0 };
     handoffTween = gsap.timeline({
+      paused: !!opts?.paused,
       onComplete: () => {
+        // A scrub that lands on the last frame holds there; only a played
+        // handoff hands over to the next build
+        if (sfxMuted) return;
         handoffTween = null;
         workshop?.setDoffClock(null);
+        suit.setReactorPowerDown(null);
         // Exact open-wide lock so assembly t=0 OPEN_WIDE is invisible
         applyOpenWideCam();
         suit.showAssembly();
@@ -827,63 +952,10 @@ export function createAssemblySession(
         clockStart = clock.getElapsedTime();
       },
     });
-    renderDoff();
-
-    // 1) Power-down → faceplate → seal release, then the extraction (stands
-    //    sinking with their parts, arms folding away as they finish)
-    handoffTween.to(clockProxy, { t: totalSec, duration: totalSec, ease: 'none', onUpdate: renderDoff }, 0);
-    // Low motor bed under the extraction (no hiss): crossfaded takes of the hum
-    const humLen = 7.55;
-    const humSec = totalSec - DOFF_RELEASE_SEC;
-    for (let at = 0; at < humSec - 0.5; at += humLen - 0.8) {
-      const left = humSec - at;
-      const last = left <= humLen;
-      handoffTween.call(
-        () =>
-          cues.fire({
-            t: 0,
-            file: 'doff-hum.mp3',
-            volume: 0.32,
-            duration: Math.min(humLen, left),
-            fadeIn: at === 0 ? 0.4 : 0.8,
-            fadeOut: last ? 1.2 : 0.8,
-          }),
-        undefined,
-        DOFF_RELEASE_SEC + at,
-      );
-    }
-
-    // 2) Camera: in on the helmet for the power-down and the faceplate,
-    //    back to the whole suit with the venting, then onto the assembly's
-    //    path in reverse while the arms take the parts away
-    const camTo = (pose: Readonly<typeof proxy>, at: number, duration: number, e = 'sine.inOut') =>
-      handoffTween!.to(proxy, { ...pose, duration, ease: e }, at);
-    camTo(DOFF_HEAD_CAM, 0, 1.5);
-    camTo(DOFF_VENT_CAM, 1.5, DOFF_RELEASE_SEC - 1.5 + 0.9);
     // One driver for the whole handoff (doff + cell reset)
-    const camEnd = totalSec + (workshop ? RESET_HOLD_SEC + RESET_RISE_SEC : 0);
-    handoffTween.to(camClock, { t: camEnd, duration: camEnd, ease: 'none', onUpdate: applyHandoffCam }, 0);
-
-    // 3) Cell reset on the open-wide frame: a beat on the empty pad, then
-    //    the cell redeploys for the next build
-    if (workshop) {
-      const cell = workshop;
-      const endOverlay = evaluateDoff(totalSec, doffParts);
-      const reset = { deploy: 0 };
-      const renderReset = () => {
-        cell.setDoffClock(null);
-        assembly.renderSuitAt(0, (frame) => applyDoff(frame, endOverlay));
-        cell.setRedeployProgress(reset.deploy);
-        suit.rideStands((task) => cell.standShift(task));
-      };
-      const riseAt = totalSec + RESET_HOLD_SEC;
-      handoffTween.call(() => ui.setStatus('CELL STOW // PARTS TO STORAGE'), undefined, extractEnd);
-      handoffTween.call(() => ui.setStatus('CELL DEPLOY // NEXT FITTING'), undefined, riseAt);
-      handoffTween.to(reset, { deploy: 1, duration: RESET_RISE_SEC, ease: 'sine.inOut', onUpdate: renderReset }, riseAt);
-      for (const c of redeployCues(RESET_RISE_SEC)) {
-        handoffTween.call(() => cues.fire({ ...c, t: 0 }), undefined, riseAt + c.t);
-      }
-    }
+    handoffTween.to(doffClock, { t: endSec, duration: endSec, ease: 'none', onUpdate: render }, 0);
+    render();
+    syncDebugPauseLabel();
   };
 
   const startSequence = () => {
@@ -917,10 +989,10 @@ export function createAssemblySession(
   };
 
   const togglePause = () => {
-    // Mid handoff: treat Space as cancel → stay on open pad and start assembly
+    // Mid handoff: hold / play the doff where it is
     if (handoffTween) {
-      killHandoff();
-      runAssemblySequence({ softProgress: false });
+      handoffTween.paused(!handoffTween.paused());
+      syncDebugPauseLabel();
       return;
     }
     if (assembly.isPlaying()) {
@@ -1053,17 +1125,7 @@ export function createAssemblySession(
    * instead of treating integrity 100% as "jump to end".
    */
   const scrubBySeconds = (deltaSec: number) => {
-    killHandoff();
-    clearPick();
-    audioStop();
-    const full = fullDuration();
-    // After complete, timeline time is already at the end — step back from there.
-    const cur = Math.min(full, Math.max(0, assembly.getTime()));
-    const next = THREE.MathUtils.clamp(cur + deltaSec, 0, full);
-    assembly.seekTime(next, { preserveCamera: false });
-    audioPlayheadFromTime();
-    syncDebugPauseLabel();
-    applyScrubUiAtTime(next);
+    seekCycle(cycleNow().t + deltaSec);
   };
 
   /**
@@ -1123,6 +1185,87 @@ export function createAssemblySession(
     }
   });
 
+  // ── Cycle clock: assembly → flight check → disassembly ─────────────
+
+  /** Phase lengths on the cycle clock (s): assembly (incl. camera tail), flight check turn, doff + cell reset. */
+  const cyclePhases = (): CyclePhases => {
+    const assemblySec = fullDuration();
+    const flightSec = reducedMotion ? 0 : SHOWCASE_TURN_SEC;
+    const doffSec = reducedMotion ? 0 : doffTiming().endSec;
+    return { assembly: assemblySec, flight: flightSec, doff: doffSec, total: assemblySec + flightSec + doffSec };
+  };
+
+  /** Where the cycle is now. A finished suit held in free-look sits at the start of the flight check. */
+  const cycleNow = (): { t: number; phase: CyclePhase } => {
+    const p = cyclePhases();
+    if (handoffTween) return { t: p.assembly + p.flight + handoffTween.time(), phase: 'doff' };
+    if (assemblyComplete) return { t: p.assembly + (completeSpinActive ? completeSpinT : 0), phase: 'flight' };
+    return { t: THREE.MathUtils.clamp(assembly.getTime(), 0, p.assembly), phase: 'assembly' };
+  };
+
+  const isCyclePlaying = (): boolean => {
+    if (handoffTween) return !handoffTween.paused();
+    if (assemblyComplete) return completeSpinActive && !showcaseSpinPaused && !assembly.userOwnsCamera();
+    return assembly.isPlaying() && !assembly.isPaused();
+  };
+
+  /** Finished suit at the end of the build, showcase turn held at `t` (s). */
+  const enterShowcaseAt = (t: number) => {
+    if (handoffTween) killHandoff();
+    if (!assemblyComplete || !completeSpinActive || assembly.userOwnsCamera()) {
+      clearPick();
+      audioStop();
+      assembly.setUserOwnsCamera(false);
+      assembly.seekTime(fullDuration(), { preserveCamera: false });
+      applyHeroEndCam();
+      applyCompleteUi({ preserveCamera: false });
+    }
+    if (reducedMotion) return;
+    // A scrub holds the frame; Space (or letting go of a playing drag) plays on
+    showcaseSpinPaused = true;
+    renderShowcase(t, { scrub: true });
+  };
+
+  /** Seek the whole cycle to `t` (s on the cycle clock), held there. */
+  const seekCycle = (t: number) => {
+    const p = cyclePhases();
+    const at = THREE.MathUtils.clamp(t, 0, p.total);
+    sfxMuted = true;
+    try {
+      if (at < p.assembly - 1e-4 || p.flight + p.doff === 0) {
+        // Build: scrub the assembly timeline (leaving the turn / doff)
+        killHandoff();
+        stopOrbitDiagnostic();
+        clearPick();
+        audioStop();
+        assembly.seekTime(at, { preserveCamera: false });
+        audioPlayheadFromTime();
+        applyScrubUiAtTime(at);
+      } else if (at < p.assembly + p.flight) {
+        enterShowcaseAt(at - p.assembly);
+      } else {
+        if (!handoffTween) {
+          // Build the doff from the turn's last frame, held
+          enterShowcaseAt(p.flight);
+          softRestartFromShowcase({ paused: true });
+        }
+        const tl = handoffTween!;
+        tl.pause();
+        // Never onto the very last frame: that one hands over to the next build
+        tl.seek(Math.min(at - p.assembly - p.flight, tl.duration() - 1e-3), false);
+      }
+    } finally {
+      sfxMuted = false;
+    }
+    syncDebugPauseLabel();
+  };
+
+  /** Play / hold the cycle wherever it is. */
+  const setCyclePlaying = (play: boolean) => {
+    if (play === isCyclePlaying()) return;
+    togglePause();
+  };
+
   /**
    * Manually yaws the camera around the suit for {@link SHOWCASE_TURN_SEC},
    * then soft-restarts. (Disabled while AUDIO LOOP is on.)
@@ -1156,61 +1299,11 @@ export function createAssemblySession(
     // Ease spin down as the turn completes so the handoff doesn’t cut hard:
     // an even deceleration that comes to rest on the exact frame the turn
     // ends (no crawl through the last degrees)
-    completeSpinT = Math.min(SHOWCASE_TURN_SEC, completeSpinT + dt);
-    const { yaw, ease: easeU } = showcaseYaw(completeSpinT);
-
-    // Diagnostic locked to the same ease-out window
-    updateOrbitDiagnostic(easeU);
-
-    // Same sign as OrbitControls._rotateLeft (theta decreases → CW from above)
-    const angle = -(yaw - completeSpinAccum);
-
-    // Orbit about the cinematic pivot; keep controls.target in sync
-    const pivot = lookTarget;
-    controls.target.copy(pivot);
-    _spinOffset.copy(camera.position).sub(pivot);
-    _spinOffset.applyAxisAngle(_spinAxis, angle);
-    camera.position.copy(pivot).add(_spinOffset);
-
-    // During ease-out, blend look + FOV toward authored hero end so the
-    // hangar pull always starts from HERO_END_CAM (seamless loop join).
-    if (easeU > 0) {
-      const blend = easeU * easeU * (3 - 2 * easeU);
-      lookTarget.lerp(_heroLook, blend * 0.35);
-      camera.fov = THREE.MathUtils.lerp(
-        camera.fov,
-        HERO_END_CAM.fov,
-        blend * 0.35,
-      );
-      camera.updateProjectionMatrix();
-      // Softly restore orbit radius toward hero distance (drift-proof)
-      _idealOffset.copy(_heroPos).sub(_heroLook);
-      const idealLen = _idealOffset.length();
-      if (idealLen > 1e-4) {
-        _curOffset.copy(camera.position).sub(lookTarget);
-        const curLen = _curOffset.length();
-        if (curLen > 1e-4) {
-          const targetLen = THREE.MathUtils.lerp(
-            curLen,
-            idealLen,
-            blend * 0.25,
-          );
-          _curOffset.multiplyScalar(targetLen / curLen);
-          camera.position.copy(lookTarget).add(_curOffset);
-        }
-      }
-    }
-
-    camera.lookAt(lookTarget);
-    controls.target.copy(lookTarget);
-
-    completeSpinAccum = yaw;
-    updateFlightCheck();
+    renderShowcase(Math.min(SHOWCASE_TURN_SEC, completeSpinT + dt));
 
     // Finish when the turn has come to rest
     if (completeSpinT >= SHOWCASE_TURN_SEC) {
-      // Land scan at 1, seal hero framing, then dematerialize → hangar open
-      updateOrbitDiagnostic(1);
+      // Scan landed at 1; seal hero framing, then dematerialize → hangar open
       applyHeroEndCam();
       stopCompleteSpinTracking();
       softRestartFromShowcase();
@@ -1220,6 +1313,9 @@ export function createAssemblySession(
   };
 
   return {
+    getCycle: () => ({ ...cycleNow(), phases: cyclePhases(), playing: isCyclePlaying() }),
+    seekCycle,
+    setCyclePlaying,
     startSequence,
     skipToEnd,
     togglePause,

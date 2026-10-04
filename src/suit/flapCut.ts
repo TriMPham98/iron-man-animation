@@ -21,6 +21,13 @@ export interface FlapCut {
   depth: readonly [number, number];
   /** Side wall depth (m) on the plate's cut edges. */
   wall?: number;
+  /**
+   * Keep only the outer skin: triangles within this depth (m, along the
+   * view axis) of the outermost surface in their column. For a part whose
+   * face slants through the depth window, where a window alone would also
+   * take the rims and structure behind the plate.
+   */
+  skin?: number;
 }
 
 interface Vert {
@@ -164,12 +171,22 @@ export function cutSoup(soup: Soup, cut: FlapCut): { plate: Soup; rest: Soup; ed
   const depthOf = (tri: Vert[]) => (tri[0].p[ax] + tri[1].p[ax] + tri[2].p[ax]) / 3;
   const inWindow = (c: number) => c >= cut.depth[0] && c <= cut.depth[1];
   const colIn = new Map<string, boolean>();
-  for (const tri of soup) if (inWindow(depthOf(tri))) colIn.set(col(tri), true);
+  // Outermost depth per column (outward = away from the part, by the window's side)
+  const out = cut.depth[0] + cut.depth[1] < 0 ? -1 : 1;
+  const colTop = new Map<string, number>();
+  for (const tri of soup) {
+    const c = depthOf(tri);
+    if (!inWindow(c)) continue;
+    const k = col(tri);
+    colIn.set(k, true);
+    colTop.set(k, Math.max(colTop.get(k) ?? -Infinity, out * c));
+  }
+  const onSkin = (tri: Vert[]) => cut.skin === undefined || out * depthOf(tri) >= (colTop.get(col(tri)) ?? Infinity) - cut.skin;
   for (const tri of soup) {
     const c = depthOf(tri);
     // In the window, or directly stacked over a triangle that is
     const near = c >= cut.depth[0] - 0.02 && c <= cut.depth[1] + 0.02;
-    if (!(inWindow(c) || (near && colIn.get(col(tri))))) {
+    if (!(inWindow(c) || (near && colIn.get(col(tri)))) || !onSkin(tri)) {
       rest.push(tri);
       continue;
     }

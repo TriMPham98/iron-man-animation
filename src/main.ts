@@ -28,6 +28,7 @@ import {
 } from './audio/jarvisStartup';
 import { installJarvisCursor } from './ui/jarvisCursor';
 import { createOverlay } from './ui/overlay';
+import { createCycleScrubber } from './ui/cycleScrubber';
 import { createPickHighlight } from './ui/pickHighlight';
 import { prefersReducedMotion } from './ui/viewerMode';
 import { SOUNDS } from './audio/sounds';
@@ -193,8 +194,22 @@ async function boot(): Promise<void> {
   });
 
 
+  // Dev-only handle for poking the scene from the console / test drivers
+  if (import.meta.env.DEV) {
+    (window as unknown as { __suit: unknown }).__suit = { suit, camera, lookTarget, controls, session, workshop, scene, renderer };
+  }
+
+  // One scrub bar across assembly → flight check → disassembly
+  const scrubber = createCycleScrubber({
+    getCycle: session.getCycle,
+    seekCycle: session.seekCycle,
+    setCyclePlaying: session.setCyclePlaying,
+    isEnabled: () => ui.hasInitiated() && !reducedMotion,
+  });
+
   bindInput({
     canvas,
+    scrubber,
     camera,
     suit,
     ui,
@@ -312,6 +327,7 @@ async function boot(): Promise<void> {
       if (cue) ui.setTelemetry(cue.line, { kind: cue.kind });
       else ui.setTelemetry(null);
     }
+    scrubber.update();
     contact.update();
     post.render(delta);
   };

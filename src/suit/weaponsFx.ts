@@ -24,6 +24,15 @@ const mats = () => ({
   lens: new THREE.MeshStandardMaterial({ color: 0x0a2430, emissive: new THREE.Color(0x6fe0ff), emissiveIntensity: 2 }),
 });
 
+/** Launcher gun along its bore: tail cap at −0.07 → nose tip at 0.093 (m). */
+const GUN_LEN = 0.163;
+const GUN_MID = 0.0115;
+/** Silo outline as a share of the trap lid's footprint (the lid overhangs it). */
+const SILO_SCALE = 0.7;
+/** Launch tube's outer (cap) radius and its offset out from the rail (m). */
+const POD_R = 0.0175;
+const POD_X = 0.012;
+
 const ease = (a: number, b: number, u: number) => {
   const k = Math.min(1, Math.max(0, (u - a) / (b - a)));
   return k * k * (3 - 2 * k);
@@ -40,21 +49,6 @@ function box(w: number, h: number, d: number, m: THREE.Material, x = 0, y = 0, z
   const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
   b.position.set(x, y, z);
   return b;
-}
-
-/** Convex outline (x, z) of the vertices a flap geometry uses, grown by `pad`. */
-function footprint(geo: THREE.BufferGeometry, pad: number): Array<[number, number]> {
-  const pos = geo.getAttribute('position');
-  const idx = geo.index!.array;
-  const pts: Array<[number, number]> = [];
-  const seen = new Set<number>();
-  for (let i = 0; i < idx.length; i++) {
-    const v = idx[i];
-    if (seen.has(v)) continue;
-    seen.add(v);
-    pts.push([pos.getX(v), pos.getZ(v)]);
-  }
-  return inset(hull2(pts), -pad);
 }
 
 function hull2(points: Array<[number, number]>): Array<[number, number]> {
@@ -90,36 +84,49 @@ function clipZ(poly: Array<[number, number]>, c: number): Array<[number, number]
   return out.length >= 3 ? out : poly;
 }
 
-/** Shrink (d > 0) or grow (d < 0) a convex outline about its centroid. */
-function inset(poly: Array<[number, number]>, d: number): Array<[number, number]> {
+/** Scale a convex outline about its centroid (never degenerates, unlike a radial inset). */
+function scaleAbout(poly: Array<[number, number]>, k: number): Array<[number, number]> {
   const cx = poly.reduce((a, p) => a + p[0], 0) / poly.length;
   const cz = poly.reduce((a, p) => a + p[1], 0) / poly.length;
-  return poly.map(([x, z]) => {
-    const r = Math.hypot(x - cx, z - cz) || 1;
-    const k = Math.max(0, r - d) / r;
-    return [cx + (x - cx) * k, cz + (z - cz) * k];
-  });
+  return poly.map(([x, z]) => [cx + (x - cx) * k, cz + (z - cz) * k]);
 }
 
 /**
- * Grow a convex outline by `d` on every side: scaled about its centroid so
- * each edge stays parallel and moves out by at least `d`. (Pushing points
- * radially leaves edges that run toward the centroid where they were, in
- * the plane of the body's own face.)
+ * Prism over a convex (x, z) outline from a flat bottom up to a top that
+ * follows `tops` (one height per outline point). Faces wound outward.
  */
-function grow(poly: Array<[number, number]>, d: number): Array<[number, number]> {
-  const cx = poly.reduce((a, p) => a + p[0], 0) / poly.length;
-  const cz = poly.reduce((a, p) => a + p[1], 0) / poly.length;
-  let h = Infinity;
-  for (let i = 0; i < poly.length; i++) {
-    const [ax, az] = poly[i];
-    const [bx, bz] = poly[(i + 1) % poly.length];
-    const len = Math.hypot(bx - ax, bz - az);
-    if (len < 1e-6) continue;
-    h = Math.min(h, Math.abs((bx - ax) * (az - cz) - (bz - az) * (ax - cx)) / len);
+function cappedPrism(outline: Array<[number, number]>, tops: number[], bottom: number, m: THREE.Material): THREE.Mesh {
+  const n = outline.length;
+  const cx = outline.reduce((a, p) => a + p[0], 0) / n;
+  const cz = outline.reduce((a, p) => a + p[1], 0) / n;
+  const cy = (tops.reduce((a, t) => a + t, 0) / n + bottom) / 2;
+  const c = new THREE.Vector3(cx, cy, cz);
+  const pos: number[] = [];
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const tri = (a: THREE.Vector3, b: THREE.Vector3, d: THREE.Vector3, out: THREE.Vector3) => {
+    const nrm = e1.subVectors(b, a).cross(e2.subVectors(d, a));
+    const flip = nrm.dot(out) < 0;
+    for (const v of flip ? [a, d, b] : [a, b, d]) pos.push(v.x, v.y, v.z);
+  };
+  const T = outline.map(([x, z], i) => new THREE.Vector3(x, tops[i], z));
+  const B = outline.map(([x, z]) => new THREE.Vector3(x, bottom, z));
+  const up = new THREE.Vector3(0, 1, 0);
+  const down = new THREE.Vector3(0, -1, 0);
+  for (let i = 1; i + 1 < n; i++) {
+    tri(T[0], T[i], T[i + 1], up);
+    tri(B[0], B[i + 1], B[i], down);
   }
-  const k = 1 + d / Math.max(h, 1e-3);
-  return poly.map(([x, z]) => [cx + (x - cx) * k, cz + (z - cz) * k]);
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const out = T[i].clone().add(T[j]).multiplyScalar(0.5).sub(c).setY(0);
+    tri(T[i], B[i], B[j], out);
+    tri(T[i], B[j], T[j], out);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return new THREE.Mesh(g, m);
 }
 
 /** Vertical prism over an (x, z) outline from y0 to y1. */
@@ -259,24 +266,59 @@ export class WeaponsFx {
     }
   }
 
-  /** Launcher frame: +X out of the forearm, +Y along it toward the hand. */
+  /**
+   * Launcher frame: +X out of the forearm, +Y along it toward the hand.
+   * The whole gun is sized and seated from the panel that carries it: as
+   * long as the plate (less a margin) and tucked a few mm under its inner
+   * face, so it rides up inside the plate's opening and never pokes through
+   * the plate or the forearm shell beside it.
+   */
   private makeLauncher(side: 'L' | 'R', flap: Flap, m: ReturnType<typeof mats>): Launcher {
     const spec = boneSpec(`forearm.${side}`);
     const y = new THREE.Vector3(...spec.tail).sub(new THREE.Vector3(...spec.head)).normalize();
     const x = forearmNormal(side);
     const z = new THREE.Vector3().crossVectors(x, y);
-    const at = flap.bounds.getCenter(new THREE.Vector3()).addScaledVector(x, -0.03);
+    const c = flap.bounds.getCenter(new THREE.Vector3());
+    // The plate in this frame, origin at its centre
+    const pos = flap.mesh.geometry.getAttribute('position');
+    const local: Array<[number, number, number]> = [];
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).sub(c);
+      local.push([v.dot(x), v.dot(y), v.dot(z)]);
+    }
+    const zMin = Math.min(...local.map((p) => p[2]));
+    const zMax = Math.max(...local.map((p) => p[2]));
+    const zm = (zMin + zMax) / 2;
+    // The plate's length where the gun runs (its outline is not square)
+    const lane = local.filter((p) => Math.abs(p[2] - zm) < POD_R);
+    const yMin = Math.min(...lane.map((p) => p[1]));
+    const yMax = Math.max(...lane.map((p) => p[1]));
+    const fit = Math.min(1, (yMax - yMin - 0.016) / GUN_LEN);
+    const ym = (yMin + yMax) / 2;
+    // Lowest point of the plate's underside over the gun's footprint
+    let under = Infinity;
+    for (const [a, b, w] of local) {
+      if (Math.abs(w - zm) < POD_R + 0.004 && Math.abs(b - ym) < (GUN_LEN * fit) / 2) under = Math.min(under, a);
+    }
+    if (!Number.isFinite(under)) under = 0;
+    const at = c
+      .clone()
+      .addScaledVector(x, under - 0.003 - (POD_X + POD_R))
+      .addScaledVector(y, ym - GUN_MID * fit)
+      .addScaledVector(z, zm);
     const bind = new THREE.Matrix4().makeBasis(x, y, z).setPosition(at);
 
     const rig = new THREE.Group();
     // Rail under the panel, launch tube, rocket nose in the muzzle
-    rig.add(box(0.012, 0.126, 0.03, m.gun, 0.006, 0, 0));
+    rig.add(box(0.012, 0.126 * fit, 0.03, m.gun, 0.006, 0, 0));
     const pod = new THREE.Group();
-    pod.position.set(0.012, 0, 0);
+    pod.position.set(POD_X, 0, 0);
+    pod.scale.set(1, fit, 1);
     // End caps are staggered by a millimetre or more: two caps in one plane flicker
     pod.add(tube(0.016, 0.016, -0.069, 0.064, m.gun, 20));
-    pod.add(tube(0.0175, 0.0175, 0.048, 0.065, m.gold, 20));
-    pod.add(tube(0.0175, 0.0175, -0.07, -0.056, m.gold, 20));
+    pod.add(tube(POD_R, POD_R, 0.048, 0.065, m.gold, 20));
+    pod.add(tube(POD_R, POD_R, -0.07, -0.056, m.gold, 20));
     pod.add(tube(0.0115, 0.0, 0.067, 0.093, m.red, 16));
     pod.add(tube(0.012, 0.012, 0.06, 0.0685, m.steel, 16));
     // Targeting lens (its own material: it flares on this launcher's lock)
@@ -302,37 +344,49 @@ export class WeaponsFx {
     const laserGeo = new THREE.CylinderGeometry(0.0012, 0.0012, len, 6, 1, true);
     laserGeo.translate(0, len / 2, 0);
     const laser = new THREE.Mesh(laserGeo, laserMaterial());
-    laser.position.set(0.012, 0.094, 0);
+    const muzzle = new THREE.Vector3(POD_X, 0.094 * fit, 0);
+    laser.position.copy(muzzle);
     laser.visible = false;
     rig.add(laser);
-    const muzzle = new THREE.Vector3(0.012, 0.094, 0);
     return { ...this.mount(`forearm.${side}`, flap, bind, rig), side, muzzle, lens, ring, laser, lastLock: 0, locked: false };
   }
 
   /**
-   * Mini-rocket silo contoured to the trap panel: the panel's own footprint
-   * extruded down as the silo body, so it rises as one with the armor. Its
-   * front face carries a 3 × 2 rack of rockets pointing forward.
+   * Mini-rocket silo contoured to the trap panel: the panel's own footprint,
+   * drawn in about its middle (so the lifted panel overhangs it like a lid)
+   * and extruded down as the silo body, so it rises as one with the armor.
+   * Its top follows the lid's underside a few mm below it — the trap slopes
+   * down to the shoulder, and a flat top poked out through the low side.
+   * Its front face carries a 3 × 2 rack of rockets pointing forward.
    */
   private makeSilo(s: number, flap: Flap, m: ReturnType<typeof mats>) {
     const b = flap.bounds;
-    // A touch inside the panel outline so the lifted panel overhangs it like a lid
+    const cy = (b.min.y + b.max.y) / 2;
+    const geo = flap.mesh.geometry;
+    const pos = geo.getAttribute('position');
+    const pts: THREE.Vector3[] = [...new Set(geo.index!.array)].map((i) => new THREE.Vector3().fromBufferAttribute(pos, i));
+    const lid = hull2(pts.map((p) => [p.x, p.z] as [number, number]));
     // Flat front face for the rocket rack (outline clipped at z ≤ face)
-    const raw = footprint(flap.mesh.geometry, -0.02);
-    const face = Math.max(...raw.map((q) => q[1])) - 0.012;
-    const foot = clipZ(raw, face);
-    // Top tucks halfway into the panel; the exposed band is SILO_RISE tall
-    const half = (b.max.y - b.min.y) / 2;
-    const H = half + SILO_RISE + 0.01;
-    // Silo top tucks halfway into the panel so no gap opens under its high side
-    const bind = new THREE.Matrix4().makeTranslation(0, (b.min.y + b.max.y) / 2, 0);
+    const inner = scaleAbout(lid, SILO_SCALE);
+    const face = Math.max(...inner.map((q) => q[1])) - 0.008;
+    const foot = clipZ(inner, face);
+    // Lid underside (relative to the frame) over a footprint point
+    const under = (x: number, z: number) => {
+      let lo = Infinity;
+      for (const p of pts) if (Math.hypot(p.x - x, p.z - z) < 0.015) lo = Math.min(lo, p.y);
+      return (Number.isFinite(lo) ? lo : b.min.y) - cy;
+    };
+    const tops = foot.map(([x, z]) => under(x, z) - 0.003);
+    // Rack and bands hang under the lid's lowest point
+    const top = Math.min(...tops);
+    const bind = new THREE.Matrix4().makeTranslation(0, cy, 0);
     const rig = new THREE.Group();
-    // Body (contoured prism) + gold rim just under the lid
-    rig.add(prism(foot, -H, 0, m.red));
-    rig.add(prism(grow(foot, 0.0015), -half - 0.006, -half - 0.002, m.gold));
+    // Body (contoured, sloped top) + gold rim just under the lid
+    rig.add(cappedPrism(foot, tops, top - SILO_RISE - 0.012, m.red));
+    rig.add(prism(scaleAbout(foot, 1.04), top - 0.006, top - 0.002, m.gold));
     // Second gold band low on the exposed sleeve + a dark seam between
-    rig.add(prism(grow(foot, 0.0012), -half - SILO_RISE * 0.86, -half - SILO_RISE * 0.8, m.gold));
-    rig.add(prism(grow(foot, 0.001), -half - SILO_RISE * 0.5, -half - SILO_RISE * 0.47, m.gun));
+    rig.add(prism(scaleAbout(foot, 1.035), top - SILO_RISE * 0.86, top - SILO_RISE * 0.8, m.gold));
+    rig.add(prism(scaleAbout(foot, 1.025), top - SILO_RISE * 0.5, top - SILO_RISE * 0.47, m.gun));
     // Front face: bezel plate and the rocket rack, aimed forward (+Z)
     // Rack sits on the silo's own front face
     const front = Math.max(...foot.map((q) => q[1]));
@@ -340,7 +394,7 @@ export class WeaponsFx {
     // Rack spans the silo's own front face (never wider than the silo)
     const fx = foot.filter((q) => q[1] > front - 0.003).map((q) => q[0]);
     const w = Math.min(0.055, (Math.max(...fx) - Math.min(...fx)) * 0.82);
-    const bezel = box(w, 0.042, 0.006, m.gun, cx, -0.0222, front + 0.001);
+    const bezel = box(w, 0.042, 0.006, m.gun, cx, top - 0.0242, front + 0.001);
     rig.add(bezel);
     const rockets: THREE.Object3D[] = [];
     const cells: THREE.MeshBasicMaterial[] = [];
@@ -351,7 +405,7 @@ export class WeaponsFx {
     for (let i = 0; i < 2; i++) {
       for (let j = 0; j < 3; j++) {
         const r = new THREE.Group();
-        r.position.set(cx + (i - 0.5) * w * 0.5, -0.01 - j * 0.0122, front - 0.012);
+        r.position.set(cx + (i - 0.5) * w * 0.5, top - 0.012 - j * 0.0122, front - 0.012);
         r.rotation.x = Math.PI / 2; // tube +Y → forward
         r.add(tube(collar, collar, -0.004, 0.0, m.gold, 12)); // cell collar
         r.add(tube(body, body, 0.0008, 0.016, m.steel, 10));
@@ -370,9 +424,9 @@ export class WeaponsFx {
     const order = [0, 3, 1, 4, 2, 5].map((k) => (s > 0 ? k : k < 3 ? k + 3 : k - 3));
     const byArm = order.map((k) => rockets[k]);
     const cellsByArm = order.map((k) => cells[k]);
-    const center = new THREE.Vector3(cx, -0.022, front);
+    const center = new THREE.Vector3(cx, top - 0.024, front);
     // Hinge pins + sensor
-    rig.add(box(0.008, 0.005, 0.003, m.lens, cx + s * w * 0.42, -0.006, front + 0.0045));
+    rig.add(box(0.008, 0.005, 0.003, m.lens, cx + s * w * 0.42, top - 0.008, front + 0.0045));
     return { ...this.mount('chest', flap, bind, rig), rockets: byArm, cells: cellsByArm, front, side: s, center };
   }
 

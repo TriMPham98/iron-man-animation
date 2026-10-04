@@ -29,6 +29,7 @@ import type { FlightCheckFrame } from '../animation/flightCheck';
 import { armorPieceDef } from './armorPieces';
 import { buildFlightFlaps, flapMotion, type Flap } from './flightFlaps';
 import { FlightFx, type PalmEmitter } from './flightFx';
+import { ReactorPowerDown } from './reactorFx';
 import { WeaponsFx, type WeaponTarget } from './weaponsFx';
 import { FIT_TASKS } from '../workshop/fittingProgram';
 import { FOOT_HATCH_RADIUS, ROOM_HEIGHT } from '../workshop/workshopEnvironment';
@@ -75,6 +76,7 @@ export class Suit {
   private flapBacks = new Map<Flap, THREE.SkinnedMesh>();
   private flightFx!: FlightFx;
   private weapons!: WeaponsFx;
+  private readonly reactorFx = new ReactorPowerDown();
   private flightActive = false;
   private flaps: Flap[] = [];
   private flapRests = new Map<ArmorPieceId, THREE.SkinnedMesh>();
@@ -159,6 +161,10 @@ export class Suit {
     };
     suit.cavity = shell(loaded.finalMesh.geometry, 'suit-cavity');
     for (const f of split.flaps) {
+      // A plate drawn from both sides already shows its own back; a second
+      // back-face shell on it fights it for depth
+      const mats = Array.isArray(f.mesh.material) ? f.mesh.material : [f.mesh.material];
+      if (mats.every((m) => m.side === THREE.DoubleSide)) continue;
       const back = shell(f.mesh.geometry, `flap-back-${f.id}`);
       back.matrixAutoUpdate = false;
       suit.flapBacks.set(f, back);
@@ -186,6 +192,7 @@ export class Suit {
     suit.model.add(suit.flightFx.group);
     suit.weapons = new WeaponsFx(suit.flaps);
     suit.model.add(suit.weapons.group);
+    suit.model.add(suit.reactorFx.group);
 
     suit.resetToStart();
     return suit;
@@ -361,10 +368,10 @@ export class Suit {
     for (const flap of this.flaps) {
       const k = f.flaps[flap.id] ?? 0;
       const m = flap.mesh;
-      const back = this.flapBacks.get(flap)!;
+      const back = this.flapBacks.get(flap);
       m.visible = openPieces.has(flap.piece.id);
       m.matrixWorldNeedsUpdate = true;
-      back.visible = k > 1e-4;
+      if (back) back.visible = k > 1e-4;
       if (k <= 1e-4) {
         m.matrix.identity();
         // Walls only exist once the plate has left the shell.
@@ -374,8 +381,10 @@ export class Suit {
       // frame = dock · motion; mesh matrix = frame · dock⁻¹
       const frame = this.kin.dock(armorPieceDef(flap.piece.id).anchor, this._tf).multiply(flapMotion(flap, k, this._hm));
       this.kin.meshMatrix(flap.piece.id, frame, m.matrix);
-      back.matrix.copy(m.matrix);
-      back.matrixWorldNeedsUpdate = true;
+      if (back) {
+        back.matrix.copy(m.matrix);
+        back.matrixWorldNeedsUpdate = true;
+      }
       if (flap.walls) {
         flap.walls.visible = true;
         flap.walls.matrix.copy(m.matrix);
@@ -384,6 +393,11 @@ export class Suit {
     }
     this.flightFx.update(f, t, this.rig, this.modelInv, this.particles);
     this.weapons.update(f, t, this.rig, this.modelInv, this.particles);
+  }
+
+  /** Arc reactor power-down overlay on the doff clock (s), or null to hide it. */
+  setReactorPowerDown(t: number | null): void {
+    this.reactorFx.update(t, this.rig, this.modelInv);
   }
 
   /** Deployed weapons for the HUD reticles, in world space. */
@@ -559,6 +573,7 @@ export class Suit {
     this.diagnostic = null;
     this.overlay.dispose();
     this.hatches.dispose();
+    this.reactorFx.dispose();
     this.particles.dispose();
     this.group.traverse((obj) => {
       if ((obj as THREE.Mesh).isMesh) {
