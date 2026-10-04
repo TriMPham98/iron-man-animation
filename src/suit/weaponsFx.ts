@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { FLARE_POPS, type FlightCheckFrame } from '../animation/flightCheck';
 import { boneSpec, type BoneName } from './rig';
 import type { SuitRig } from './rigPose';
-import { flapMotion, forearmNormal, SILO_RISE, type Flap } from './flightFlaps';
+import { FLARE_PUSH, flapMotion, forearmNormal, SILO_RISE, type Flap } from './flightFlaps';
 import type { SuitParticles } from './particles';
 
 /**
@@ -30,8 +30,8 @@ const ease = (a: number, b: number, u: number) => {
 };
 
 /** Cylinder along local +Y spanning y0 → y1. */
-function tube(r0: number, r1: number, y0: number, y1: number, m: THREE.Material, seg = 16): THREE.Mesh {
-  const g = new THREE.CylinderGeometry(r1, r0, y1 - y0, seg);
+function tube(r0: number, r1: number, y0: number, y1: number, m: THREE.Material, seg = 16, open = false): THREE.Mesh {
+  const g = new THREE.CylinderGeometry(r1, r0, y1 - y0, seg, 1, open);
   g.translate(0, (y0 + y1) / 2, 0);
   return new THREE.Mesh(g, m);
 }
@@ -164,7 +164,7 @@ export class WeaponsFx {
       const trap = flaps.find((f) => f.id === `trap.${side}`);
       if (trap) this.silos.push(this.makeSilo(s, trap, m));
       const hip = flaps.find((f) => f.id === `flare.${side}`);
-      if (hip) this.dispensers.push(this.makeDispenser(s, hip));
+      if (hip) this.dispensers.push(this.makeDispenser(s, hip, m));
     }
   }
 
@@ -245,21 +245,49 @@ export class WeaponsFx {
   }
 
   /**
-   * Flare ports on the suit's own round hip plate (no added hardware): the
-   * plate slides out and turns, and flares leave from the gap round its
-   * rim. Only the launch points are kept here, carried with the plate.
+   * Flare drum under the suit's own round hip plate: the plate pushes out
+   * along its normal and the drum it caps comes out with it — a short
+   * cylinder the plate's own size (so it stays hidden in the plate's seat
+   * when stowed), suit red with a gold band, six ports round its side. Drum and
+   * plate index a sixth of a turn together; flares leave from the ports.
    */
-  private makeDispenser(s: number, flap: Flap) {
+  private makeDispenser(s: number, flap: Flap, m: ReturnType<typeof mats>) {
     const b = flap.bounds;
-    const c = b.getCenter(new THREE.Vector3());
-    const r = Math.max(0.02, Math.min(b.max.y - b.min.y, b.max.z - b.min.z) * 0.45);
-    const bind = new THREE.Matrix4().makeTranslation(c.x - s * 0.008, c.y, c.z);
+    const n = flap.axis.clone().normalize();
+    // Plate radius in its own plane (it faces out along ±X); the drum is a
+    // hair inside it so the face disk reads as a lid
+    const size = b.getSize(new THREE.Vector3());
+    const r = (Math.min(size.y, size.z) / 2) * 0.96;
+    // Drum frame: +Y along the plate normal, origin at the plate's centre
+    const y = n;
+    const x = new THREE.Vector3(0, 1, 0).cross(y).normalize();
+    const z = new THREE.Vector3().crossVectors(x, y);
+    const bind = new THREE.Matrix4().makeBasis(x, y, z).setPosition(flap.pivot);
+    // The face disk is the plate's outer few mm (a hub runs in behind it):
+    // the drum starts right under the disk and runs back past the push, so
+    // the hub and the plate's seat are sleeved at every point of travel
+    const face = size.x / 2;
+    const y1 = face - 0.007;
+    const y0 = y1 - FLARE_PUSH - 0.02;
+    const rig = new THREE.Group();
+    rig.add(tube(r, r, y0, y1, m.red, 32, true));
+    rig.add(tube(r * 1.015, r * 1.015, y1 - 0.007, y1 - 0.003, m.gold, 32, true));
+    rig.add(tube(r * 1.01, r * 1.01, y0 + 0.004, y0 + 0.007, m.gold, 32, true));
     const cells: THREE.Vector3[] = [];
+    const portY = y1 - FLARE_PUSH * 0.55;
     for (let k = 0; k < 6; k++) {
       const a = (k / 6) * Math.PI * 2;
-      cells.push(new THREE.Vector3(0, Math.sin(a) * r, Math.cos(a) * r));
+      const dir = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+      // Dark port recess with a gold collar on the drum's side
+      const port = new THREE.Group();
+      port.position.copy(dir).multiplyScalar(r).setY(portY);
+      port.rotation.y = -a;
+      port.add(box(0.003, 0.012, 0.009, m.gold, 0.0005, 0, 0));
+      port.add(box(0.0035, 0.009, 0.0065, m.gun, 0.001, 0, 0));
+      rig.add(port);
+      cells.push(dir.clone().multiplyScalar(r + 0.004).setY(portY));
     }
-    return { ...this.mount('hips', flap, bind, new THREE.Group()), cells, side: s };
+    return { ...this.mount('hips', flap, bind, rig), cells, side: s };
   }
 
   private mount(bone: BoneName, flap: Flap, bind: THREE.Matrix4, rig: THREE.Group): Mount {
@@ -327,7 +355,7 @@ export class WeaponsFx {
         this.group.add(sprite);
         this.flares.push({ p: cell, v, life: 1.6, sprite });
         particles.burst('sparks', cell, 16, v.clone().normalize());
-        particles.burst('steam', cell, 6, v.clone().normalize());
+        particles.burst('steam', cell, 3, v.clone().normalize());
       }
     }
     const step = Math.max(0, Math.min(0.05, dt));
@@ -352,7 +380,8 @@ export class WeaponsFx {
       fl.sprite.position.copy(fl.p);
       fl.sprite.scale.setScalar((0.07 + 0.05 * flick) * Math.min(1, fl.life * 2));
       // Smoke trail
-      if (Math.random() < 0.6) particles.burst('steam', fl.p, 1, fl.v.clone().multiplyScalar(-0.2));
+      // Smoke trail — kept thin so it never curtains the suit from the lens
+      if (Math.random() < 0.3) particles.burst('steam', fl.p, 1, fl.v.clone().multiplyScalar(-0.2));
     }
   }
 

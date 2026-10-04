@@ -1,5 +1,5 @@
 import type { SuitUpPlan } from '../animation/suitUpChoreography';
-import { FLIGHT_EVENTS, type FlightEvent } from '../animation/flightCheck';
+import { FLIGHT_EVENTS, THRUSTER_BURN_SEC, type FlightEvent } from '../animation/flightCheck';
 import { STAND_RETRACT_SEC } from '../workshop/cradleStands';
 import type { PlayRequest } from './engine';
 
@@ -19,6 +19,7 @@ export interface SfxCue {
   pitch?: number;
   /** Seconds of the file to play (defaults to the whole file). */
   duration?: number;
+  fadeIn?: number;
   fadeOut?: number;
 }
 
@@ -138,6 +139,26 @@ export function doffCues(plan: SuitUpPlan): SfxCue[] {
   return thin(cues, 0.3);
 }
 
+/** Crossfaded takes of the thruster burn covering `span` seconds from `t0`. */
+function burnTakes(t0: number, span: number): SfxCue[] {
+  const len = SFX_LENGTH['thruster-burn.mp3'];
+  const xf = 0.6;
+  // Each take starts as the previous one begins its crossfade
+  const step = len - xf;
+  const takes = Math.max(1, Math.ceil((span - xf) / step));
+  return Array.from({ length: takes }, (_, i): SfxCue => {
+    const last = i === takes - 1;
+    return {
+      t: t0 + i * step,
+      file: 'thruster-burn.mp3',
+      volume: 0.65,
+      duration: last ? Math.min(len, span - i * step) : len,
+      fadeIn: i === 0 ? 0.05 : xf,
+      fadeOut: last ? 0.7 : xf,
+    };
+  });
+}
+
 /** Cues for the flight-control check (flight-check seconds). */
 export function flightCues(): SfxCue[] {
   const both = (e: FlightEvent) => e.side === 'both';
@@ -164,8 +185,9 @@ export function flightCues(): SfxCue[] {
       case 'ignite':
         return [{ t: e.t, file: 'thruster-ignite.mp3', volume: 0.7 }];
       case 'liftoff':
-        // Burn runs through the hover and is cut at touchdown + cut-off
-        return [{ t: e.t - 0.3, file: 'thruster-burn.mp3', volume: 0.65, duration: 4.25, fadeOut: 0.7 }];
+        // Burn runs through the whole hover to the cut-off: the clip is
+        // shorter than that, so overlapping takes crossfade into each other
+        return burnTakes(e.t - 0.3, THRUSTER_BURN_SEC);
       case 'touchdown':
         return [{ t: e.t, file: 'touchdown.mp3', volume: 0.6 }];
       case 'cutoff':
@@ -200,6 +222,7 @@ export function createCuePlayer(play: (req: PlayRequest) => void, maxJump = 0.5)
       duration,
       volume: c.volume,
       pitch: c.pitch ?? 1,
+      fadeIn: c.fadeIn ?? 0,
       fadeOut: c.fadeOut ?? 0.05,
       clipDuration: duration,
     });

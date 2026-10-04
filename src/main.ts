@@ -30,6 +30,7 @@ import { installJarvisCursor } from './ui/jarvisCursor';
 import { createOverlay } from './ui/overlay';
 import { createPickHighlight } from './ui/pickHighlight';
 import { prefersReducedMotion } from './ui/viewerMode';
+import { SOUNDS } from './audio/sounds';
 
 async function boot(): Promise<void> {
   const canvas = document.getElementById('scene-canvas') as HTMLCanvasElement;
@@ -41,22 +42,67 @@ async function boot(): Promise<void> {
   installJarvisCursor();
 
   const ui = createOverlay();
-  ui.setLoadingProgress(0.05);
 
   const reducedMotion = prefersReducedMotion();
   if (reducedMotion) {
     document.body.classList.add('reduced-motion');
   }
 
-  // ── Phase 1: HTML loader only ────────────────────────────────────
+  // ── Phase 1: fetch everything in parallel (HTML loader only) ──────
   // Do NOT create a WebGL context on the page canvas yet. On many GPUs the
   // hangar clear color + floor paint through the loader as a gray band that
   // grows with setSize — that is the “resizing gray section” on refresh.
-  ui.setLoadingProgress(0.1);
-  const suit = await Suit.create((r) => {
-    ui.setLoadingProgress(0.1 + r * 0.7);
-  });
-  ui.setLoadingProgress(0.85);
+  //
+  // Boot progress is a weighted sum of every task, so the eased bar moves
+  // steadily from 0 to 100 instead of jumping between phases.
+  const WEIGHTS = { fonts: 0.03, suit: 0.5, audio: 0.17, hangar: 0.1, gpu: 0.2 } as const;
+  const done: Record<keyof typeof WEIGHTS, number> = { fonts: 0, suit: 0, audio: 0, hangar: 0, gpu: 0 };
+  const report = (task: keyof typeof WEIGHTS, r: number, stage?: Parameters<typeof ui.setLoadingProgress>[1]) => {
+    done[task] = Math.max(done[task], Math.min(1, r));
+    let p = 0;
+    for (const k of Object.keys(WEIGHTS) as Array<keyof typeof WEIGHTS>) p += WEIGHTS[k] * done[k];
+    ui.setLoadingProgress(p, stage);
+  };
+  report('fonts', 0, 'core');
+
+  // HUD fonts first: the INITIATE label is fitted to its nucleus and would
+  // jump when a late webfont swaps in mid-handoff
+  const fonts = (async () => {
+    try {
+      await Promise.race([
+        Promise.all([
+          document.fonts.load('400 1em Michroma'),
+          document.fonts.load('400 1em "JetBrains Mono"'),
+          document.fonts.load('600 1em "JetBrains Mono"'),
+        ]).then(() => document.fonts.ready),
+        new Promise((r) => setTimeout(r, 3000)),
+      ]);
+    } catch {
+      /* fall back to system fonts */
+    }
+    report('fonts', 1);
+  })();
+
+  // Every SFX clip buffered into the engine's warm pool alongside the mesh
+  // download, so no cue in the sequence waits on the network
+  const audioTimeline = createAudioTimelinePanel();
+  let jarvisStartupDur = JARVIS_STARTUP_SEC;
+  const audioFiles = [...new Set([JARVIS_STARTUP_FILE, ...SOUNDS.map((snd) => snd.file)])];
+  let audioDone = 0;
+  const audio = Promise.all([
+    ...audioFiles.map((file) =>
+      audioTimeline.engine.warm(file).then(() => report('audio', ++audioDone / audioFiles.length)),
+    ),
+    audioTimeline.engine.probeDuration(JARVIS_STARTUP_FILE).then((d) => {
+      if (d > 0.05) jarvisStartupDur = d;
+    }),
+  ]);
+
+  const suit = await Suit.create((r) => report('suit', r, r < 0.7 ? 'mesh' : undefined));
+  await fonts;
+  report('hangar', 0, done.audio < 1 ? 'audio' : 'hangar');
+  await audio;
+  report('hangar', 0, 'hangar');
 
   // ── Phase 2: build scene off-screen (#app still hidden) ──────────
   // Full fidelity: max DPR 1.75, full-res bloom (software GL still skips bloom).
@@ -106,12 +152,10 @@ async function boot(): Promise<void> {
   controls.autoRotate = false;
   controls.autoRotateSpeed = 1.0;
 
-  ui.setLoadingProgress(0.95);
+  report('hangar', 0.6);
 
   const clock = new THREE.Clock();
   const drawingBuffer = new THREE.Vector2();
-
-  const audioTimeline = createAudioTimelinePanel();
 
   const session = createAssemblySession({
     suit,
@@ -252,38 +296,35 @@ async function boot(): Promise<void> {
 
   // Compile every shader and upload every texture now (incl. the ones the
   // fitting / flight check / diagnostic use later) so nothing stalls mid-run
-  ui.setLoadingProgress(0.97);
+  report('hangar', 1, 'hud');
   suit.prepareDiagnosticScan();
   await warmUp(renderer, scene, camera);
-  ui.setLoadingProgress(1);
+  report('gpu', 0.75);
 
-  // ── Phase 3: scene ready, keep loader until INITIATE handoff ─────
-  // Pre-render one frame while #app is still hidden so the first visible
-  // frame is complete. Loader stays up (centered reactor) while we warm
-  // JARVIS VO, then dissolves into the growing INITIATE orb.
-  post.render();
-
+  // ── Phase 3: scene ready under the loader ────────────────────────
+  // Show #app beneath an opaque veil and run the real loop for a few
+  // frames: post-processing targets, adaptive resolution and the first
+  // shadow / bloom passes all settle before anything is seen, so the
+  // reveal's first visible frame is already a steady one.
   document.body.classList.add('scene-ready');
-  ui.showHud();
   ui.syncDirectorChrome();
   session.refreshHintCopy();
+  loop();
+  for (let i = 0; i < 4; i++) {
+    await new Promise<void>((r) => setTimeout(r, 34));
+    report('gpu', 0.75 + (i + 1) * 0.0625);
+  }
+  // Let the eased bar land on 100% and read SYSTEMS READY for a beat
+  await ui.loadingFilled();
+  await new Promise<void>((r) => setTimeout(r, reducedMotion ? 0 : 260));
 
   // Hangar idle until the user initiates (JARVIS cyan CTA).
   // Space / Enter / R / click all fire once; later loops use auto-replay.
   // Unlock audio in the gesture turn — assembly start is delayed for the
   // orb exit, and browsers drop autoplay permission across setTimeout.
   //
-  // JARVIS startup VO is a one-shot on INITIATE (not the director timeline).
-  // Fully warm the element before the gate appears so play() is not deferred
-  // to canplay (which runs outside the user-gesture window and is intermittent).
-  let jarvisStartupDur = JARVIS_STARTUP_SEC;
-  await Promise.all([
-    audioTimeline.engine.warm(JARVIS_STARTUP_FILE),
-    audioTimeline.engine.probeDuration(JARVIS_STARTUP_FILE).then((d) => {
-      if (d > 0.05) jarvisStartupDur = d;
-    }),
-  ]);
-
+  // JARVIS startup VO is a one-shot on INITIATE (not the director timeline);
+  // it was fully warmed above so play() stays inside the gesture window.
   ui.onStartGesture(() => {
     // Both calls stay synchronous in the gesture turn (no await).
     void audioTimeline.engine.unlock();
@@ -301,18 +342,19 @@ async function boot(): Promise<void> {
     session.setClockStart(clock.getElapsedTime());
     session.startSequence();
   });
-  // Coordinated handoff: loader chrome collapses, reactor → large INITIATE.
-  // (showStartGate also calls hideLoading’s dissolve path.)
+  // Coordinated handoff: loader chrome collapses, reactor → large INITIATE,
+  // and in the same frame the veil lifts off the hangar as the lens settles
+  // in from a little higher and further back.
   ui.showStartGate();
-  // Hero reveal: the hangar comes up out of a dark, soft focus while the
-  // lens settles in from a little higher and further back
+  ui.showHud();
   introCam.begin();
-  requestAnimationFrame(() => document.body.classList.add('scene-revealed'));
-  loop();
+  document.body.classList.add('scene-revealed');
 }
 
 boot().catch((err) => {
   console.error(err);
+  // The reticle is held back until the reveal — give the native cursor back
+  document.body.classList.remove('jarvis-cursor-active');
   const loading = document.getElementById('loading');
   if (loading) {
     loading.setAttribute('aria-busy', 'false');

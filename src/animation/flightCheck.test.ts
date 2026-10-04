@@ -69,4 +69,29 @@ describe('flight-control check', () => {
       expect(t).toBeLessThan(FLIGHT_CHECK_END);
     }
   });
+
+  it('runs ground checks before flight and the hover last', () => {
+    const order = FLIGHT_CHECK_STEPS.map((st) => st.group);
+    expect(order.indexOf('ALL SYSTEMS')).toBeGreaterThan(order.indexOf('WEAPONS'));
+    expect(order.indexOf('THRUSTERS')).toBe(order.length - 2);
+  });
+
+  it('deploys every flap and weapon together at full deflection', () => {
+    const at = FLIGHT_CHECK_STEPS.find((st) => st.group === 'ALL SYSTEMS')!.at;
+    let best = 0;
+    for (let t = at; t < at + 2.5; t += 0.02) {
+      best = Math.max(best, Math.min(...Object.values(evaluateFlightCheck(t).flaps)));
+    }
+    expect(best).toBeGreaterThan(0.95);
+  });
+
+  it('trims the stabilizers while airborne', () => {
+    const moved = new Set<string>();
+    for (let t = 0; t < FLIGHT_CHECK_END; t += 0.02) {
+      const f = evaluateFlightCheck(t);
+      if ((f.pose.lift ?? 0) < 0.1) continue;
+      for (const [k, v] of Object.entries(f.flaps)) if (v > 0.2) moved.add(k.split('.')[0]);
+    }
+    expect([...moved].sort()).toEqual(['back', 'calf', 'shoulder']);
+  });
 });

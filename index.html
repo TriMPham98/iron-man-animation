@@ -244,7 +244,9 @@
       }
       #loading .loading-fill {
         height: 100%;
-        width: 0%;
+        width: 100%;
+        transform: scaleX(0);
+        transform-origin: left center;
         background: linear-gradient(
           90deg,
           #b01020 0%,
@@ -346,8 +348,9 @@
           <div class="loading-stages" aria-hidden="true">
             <span class="loading-stage" data-stage="core">CORE</span>
             <span class="loading-stage" data-stage="mesh">MESH</span>
+            <span class="loading-stage" data-stage="audio">AUDIO</span>
             <span class="loading-stage" data-stage="hangar">HANGAR</span>
-            <span class="loading-stage" data-stage="hud">HUD</span>
+            <span class="loading-stage" data-stage="hud">GPU</span>
           </div>
         </div>
       </div>
@@ -360,6 +363,8 @@
         aria-label="Iron Man–inspired suit assembly sequence in 3D"
       ></canvas>
 
+      <!-- Opaque until the hero reveal, then lifts off the hangar -->
+      <div id="reveal-veil" aria-hidden="true"></div>
       <div id="vignette" aria-hidden="true"></div>
       <div id="scanlines" aria-hidden="true"></div>
 

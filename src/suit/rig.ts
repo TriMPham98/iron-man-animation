@@ -83,8 +83,19 @@ const LEFT_ARM: Omit<BoneSpec, 'name' | 'parent'>[] = [
   { head: [0.225, 1.465, -0.03], tail: [0.275, 1.265, -0.035], radius: 0.06, deform: true },
   // forearm.L — elbow → wrist (gauntlet cuff)
   { head: [0.275, 1.265, -0.035], tail: [0.375, 1.03, 0.02], radius: 0.055, deform: true },
-  // hand.L — wrist → fingertips
-  { head: [0.375, 1.03, 0.02], tail: [0.4, 0.84, 0.045], radius: 0.045, deform: true },
+  // hand.L — wrist → fingertips. The weighting capsule stops at the
+  // knuckles: a capsule down to the tips swallowed the middle and ring
+  // fingers (they sit right on the hand axis) so they never curled.
+  {
+    head: [0.375, 1.03, 0.02],
+    tail: [0.4, 0.84, 0.045],
+    capsule: [
+      [0.375, 1.03, 0.02],
+      [0.392, 0.952, 0.033],
+    ],
+    radius: 0.04,
+    deform: true,
+  },
 ];
 
 /**

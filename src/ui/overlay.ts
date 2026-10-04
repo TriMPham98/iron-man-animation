@@ -29,7 +29,13 @@ export interface DebugActivePiece {
 }
 
 export interface OverlayHandles {
-  setLoadingProgress: (p: number) => void;
+  /**
+   * Boot progress target 0–1 (the bar eases toward it, so steps never jump)
+   * and, optionally, the stage now running.
+   */
+  setLoadingProgress: (p: number, stage?: LoadingStageId) => void;
+  /** Resolves once the eased bar has visibly reached 100%. */
+  loadingFilled: () => Promise<void>;
   hideLoading: () => void;
   showHud: () => void;
   /**
@@ -145,26 +151,16 @@ function elOptional<T extends HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null;
 }
 
-/** Boot stages for the content-sized JARVIS loader (progress thresholds). */
-const LOADING_STAGES: readonly {
-  id: string;
-  at: number;
-  label: string;
-}[] = [
-  { id: 'core', at: 0, label: 'INITIALIZING CORE…' },
-  { id: 'mesh', at: 0.08, label: 'LOADING SUIT MESH…' },
-  { id: 'hangar', at: 0.82, label: 'BUILDING HANGAR…' },
-  { id: 'hud', at: 0.93, label: 'CALIBRATING HUD…' },
-];
+/** Boot stages for the content-sized JARVIS loader (chips in index.html). */
+const LOADING_STAGES = [
+  { id: 'core', label: 'INITIALIZING CORE…' },
+  { id: 'mesh', label: 'LOADING SUIT MESH…' },
+  { id: 'audio', label: 'BUFFERING AUDIO…' },
+  { id: 'hangar', label: 'BUILDING HANGAR…' },
+  { id: 'hud', label: 'COMPILING SHADERS…' },
+] as const;
 
-function loadingLabelFor(p: number): string {
-  if (p >= 0.999) return 'SYSTEMS READY';
-  let label = LOADING_STAGES[0]!.label;
-  for (const stage of LOADING_STAGES) {
-    if (p >= stage.at) label = stage.label;
-  }
-  return label;
-}
+export type LoadingStageId = (typeof LOADING_STAGES)[number]['id'];
 
 export function createOverlay(): OverlayHandles {
   const loading = el<HTMLDivElement>('loading');
@@ -793,6 +789,23 @@ export function createOverlay(): OverlayHandles {
     }, reducedMotion() ? 0 : LOADING_HANDOFF_MS);
   };
 
+  const alignHandoff = () => {
+    const reactor = loading.querySelector<HTMLElement>('.loading-reactor');
+    if (!reactor || !startBtn || !startGate) return;
+    const r = reactor.getBoundingClientRect();
+    const o = startBtn.getBoundingClientRect();
+    if (r.width < 1 || o.width < 1) return;
+    const dx = o.left + o.width / 2 - (r.left + r.width / 2);
+    const dy = o.top + o.height / 2 - (r.top + r.height / 2);
+    const ratio = r.width / o.width;
+    loading.style.setProperty('--handoff-dx', `${dx.toFixed(1)}px`);
+    loading.style.setProperty('--handoff-dy', `${dy.toFixed(1)}px`);
+    loading.style.setProperty('--handoff-scale', (1 / ratio).toFixed(3));
+    startGate.style.setProperty('--orb-enter-dx', `${(-dx).toFixed(1)}px`);
+    startGate.style.setProperty('--orb-enter-dy', `${(-dy).toFixed(1)}px`);
+    startGate.style.setProperty('--orb-enter-from', ratio.toFixed(3));
+  };
+
   const playInitiateHackerText = () => {
     if (!startGateVisible || !startLabel || startConsumed) return;
     cancelHackerText?.();
@@ -807,7 +820,11 @@ export function createOverlay(): OverlayHandles {
     if (startConsumed || !startGate) return;
     startGateVisible = true;
 
-    // Overlap loader dissolve with orb enter (same viewport center).
+    // The orb sits below the title, not at the viewport centre where the
+    // loader's reactor is: measure both and morph one into the other —
+    // the reactor glides + grows onto the orb while the orb grows out of
+    // the reactor's spot and size, on the same curve and clock.
+    alignHandoff();
     beginLoadingHandoff();
 
     startGate.classList.remove('is-hidden', 'is-exiting');
@@ -997,32 +1014,63 @@ export function createOverlay(): OverlayHandles {
     }, 480);
   };
 
-  return {
-    setLoadingProgress: (p: number) => {
-      const clamped = Math.min(1, Math.max(0, p));
-      const pct = Math.round(clamped * 100);
-      loadingFill.style.width = `${pct}%`;
+  // ── Boot progress: the bar eases toward the latest target ──────────
+  let loadTarget = 0;
+  let loadShown = 0;
+  let loadStage = 0;
+  let loadRaf = 0;
+  let loadLast = 0;
+  let lastPct = -1;
+  let lastStageShown = -1;
+  const loadFilledWaiters: Array<() => void> = [];
+  const tickLoading = (now: number) => {
+    const dt = loadLast ? Math.min(0.1, (now - loadLast) / 1000) : 0.016;
+    loadLast = now;
+    // Critically-damped chase + a floor speed so the last few % never crawl
+    const gap = loadTarget - loadShown;
+    loadShown = gap <= 0 ? loadTarget : Math.min(loadTarget, loadShown + gap * Math.min(1, dt * 5) + dt * 0.12);
+    const done = loadShown >= 0.999 && loadTarget >= 1;
+    const pct = Math.round(loadShown * 100);
+    if (pct !== lastPct) {
+      lastPct = pct;
+      // Compositor-only: scaleX instead of width, so the bar never relayouts
+      loadingFill.style.transform = `scaleX(${loadShown.toFixed(4)})`;
       if (loadingPct) loadingPct.textContent = `${pct}%`;
-
-      const label = loadingLabelFor(clamped);
-      if (loadingLabel && loadingLabel.textContent !== label) {
+    }
+    const stageKey = done ? LOADING_STAGES.length : loadStage;
+    if (stageKey !== lastStageShown) {
+      lastStageShown = stageKey;
+      const label = done ? 'SYSTEMS READY' : LOADING_STAGES[loadStage]!.label;
+      if (loadingLabel) {
         loadingLabel.textContent = label;
-        loadingLabel.classList.toggle('is-ready', clamped >= 0.999);
+        loadingLabel.classList.toggle('is-ready', done);
       }
-
       // Stage chips: done | active | upcoming
-      let activeIdx = 0;
-      for (let i = 0; i < LOADING_STAGES.length; i++) {
-        if (clamped >= LOADING_STAGES[i]!.at) activeIdx = i;
-      }
       for (const node of loadingStages) {
-        const idx = LOADING_STAGES.findIndex((s) => s.id === node.dataset.stage);
+        const idx = LOADING_STAGES.findIndex((st) => st.id === node.dataset.stage);
         if (idx < 0) continue;
-        const complete = clamped >= 0.999;
-        node.classList.toggle('is-active', !complete && idx === activeIdx);
-        node.classList.toggle('is-done', complete || idx < activeIdx);
+        node.classList.toggle('is-active', !done && idx === loadStage);
+        node.classList.toggle('is-done', done || idx < loadStage);
       }
+    }
+    if (done) {
+      loadRaf = 0;
+      loadFilledWaiters.splice(0).forEach((r) => r());
+      return;
+    }
+    loadRaf = requestAnimationFrame(tickLoading);
+  };
+
+  return {
+    setLoadingProgress: (p: number, stage?: LoadingStageId) => {
+      loadTarget = Math.max(loadTarget, Math.min(1, Math.max(0, p)));
+      if (stage) loadStage = LOADING_STAGES.findIndex((s) => s.id === stage);
+      if (!loadRaf) loadRaf = requestAnimationFrame(tickLoading);
     },
+    loadingFilled: () =>
+      loadShown >= 0.999 && loadTarget >= 1
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => loadFilledWaiters.push(resolve)),
     hideLoading: () => {
       // Soft dissolve into INITIATE when the gate follows; hard fade if alone.
       beginLoadingHandoff();

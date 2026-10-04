@@ -335,10 +335,17 @@ body.scene-ready #app {
 }
 
 #loading.is-handing-off .loading-reactor {
-  /* Soft grow + dissolve while the real orb enters underneath at the same center */
-  transform: scale(1.85);
+  /*
+    Glide + grow onto the INITIATE orb (offset / scale measured in
+    overlay.alignHandoff) on the orb's own enter curve and clock, so the
+    two read as one ring; the reactor dissolves as the orb takes over.
+  */
+  transform: translate(var(--handoff-dx, 0px), var(--handoff-dy, 0px))
+    scale(var(--handoff-scale, 1.85));
   opacity: 0;
-  filter: blur(1.5px) brightness(1.4);
+  transition:
+    transform 0.88s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.5s cubic-bezier(0.33, 0, 0.2, 1) 0.18s;
 }
 
 .loading-reactor-glow {
@@ -472,7 +479,11 @@ body.scene-ready #app {
 .loading-fill {
   position: relative;
   height: 100%;
-  width: 0%;
+  /* Full width, scaled by the eased boot progress (compositor-only) */
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  will-change: transform;
   background: linear-gradient(
     90deg,
     var(--red) 0%,
@@ -482,7 +493,6 @@ body.scene-ready #app {
   box-shadow:
     0 0 10px rgba(126, 232, 255, 0.5),
     0 0 4px rgba(201, 162, 39, 0.35);
-  transition: width 0.18s ease-out;
   z-index: 1;
 }
 
@@ -1259,14 +1269,16 @@ body.scene-ready #app {
 /* Loader reactor → full INITIATE orb (shared center) */
 @keyframes jarvis-orb-enter {
   0% {
-    transform: scale(var(--orb-enter-from, 0.25));
+    /* Starts exactly on the loader's reactor (see overlay.alignHandoff) */
+    transform: translate(var(--orb-enter-dx, 0px), var(--orb-enter-dy, 0px))
+      scale(var(--orb-enter-from, 0.25));
     opacity: 0.55;
   }
   55% {
     opacity: 1;
   }
   100% {
-    transform: scale(1);
+    transform: translate(0, 0) scale(1);
     opacity: 1;
   }
 }
@@ -3486,6 +3498,18 @@ body.jarvis-cursor-active * {
     visibility 0.16s ease;
 }
 
+/*
+  No cursor at all on the loading screen: the boot work holds the main
+  thread, so the reticle (moved from JS) would trail the mouse. It comes
+  in with the hero reveal, once frames run smoothly.
+*/
+body:not(.scene-revealed) .jarvis-cursor,
+body:not(.scene-revealed) .jarvis-cursor.is-visible {
+  opacity: 0;
+  visibility: hidden;
+  transition: none;
+}
+
 .jarvis-cursor-glow,
 .jarvis-cursor-ring,
 .jarvis-cursor-cross,
@@ -4240,25 +4264,35 @@ body.reduced-motion .jarvis-cursor .jarvis-cursor-ring-outer {
   }
 }
 
-/* ── Hero reveal: loader → hangar ───────────────────────────────────── */
-body.scene-ready #scene-canvas {
-  transition:
-    filter 1.9s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 2.2s cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 1.2s ease-out;
+/* ── Hero reveal: loader → hangar ───────────────────────────────────
+   The canvas renders steady frames under an opaque veil while the loader
+   finishes; the reveal then only animates opacity + transform (compositor
+   work — no CSS filter / blur over a full-screen WebGL canvas, which costs
+   a full-res filter pass every frame and hitched slower GPUs). */
+#reveal-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--bg);
+  opacity: 1;
+  will-change: opacity;
 }
-body.scene-ready:not(.scene-revealed) #scene-canvas {
-  filter: brightness(0.12) saturate(0.5) blur(10px);
-  transform: scale(1.06);
-  opacity: 0.35;
+body.scene-revealed #reveal-veil {
+  opacity: 0;
+  transition: opacity 1.6s cubic-bezier(0.4, 0, 0.2, 1) 0.12s;
+}
+body.scene-ready #scene-canvas {
+  transform: scale(1.045);
+  will-change: transform;
 }
 body.scene-revealed #scene-canvas {
-  filter: none;
   transform: none;
-  opacity: 1;
+  transition: transform 2.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 @media (prefers-reduced-motion: reduce) {
-  body.scene-ready #scene-canvas {
+  body.scene-revealed #reveal-veil,
+  body.scene-revealed #scene-canvas {
     transition: none;
   }
 }

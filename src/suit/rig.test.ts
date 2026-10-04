@@ -41,7 +41,11 @@ describe('island limb classification', () => {
 
 describe('skinWeightsAt', () => {
   it('binds limb points to the nearest bone of their limb', () => {
-    expect(dominantAt(0.4, 0.9, 0.04, 'arm.L')).toBe('hand.L');
+    expect(dominantAt(0.38, 0.99, 0.03, 'arm.L')).toBe('hand.L');
+    // Middle / ring fingers sit on the hand axis but must ride their own bones
+    expect(dominantAt(0.402, 0.9, 0.042, 'arm.L')).toBe('middle1.L');
+    expect(dominantAt(0.394, 0.9, 0.005, 'arm.L')).toBe('ring1.L');
+    expect(dominantAt(0.405, 0.85, 0.044, 'arm.L')).toBe('middle2.L');
     expect(dominantAt(0.31, 1.15, 0, 'arm.L')).toBe('forearm.L');
     expect(dominantAt(0.15, 0.3, -0.03, 'leg.L')).toBe('shin.L');
     expect(dominantAt(0.16, 0.03, 0.1, 'leg.L')).toBe('foot.L');

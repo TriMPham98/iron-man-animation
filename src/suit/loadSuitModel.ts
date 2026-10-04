@@ -247,6 +247,16 @@ function skinnedMesh(
   return mesh;
 }
 
+/**
+ * Hand the main thread back for a frame between the heavy build steps so
+ * the loader keeps painting (a timeout, not rAF: rAF never fires in a
+ * background tab and would stall the boot there).
+ */
+const yieldToPaint = () => new Promise<void>((resolve) => setTimeout(resolve, 16));
+
+/** Share of the load ratio spent downloading (the rest is the build). */
+const DOWNLOAD_SHARE = 0.7;
+
 export async function loadSuitModel(
   onProgress?: (ratio: number) => void,
 ): Promise<LoadedSuitModel> {
@@ -261,12 +271,15 @@ export async function loadSuitModel(
         MODEL_URL,
         resolve,
         (e) => {
-          if (e.total) onProgress?.(e.loaded / e.total);
+          if (e.total) onProgress?.((e.loaded / e.total) * DOWNLOAD_SHARE);
         },
         reject,
       );
     },
   );
+
+  onProgress?.(DOWNLOAD_SHARE);
+  await yieldToPaint();
 
   const group = new THREE.Group();
   group.name = 'suitModel';
@@ -284,6 +297,8 @@ export async function loadSuitModel(
   const positions = body.getAttribute('position').array as Float32Array;
   const indices = body.index!.array as Uint32Array;
   const skin = computeSkinWeights(positions, indices);
+  onProgress?.(0.82);
+  await yieldToPaint();
 
   // ── Cut the movie suit-up components (clean planar seams) ───────────
   const cut = cutArmor({
@@ -307,6 +322,8 @@ export async function loadSuitModel(
     },
   });
   body.dispose();
+  onProgress?.(0.94);
+  await yieldToPaint();
 
   const rig = createRig();
   group.add(rig.root);
