@@ -243,18 +243,20 @@ export class Suit {
   }
 
   /**
-   * Cell reset: every part still on a cradle rides its stand by `shift`
+   * Every part still on a cradle rides its stand by `shift`
    * (world y, per task) and is clipped at the deck / ceiling as it goes
    * through. Call after {@link applyFrame} (which parks the clip again).
    */
   rideStands(shift: (taskId: string) => number): void {
-    this.stowClip[0].constant = 0;
-    this.stowClip[1].constant = ROOM_HEIGHT;
     // World up in model space (the rig stands with a slight lean)
     const up = this._dir.set(0, 1, 0).transformDirection(this.modelInv);
     for (const task of FIT_TASKS) {
       const dy = shift(task.id);
       if (dy === 0) continue;
+      // Clip only while something rides (boots sinking into their hatch
+      // below the deck stay whole)
+      this.stowClip[0].constant = 0;
+      this.stowClip[1].constant = ROOM_HEIGHT;
       this._bm.makeTranslation(up.x * dy, up.y * dy, up.z * dy);
       for (const id of task.pieces) {
         const piece = this.pieces.find((p) => p.id === id);

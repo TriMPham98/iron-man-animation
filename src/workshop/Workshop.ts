@@ -15,6 +15,7 @@ import { BONE_SPECS } from '../suit/rig';
 import {
   cradleFor,
   armDims,
+  robotStation,
   FIT_TASKS,
   fitTask,
   ROBOTS,
@@ -28,7 +29,8 @@ import {
 import { mergeStaticTree } from './mergeStatic';
 import { SuitScanView } from './suitScanView';
 import { createWorkshopDetail, type WorkshopDetail } from './workshopDetail';
-import { CradleStands, floorCradlePorts } from './cradleStands';
+import { CradleStands, floorCradlePorts, STAND_RETRACT_SEC } from './cradleStands';
+import { DOFF_ARM_STOW_SEC, doffArmStowAt, doffStandSinkAt } from '../animation/doffSequence';
 import { createRobotMaterials, RobotArm, toolQuaternion, type ArmJoints } from './robotArm';
 
 const JOINT_KEYS = ['yaw', 'shoulder', 'elbow', 'wristRoll', 'wristPitch', 'flangeRoll'] as const;
@@ -82,6 +84,8 @@ const RETREAT = 0.15;
 const GO_HOME_GAP = 0.75;
 /** Rivet gun hover over a site (m). */
 const RIVET_HOVER = 0.06;
+/** Spread of the grippers' start times as they come up for the doff (of the 0–1 prep). */
+const DOFF_PREP_STAGGER = 0.3;
 /** Elevator travel so a folded arm clears the floor / ceiling. */
 const FLOOR_STOW_EXTRA = 1.35;
 const CEILING_STOW_EXTRA = 1.3;
@@ -110,6 +114,19 @@ export class Workshop {
   private readonly masts = new Map<RobotId, THREE.Mesh>();
   private stands!: CradleStands;
   private readonly standRetract = new Map<string, number>();
+  /** Carry job of every robot-held task. */
+  private readonly jobs = new Map<string, FitTiming>();
+  /** Doff: when each gripper folds away once its work is done (seed s). */
+  private readonly doffStowAt = new Map<RobotId, number | null>();
+  /**
+   * Seed time of the reversed fitting while doffing (null while building).
+   * It keeps running below the build's first frame so arms and stands can
+   * finish stowing after the last part is home.
+   */
+  private doffT: number | null = null;
+  /** How far the grippers have come up for the doff (0–1, see prepareDoff). */
+  private doffPrep = 0;
+  private prepOrder: Array<{ id: RobotId; at: number }> | null = null;
   private readonly mats = createRobotMaterials();
   private readonly liftTasks: FitTask[];
   private lastT = Number.NaN;
@@ -193,7 +210,11 @@ export class Workshop {
     };
     // A stand starts down once its part is lifted clear
     for (const track of this.plan.robots) {
-      for (const job of track.jobs) this.standRetract.set(job.task, job.lift + 0.35);
+      this.doffStowAt.set(track.id, doffArmStowAt(track));
+      for (const job of track.jobs) {
+        this.standRetract.set(job.task, job.lift + 0.35);
+        this.jobs.set(job.task, job);
+      }
     }
     const holes: Array<[number, number, number]> = [
       ...floorCradlePorts(),
@@ -467,19 +488,24 @@ export class Workshop {
     const tool = { pos: this._p, quat: this._q };
     let worst = 0;
 
+    // Building: nothing is up for a doff
+    if (this.doffT === null) this.doffPrep = 0;
     for (const r of frame.robots) {
       const arm = this.arms.get(r.id)!;
       const seg = this.segmentAt(r.id, t);
       let recoil = 0;
-      if (r.stow > 0) {
-        // Stow from wherever the program parked the tool
-        const park = this.parkPose(r.id);
+      const stow = this.doffT === null ? r.stow : this.doffStow(r.id, this.doffT);
+      if (stow > 0) {
+        // Stow from wherever the program parked the tool (a doffed arm
+        // folds away from home, where its reversed program ends)
+        const home = this.doffT !== null && this.doffT < (this.doffStowAt.get(r.id) ?? Infinity);
+        const park = home ? this.homes.get(r.id)! : this.parkPose(r.id);
         tool.pos.copy(park.pos);
         tool.quat.copy(park.quat);
       } else if (seg.kind === 'hold') {
         tool.pos.copy(seg.pose.pos);
         tool.quat.copy(seg.pose.quat);
-      } else if (seg.kind === 'move' && seg.jFrom && seg.jTo && r.stow <= 0) {
+      } else if (seg.kind === 'move' && seg.jFrom && seg.jTo) {
         // Joint-space transit
         const u = ease('inOut2', (t - seg.t0) / Math.max(1e-6, seg.t1 - seg.t0));
         const j = this._j;
@@ -487,12 +513,12 @@ export class Workshop {
         j.error = 0;
         arm.group.position.copy(arm.base);
         arm.setJoints(j);
-        arm.setStow(r.stow, this.stowDepth(arm));
+        arm.setStow(0, this.stowDepth(arm));
         arm.setGripper(this.jawFor(seg, frame, r.gripper));
         arm.setSpindle(r.spindle);
         arm.setRecoil(0);
         this.updateMast(r.id, arm);
-        this.env.setWell(r.id, r.stow);
+        this.env.setWell(r.id, 0);
         continue;
       } else if (seg.kind === 'move') {
         const u = ease('inOut2', (t - seg.t0) / Math.max(1e-6, seg.t1 - seg.t0));
@@ -512,8 +538,8 @@ export class Workshop {
       arm.group.position.copy(arm.base);
       arm.group.updateMatrixWorld(true);
       const err = arm.reachWorld(tool.pos, tool.quat);
-      if (r.stow <= 0) worst = Math.max(worst, err);
-      arm.setStow(r.stow, this.stowDepth(arm));
+      if (stow <= 0) worst = Math.max(worst, err);
+      arm.setStow(stow, this.stowDepth(arm));
       arm.setGripper(this.jawFor(seg, frame, r.gripper));
       arm.setSpindle(r.spindle);
       arm.setRecoil(recoil);
@@ -525,7 +551,7 @@ export class Workshop {
         }
       }
       this.updateMast(r.id, arm);
-      this.env.setWell(r.id, r.stow);
+      this.env.setWell(r.id, stow);
     }
     this.maxReachError = worst;
     this.lastT = t;
@@ -540,7 +566,97 @@ export class Workshop {
       plate.position.y = Math.min(this._v.y, 0.05);
     });
 
-    this.stands.apply((task) => this.standRetract.get(task.id) ?? Infinity, t);
+    const doffT = this.doffT;
+    this.stands.apply((task) => {
+      // Sinks once its part is lifted clear (running backwards: rises
+      // just before the part comes back)
+      const u = ((doffT ?? t) - (this.standRetract.get(task.id) ?? Infinity)) / STAND_RETRACT_SEC;
+      if (doffT === null) return u;
+      // Doffing: and sinks again with the part once it has been set down
+      const job = this.jobs.get(task.id);
+      return job ? Math.max(u, (doffStandSinkAt(job) - doffT) / STAND_RETRACT_SEC) : u;
+    });
+  }
+
+  /**
+   * Doff stow of an arm at reversed-fitting time `t`: grippers are up once
+   * prepared (see prepareDoff) until they are home from their last part,
+   * then fold away; the riveters never come up for the doff.
+   */
+  private doffStow(id: RobotId, t: number): number {
+    const at = this.doffStowAt.get(id);
+    if (at == null) return 1;
+    const dur = robotStation(id).mount === 'ceiling' ? DOFF_ARM_STOW_SEC.ceiling : DOFF_ARM_STOW_SEC.floor;
+    return Math.max(this.prepStow(id), THREE.MathUtils.smoothstep(at - t, 0, dur));
+  }
+
+  /** A gripper's stow while it comes up for the doff (staggered, 1 = still down). */
+  private prepStow(id: RobotId): number {
+    const at = this.doffPrepOrder().find((a) => a.id === id)?.at ?? 0;
+    return 1 - THREE.MathUtils.smoothstep(this.doffPrep, at, at + 1 - DOFF_PREP_STAGGER);
+  }
+
+  /**
+   * Drive the cell from the doff's reversed fitting clock (seed s), or hand
+   * it back to the build (null). Call before applying the frame.
+   */
+  setDoffClock(t: number | null): void {
+    this.doffT = t;
+  }
+
+  /** How far the grippers are up for the doff (0–1). */
+  doffPrepProgress(): number {
+    return this.doffPrep;
+  }
+
+  /** Bring the grippers up the rest of the way inside the doff (applied with the next frame). */
+  setDoffPrep(u: number): void {
+    this.doffPrep = THREE.MathUtils.clamp(u, 0, 1);
+  }
+
+  /** Seed time (reversed clock) by which every doffed arm and stand is stowed. */
+  doffSettledAt(): number {
+    let settled = Infinity;
+    for (const [id, at] of this.doffStowAt) {
+      if (at == null) continue;
+      const dur = robotStation(id).mount === 'ceiling' ? DOFF_ARM_STOW_SEC.ceiling : DOFF_ARM_STOW_SEC.floor;
+      settled = Math.min(settled, at - dur);
+    }
+    for (const job of this.jobs.values()) settled = Math.min(settled, doffStandSinkAt(job) - STAND_RETRACT_SEC);
+    return settled;
+  }
+
+  /**
+   * End of the showcase: the grippers come up out of the ring and down
+   * their masts to where the doff picks them up (each at the pose its build
+   * program parked it in), staggered. 0 = all stowed, 1 = ready. The
+   * riveters stay down.
+   */
+  prepareDoff(u: number): void {
+    this.setDoffPrep(u);
+    for (const { id } of this.doffPrepOrder()) {
+      const arm = this.arms.get(id)!;
+      const park = this.parkPose(id);
+      const stow = this.prepStow(id);
+      arm.group.position.copy(arm.base);
+      arm.group.updateMatrixWorld(true);
+      arm.reachWorld(park.pos, park.quat);
+      arm.setStow(stow, this.stowDepth(arm));
+      arm.setGripper(1);
+      this.updateMast(id, arm);
+      this.env.setWell(id, stow);
+    }
+    this.lastT = Number.NaN;
+  }
+
+  /** Grippers in the order {@link prepareDoff} raises them, each with its start (0–1). */
+  doffPrepOrder(): ReadonlyArray<{ id: RobotId; at: number }> {
+    if (!this.prepOrder) {
+      const grippers = ROBOTS.filter((st) => this.doffStowAt.get(st.id) != null);
+      const n = Math.max(1, grippers.length - 1);
+      this.prepOrder = grippers.map((st, i) => ({ id: st.id, at: (DOFF_PREP_STAGGER * i) / n }));
+    }
+    return this.prepOrder;
   }
 
   /** Final parked pose of an arm's program (where it starts stowing). */
@@ -594,8 +710,14 @@ export class Workshop {
     this.lastT = Number.NaN;
   }
 
-  /** World-y shift of a task's cradle head (parts ride it down / up). */
+  /**
+   * World-y shift of a task's cradle head while its parts sit on it (they
+   * ride it down / up). While doffing, a stand rising to meet a part still
+   * in the gripper carries nothing.
+   */
   standShift(taskId: string): number {
+    const job = this.jobs.get(taskId);
+    if (this.doffT !== null && job && this.doffT > job.lift) return 0;
     return this.stands.shift(taskId);
   }
 

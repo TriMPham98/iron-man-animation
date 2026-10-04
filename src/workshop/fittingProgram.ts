@@ -253,11 +253,10 @@ export const FIT_TASKS: readonly FitTask[] = [
   },
   {
     id: 'back.lower',
-    robot: 'bl',
+    robot: 'br',
     kind: 'clamp',
     pieces: ['back.lower'],
     beat: 'backLower',
-    cradleSide: 1,
     origin: [0, 1.15, -0.092],
     grip: { dir: model([0, 0, -1]), standoff: 0.075, up: model([0, 1, 0]) },
   },
@@ -315,18 +314,14 @@ export function taskForPiece(piece: ArmorPieceId): FitTask {
   return t;
 }
 
-/**
- * Parts cradle for a task: racks stand behind-and-beside each floor arm
- * (alternating sides per job, ~115° off the line to the suit so the arm
- * never swings through its own ±180° yaw), shelves hang beside each
- * ceiling arm. Returns the world point the task origin rests on.
- */
 /** Floor parts cradles stand on a ring just outside the robot ring. */
 export const CRADLE_RING_RADIUS = 2.05;
-/** Least angular spacing between neighbouring floor cradles (deg). */
-const CRADLE_MIN_GAP_DEG = 10;
-/** Floor between neighbouring cradle ports (m). */
-const CRADLE_PORT_GAP = 0.04;
+/**
+ * Open arc of the cradle ring in front of the suit (deg), left clear for
+ * the camera; the ports sit at even steps around the rest of the ring,
+ * mirrored left / right of the suit.
+ */
+const CRADLE_FRONT_GAP_DEG = 70;
 
 /**
  * Radius (m) of each cradle's floor port / ceiling iris: the widest reach
@@ -365,9 +360,11 @@ export function cradlePortRadius(task: FitTask): number {
 let floorCradleAngles: Map<string, number> | null = null;
 
 /**
- * Angle (deg) of every floor cradle: beside its arm (alternating sides,
- * further jobs fanning out), then relaxed so neighbouring ports (sized to
- * their parts) keep a strip of floor between them.
+ * Angle (deg) of every floor cradle. The ports are evenly spaced round the
+ * ring (the front arc left open) and mirror-symmetric about the suit, each
+ * sized to its own parts; jobs take the slots in the order they would
+ * naturally stand beside their arms (alternating sides, further jobs
+ * fanning out), so every cradle stays close to the arm that serves it.
  */
 function cradleAngles(): Map<string, number> {
   if (floorCradleAngles) return floorCradleAngles;
@@ -380,43 +377,23 @@ function cradleAngles(): Map<string, number> {
       const sign = sideOf(task, k);
       const slot = jobs.slice(0, k).filter((t, i) => sideOf(t, i) === sign).length;
       // cradleSide is relative to the arm facing the suit: +1 = its left
-      want.push({ id: task.id, a: base - sign * (13 + slot * CRADLE_MIN_GAP_DEG) });
+      want.push({ id: task.id, a: base - sign * (13 + slot * 10) });
     });
   }
-  want.sort((a, b) => a.a - b.a);
-  // Neighbours keep their ports apart: chord ≥ both radii + a strip of floor
-  const radius = (id: string) => CRADLE_PORT_RADII[id] ?? 0.15;
-  const minGap = (a: string, b: string) => {
-    const chord = radius(a) + radius(b) + CRADLE_PORT_GAP;
-    const deg = (2 * Math.asin(Math.min(1, chord / (2 * CRADLE_RING_RADIUS))) * 180) / Math.PI;
-    return Math.max(CRADLE_MIN_GAP_DEG, deg);
-  };
-  // Push apart until every gap is respected (sweeps both ways, wrapping)
-  for (let it = 0; it < 60; it++) {
-    for (let i = 1; i < want.length; i++) {
-      const need = minGap(want[i - 1].id, want[i].id);
-      const gap = want[i].a - want[i - 1].a;
-      if (gap < need) {
-        const push = (need - gap) / 2;
-        want[i].a += push;
-        want[i - 1].a -= push;
-      }
-    }
-    // The ring closes: last and first are neighbours too
-    const first = want[0];
-    const last = want[want.length - 1];
-    const need = minGap(last.id, first.id);
-    const wrap = first.a + 360 - last.a;
-    if (wrap < need) {
-      const push = (need - wrap) / 2;
-      first.a += push;
-      last.a -= push;
-    }
-  }
-  floorCradleAngles = new Map(want.map((w) => [w.id, w.a]));
+  // Walk the ring from the front-left edge of the gap, through the back,
+  // round to the front-right edge
+  const fromGap = (a: number) => (((90 - CRADLE_FRONT_GAP_DEG / 2 - a) % 360) + 360) % 360;
+  want.sort((a, b) => fromGap(a.a) - fromGap(b.a));
+  const step = (360 - CRADLE_FRONT_GAP_DEG) / Math.max(1, want.length - 1);
+  floorCradleAngles = new Map(want.map((w, i) => [w.id, 90 - CRADLE_FRONT_GAP_DEG / 2 - i * step]));
   return floorCradleAngles;
 }
 
+/**
+ * Parts cradle for a task: floor racks on the even cradle ring (see
+ * cradleAngles), shelves hanging beside each ceiling arm. Returns the world
+ * point the task origin rests on.
+ */
 export function cradleFor(task: FitTask): Vec3 {
   if (!task.robot) {
     // Boot lifts park under the platform hatch

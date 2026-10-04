@@ -20,6 +20,17 @@ describe('cradle ports', () => {
     }
   });
 
+  it('spaces the ports evenly and mirror-symmetric about the suit', () => {
+    const deg = ports.map(([x, z]) => (Math.atan2(z, x) * 180) / Math.PI).sort((a, b) => a - b);
+    const steps = deg.slice(1).map((a, i) => a - deg[i]);
+    // One wide gap (the open front), every other step equal
+    const big = Math.max(...steps, deg[0] + 360 - deg[deg.length - 1]);
+    const even = [...steps, deg[0] + 360 - deg[deg.length - 1]].filter((s) => s !== big);
+    for (const s of even) expect(s).toBeCloseTo(even[0], 6);
+    // x → −x maps the set onto itself
+    for (const [x, z] of ports) expect(ports.some(([u, w]) => Math.hypot(u + x, w - z) < 1e-6)).toBe(true);
+  });
+
   it('keeps every port clear of the robot ring', () => {
     for (const [x, z, r] of ports) expect(Math.hypot(x, z) - r).toBeGreaterThan(ring[1] + 0.05);
   });

@@ -13,7 +13,7 @@ import type { SuitUpPlan } from '../animation/suitUpChoreography';
 import type { Workshop } from '../workshop/Workshop';
 import { diagnosticStatusForProgress } from '../suit/diagnosticScan';
 import { evaluateFlightCheck, FLIGHT_CHECK_STEPS } from '../animation/flightCheck';
-import { createCuePlayer, doffCues, doffOpeningCues, flightCues, resetCues } from '../audio/actionSfx';
+import { createCuePlayer, doffCues, doffOpeningCues, doffPrepCues, flightCues, redeployCues } from '../audio/actionSfx';
 import {
   applyDoff,
   DOFF_EXTRACT_RATE,
@@ -67,13 +67,18 @@ const DOFF_PATH_BLEND = 3.2;
  */
 const DOFF_CAM_LAG = 1.8;
 /**
- * Cell reset between cycles (s): once the last part is back on its stand,
- * the arms fold and sink into the ring / climb into the ceiling and the
- * stands carry their parts down through the floor (hangers up), the pad
- * sits empty for a beat, then everything rises again for the next build.
+ * Flight-check seconds the grippers start coming up out of the ring for the
+ * doff: as the check reads nominal, so they are in place, ready to take the
+ * suit apart, as the turn settles (the riveters stay down).
  */
-const RESET_STOW_SEC = 2.8;
-const RESET_HOLD_SEC = 0.8;
+const DOFF_PREP_FROM = FLIGHT_CHECK_STEPS[FLIGHT_CHECK_STEPS.length - 1].at + 0.1;
+/**
+ * Cell reset between cycles (s): every stand sinks with its part as soon as
+ * the part is set down and every arm folds away once its last part is home
+ * (both during the doff); the pad then sits empty for a beat before the
+ * cell rises again for the next build.
+ */
+const RESET_HOLD_SEC = 0.5;
 const RESET_RISE_SEC = 2.8;
 
 
@@ -216,6 +221,7 @@ export function createAssemblySession(
   const killHandoff = () => {
     handoffTween?.kill();
     handoffTween = null;
+    workshop?.setDoffClock(null);
     suit.stopDiagnosticScan();
   };
 
@@ -306,6 +312,11 @@ export function createAssemblySession(
       camera.lookAt(lookTarget);
     }
     cues.between(flightSfx, lastFlightT, t);
+    // The grippers come up for the doff as the check wraps up
+    if (workshop && t > DOFF_PREP_FROM) {
+      workshop.prepareDoff((t - DOFF_PREP_FROM) / (SHOWCASE_ORBIT_SEC - DOFF_PREP_FROM));
+      cues.between(doffPrepSfx, lastFlightT, t);
+    }
     lastFlightT = t;
     // Checklist holds "all OK" until the diagnostic takes over
     if (orbitScanArmed) flightPanel.hide();
@@ -544,6 +555,14 @@ export function createAssemblySession(
   });
   const doffFx = doffBursts();
   const doffOpenSfx = doffOpeningCues(doffEvents(doffParts));
+  const doffPrepSfx = workshop
+    ? doffPrepCues(
+        workshop.doffPrepOrder().map(({ id, at }) => ({
+          id,
+          t: DOFF_PREP_FROM + at * (SHOWCASE_ORBIT_SEC - DOFF_PREP_FROM),
+        })),
+      )
+    : [];
   let lastFlightT = Number.NaN;
   /** Camera height offset currently applied for the hover. */
   let flightCamLift = 0;
@@ -634,8 +653,9 @@ export function createAssemblySession(
    * Diagnostic already ran over the orbit ease-out (if the full spin played).
    * 1) Doffing (see doffSequence): power-down, faceplate up, the seals vent
    *    down the suit and every lock lets go; then the fitting runs
-   *    backwards — arms come up from the ring, take every part off and set
-   *    it back on its stand, boots sink into the hatch
+   *    backwards — the grippers (already up from the end of the turn) take
+   *    every part off and set it back on its stand, which sinks with it;
+   *    each arm folds away when done, boots sink into the hatch
    * 2) Camera works in on the helmet, down with the vents, then out to the
    *    hangar framing as the last parts come off
    * 3) Drain integrity + restart assembly on the exact same frame
@@ -693,7 +713,7 @@ export function createAssemblySession(
       const k = THREE.MathUtils.smoothstep(t, DOFF_RELEASE_SEC, DOFF_RELEASE_SEC + DOFF_PATH_BLEND);
       const path = k > 0 ? assembly.cameraAt(fittingAt(t), false) : null;
       // Tighter lag through the reset so it lands exactly on open-wide
-      const lag = t > totalSec ? DOFF_CAM_LAG / 2 : DOFF_CAM_LAG;
+      const lag = t > extractEnd ? DOFF_CAM_LAG / 2 : DOFF_CAM_LAG;
       const a = t <= DOFF_RELEASE_SEC ? 1 : 1 - Math.exp(-Math.max(0, t - smoothT) / lag);
       for (const key of keys) {
         const target = path ? proxy[key] + (path[key] - proxy[key]) * k : proxy[key];
@@ -722,19 +742,31 @@ export function createAssemblySession(
     let statusIdx = 0;
     // Extraction runs the fitting backwards at the speed it was built
     const extractSec = rewindFrom / DOFF_EXTRACT_RATE;
-    const totalSec = DOFF_RELEASE_SEC + extractSec;
+    const extractEnd = DOFF_RELEASE_SEC + extractSec;
+    // The cell clock runs on past the build's first frame until the last
+    // stand has sunk and the last arm has folded away
+    const cellTail = workshop ? Math.max(0, assembly.toSeed(0) - workshop.doffSettledAt()) + 0.1 : 0;
+    const totalSec = extractEnd + cellTail;
+    /** GSAP time of the cell (unclamped: negative through the tail) at doff time `t`. */
+    const cellAt = (t: number) => rewindFrom - Math.max(0, t - DOFF_RELEASE_SEC) * DOFF_EXTRACT_RATE;
     /** GSAP time of the suit-up shown at doff time `t`. */
-    const fittingAt = (t: number) =>
-      Math.max(0, rewindFrom - Math.max(0, t - DOFF_RELEASE_SEC) * DOFF_EXTRACT_RATE);
+    const fittingAt = (t: number) => Math.max(0, cellAt(t));
+    // Grippers not yet up (R before the turn finished) come up through the opening act
+    const prep0 = workshop?.doffPrepProgress() ?? 1;
     const renderDoff = () => {
       const t = clockProxy.t;
       const overlay = evaluateDoff(t, doffParts);
-      const gsapT = fittingAt(t);
-      assembly.renderSuitAt(gsapT, (frame) => applyDoff(frame, overlay));
+      const seed = assembly.toSeed(cellAt(t));
+      if (workshop) {
+        workshop.setDoffClock(seed);
+        workshop.setDoffPrep(prep0 + (1 - prep0) * THREE.MathUtils.smoothstep(t, 0, DOFF_RELEASE_SEC * 0.8));
+      }
+      assembly.renderSuitAt(fittingAt(t), (frame) => applyDoff(frame, overlay));
+      // Parts set back down ride their stands away
+      if (workshop) suit.rideStands((task) => workshop.standShift(task));
       // Opening act on the doff clock, extraction on the (backwards) seed clock
       cues.between(doffOpenSfx, lastDoffT, t);
       for (const b of doffFx) if (b.t > lastDoffT && b.t <= t) suit.emitBurst(b);
-      const seed = assembly.toSeed(gsapT);
       cues.between(doffSfx, lastSeed, seed);
       lastSeed = seed;
       lastDoffT = t;
@@ -745,6 +777,7 @@ export function createAssemblySession(
     handoffTween = gsap.timeline({
       onComplete: () => {
         handoffTween = null;
+        workshop?.setDoffClock(null);
         // Exact open-wide lock so assembly t=0 OPEN_WIDE is invisible
         applyOpenWideCam();
         suit.showAssembly();
@@ -764,12 +797,14 @@ export function createAssemblySession(
     });
     renderDoff();
 
-    // 1) Power-down → faceplate → seal release, then the extraction
+    // 1) Power-down → faceplate → seal release, then the extraction (stands
+    //    sinking with their parts, arms folding away as they finish)
     handoffTween.to(clockProxy, { t: totalSec, duration: totalSec, ease: 'none', onUpdate: renderDoff }, 0);
     // Low motor bed under the extraction (no hiss): crossfaded takes of the hum
     const humLen = 7.55;
-    for (let at = 0; at < extractSec - 0.5; at += humLen - 0.8) {
-      const left = extractSec - at;
+    const humSec = extractSec + cellTail;
+    for (let at = 0; at < humSec - 0.5; at += humLen - 0.8) {
+      const left = humSec - at;
       const last = left <= humLen;
       handoffTween.call(
         () =>
@@ -794,30 +829,27 @@ export function createAssemblySession(
     camTo(DOFF_HEAD_CAM, 0, 1.5);
     camTo(DOFF_VENT_CAM, 1.5, DOFF_RELEASE_SEC - 1.5 + 0.9);
     // One driver for the whole handoff (doff + cell reset)
-    const camEnd = totalSec + (workshop ? RESET_STOW_SEC + RESET_HOLD_SEC + RESET_RISE_SEC : 0);
+    const camEnd = totalSec + (workshop ? RESET_HOLD_SEC + RESET_RISE_SEC : 0);
     handoffTween.to(camClock, { t: camEnd, duration: camEnd, ease: 'none', onUpdate: applyHandoffCam }, 0);
 
-    // 3) Cell reset on the open-wide frame: stow everything, then redeploy
+    // 3) Cell reset on the open-wide frame: a beat on the empty pad, then
+    //    the cell redeploys for the next build
     if (workshop) {
       const cell = workshop;
       const endOverlay = evaluateDoff(totalSec, doffParts);
-      const reset = { deploy: 1 };
+      const reset = { deploy: 0 };
       const renderReset = () => {
+        cell.setDoffClock(null);
         assembly.renderSuitAt(0, (frame) => applyDoff(frame, endOverlay));
         cell.setRedeployProgress(reset.deploy);
         suit.rideStands((task) => cell.standShift(task));
       };
-      const stowAt = totalSec;
-      const riseAt = stowAt + RESET_STOW_SEC + RESET_HOLD_SEC;
-      handoffTween.call(() => ui.setStatus('CELL STOW // PARTS TO STORAGE'), undefined, stowAt);
-      handoffTween.to(reset, { deploy: 0, duration: RESET_STOW_SEC, ease: 'sine.inOut', onUpdate: renderReset }, stowAt);
+      const riseAt = totalSec + RESET_HOLD_SEC;
+      handoffTween.call(() => ui.setStatus('CELL STOW // PARTS TO STORAGE'), undefined, extractEnd);
       handoffTween.call(() => ui.setStatus('CELL DEPLOY // NEXT FITTING'), undefined, riseAt);
       handoffTween.to(reset, { deploy: 1, duration: RESET_RISE_SEC, ease: 'sine.inOut', onUpdate: renderReset }, riseAt);
-      // Same library takes the build uses for arms stowing and stands
-      // sinking: motors as the arms fold, slides as the stands run, a
-      // close as the cell shuts; then the motors again as it all comes up
-      for (const c of resetCues(RESET_STOW_SEC, RESET_RISE_SEC)) {
-        handoffTween.call(() => cues.fire({ ...c, t: 0 }), undefined, (c.phase === 'stow' ? stowAt : riseAt) + c.t);
+      for (const c of redeployCues(RESET_RISE_SEC)) {
+        handoffTween.call(() => cues.fire({ ...c, t: 0 }), undefined, riseAt + c.t);
       }
     }
   };

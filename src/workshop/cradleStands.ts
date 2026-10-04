@@ -259,12 +259,9 @@ export class CradleStands {
     s.lid?.position.lerpVectors(s.lidOpen, s.lidClosed, close);
   }
 
-  /** Retract every stand whose part has left it by time t. */
-  apply(retractStart: (task: FitTask) => number, t: number): void {
-    for (const s of this.stands) {
-      const t0 = retractStart(s.task);
-      this.setRetract(s, (t - t0) / STAND_RETRACT_SEC);
-    }
+  /** Set every stand's retract stroke: 0 = up, holding → 1 = stowed. */
+  apply(retract: (task: FitTask) => number): void {
+    for (const s of this.stands) this.setRetract(s, retract(s.task));
   }
 
   /**

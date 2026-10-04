@@ -1,7 +1,7 @@
 import type { ArmorPieceId } from '../suit/armorPieces';
 import type { BoneName, Vec3 } from '../suit/rig';
 import type { SystemPowers } from '../suit/systemsGlow';
-import type { FxBurst, SuitUpFrame } from './suitUpChoreography';
+import type { FitTiming, FxBurst, RobotTrack, SuitUpFrame } from './suitUpChoreography';
 
 /**
  * Doffing: the finished suit is taken off the way it went on, but with its
@@ -12,9 +12,11 @@ import type { FxBurst, SuitUpFrame } from './suitUpChoreography';
  *   → pressure seals vent: jets blast straight down off the suit, collar to
  *     boots, and every part's locks let go in the same wave — each plate
  *     pops a centimetre proud of its seat (clamshells crack open)
- *   → extraction: the fitting runs backwards — arms rise from the ring,
- *     lift each loosened part off and set it back on its stand, the boots
- *     sink into the hatch — landing on the next cycle's first frame.
+ *   → extraction: the fitting runs backwards — the grippers (already up
+ *     from the ring before the doff begins) lift each loosened part off and
+ *     set it back on its stand, which then sinks through its port with the
+ *     part; each arm folds away once its last part is home, the boots sink
+ *     into the hatch. The riveters stay stowed throughout.
  *
  * Times are wall-clock seconds from the start of the doff. The opening act
  * is a pure function of time ({@link evaluateDoff}); the extraction reuses
@@ -29,6 +31,31 @@ export const DOFF_RELEASE_SEC = 2.6;
  * (one second of suit-up per second), so it lasts as long as the build.
  */
 export const DOFF_EXTRACT_RATE = 1;
+
+/**
+ * Seed seconds (the extraction clock runs backwards) between a part being
+ * set down — the gripper back at its hover over the cradle — and its stand
+ * starting to sink with it.
+ */
+const STAND_SINK_DELAY = 0.1;
+/** Rest at home after an arm's last part before it folds away (s). */
+const ARM_STOW_DELAY = 0.15;
+/** Fold-and-sink stroke of a gripper at the end of its doff work (s). */
+export const DOFF_ARM_STOW_SEC = { floor: 1.2, ceiling: 0.9 } as const;
+
+/** Seed time a doffed part's stand starts to sink (clock running backwards). */
+export function doffStandSinkAt(job: Pick<FitTiming, 'preGrasp'>): number {
+  return job.preGrasp - STAND_SINK_DELAY;
+}
+
+/**
+ * Seed time a gripper starts folding away after the doff (clock running
+ * backwards): once it is home from its first job of the build. Null for
+ * arms with no carry jobs (riveters, which never deploy for the doff).
+ */
+export function doffArmStowAt(track: Pick<RobotTrack, 'jobs'>): number | null {
+  return track.jobs.length ? track.jobs[0].depart - ARM_STOW_DELAY : null;
+}
 
 const POWER_DOWN = 0.1;
 const FACEPLATE_LATCH = 0.55;

@@ -1,7 +1,8 @@
 import type { SuitUpPlan } from '../animation/suitUpChoreography';
 import { FLIGHT_EVENTS, THRUSTER_BURN_SEC, type FlightEvent } from '../animation/flightCheck';
 import { STAND_RETRACT_SEC } from '../workshop/cradleStands';
-import type { DoffEvent } from '../animation/doffSequence';
+import { DOFF_ARM_STOW_SEC, doffArmStowAt, doffStandSinkAt, type DoffEvent } from '../animation/doffSequence';
+import { robotStation, type RobotId } from '../workshop/fittingProgram';
 import type { PlayRequest } from './engine';
 
 /**
@@ -122,24 +123,44 @@ export function assemblyCues(plan: SuitUpPlan): SfxCue[] {
 
 /**
  * Cues for the doffing extraction (seed seconds, fired as the clock runs
- * backwards through them): arms rise out of the ring, every loosened part
- * is unclamped, carried off and set down on its stand.
+ * backwards through them, and on past the build's first frame while the
+ * cell finishes stowing): every loosened part is unclamped, carried off and
+ * set down on its stand, the stand slides down with it and its port shuts,
+ * and each arm folds away once its last part is home.
  */
 export function doffCues(plan: SuitUpPlan): SfxCue[] {
-  // Kept sparse and dry: one low servo as each arm comes up, a dry
-  // unclamp per part, a soft set-down click. No hiss / noise beds — the
-  // continuous low motor hum is started by the session.
+  // Kept sparse and dry: a dry unclamp per part, a soft set-down click,
+  // quiet slides and closes. No hiss / noise beds — the continuous low
+  // motor hum is started by the session.
   const cues: SfxCue[] = [];
   for (const r of plan.robots) {
     const p = voice(r.id);
-    const stow = stowSpan(plan, r.id);
-    if (stow) cues.push({ t: stow[1] - 0.05, file: 'servo-whine.mp3', volume: 0.16, pitch: 0.8 * p, fadeOut: 0.5 });
     for (const job of r.jobs) {
       cues.push({ t: job.contact, file: 'unclamp-dry.mp3', volume: 0.34, pitch: p });
       cues.push({ t: job.grasp, file: 'flap-latch.mp3', volume: 0.3, pitch: 0.8 });
+      const sink = doffStandSinkAt(job);
+      cues.push({ t: sink, file: 'metal-sliding.mp3', volume: 0.1, pitch: 0.78 });
+      cues.push({ t: sink - STAND_RETRACT_SEC * 0.85, file: 'medium-close.mp3', volume: 0.08, pitch: 1.25 });
+    }
+    const stow = doffArmStowAt(r);
+    if (stow !== null) {
+      const dur = robotStation(r.id).mount === 'ceiling' ? DOFF_ARM_STOW_SEC.ceiling : DOFF_ARM_STOW_SEC.floor;
+      cues.push({ t: stow, file: 'robot-movement.mp3', volume: 0.14, pitch: 0.82 * p, duration: dur + 0.4, fadeOut: 0.5 });
+      cues.push({ t: stow - dur, file: 'medium-close.mp3', volume: 0.12, pitch: 0.9 });
     }
   }
   return thin(cues, 0.3);
+}
+
+/**
+ * Grippers coming up out of the ring / down their masts before the doff
+ * (one low servo each, on the showcase's flight-check clock).
+ */
+export function doffPrepCues(arms: ReadonlyArray<{ id: RobotId; t: number }>): SfxCue[] {
+  return thin(
+    arms.map((a) => ({ t: a.t, file: 'servo-whine.mp3', volume: 0.16, pitch: 0.8 * voice(a.id), fadeOut: 0.5 })),
+    0.15,
+  );
 }
 
 /** Cues for the doff's opening act (doff seconds, see doffSequence). */
@@ -270,20 +291,14 @@ export function createCuePlayer(play: (req: PlayRequest) => void, maxJump = 0.5)
 }
 
 /**
- * Cell reset between cycles, timed within each phase (s from its start):
- * the arms' motors as they fold away, slides as the stands carry their
- * parts down (and later back up), a close as the cell shuts. Stands run
- * in the last third of the stow and the first third of the rise (see
- * CradleStands.setDeployed).
+ * Cell redeploy before the next build (s from its start): slides as the
+ * stands bring their parts back up (first third of the rise, see
+ * CradleStands.setDeployed), the arms' motors, a connect as it locks.
  */
-export function resetCues(stowSec: number, riseSec: number): Array<SfxCue & { phase: 'stow' | 'rise' }> {
+export function redeployCues(riseSec: number): SfxCue[] {
   return [
-    { phase: 'stow', t: 0, file: 'robot-movement.mp3', volume: 0.22, pitch: 0.82, duration: 2.4, fadeOut: 0.7 },
-    { phase: 'stow', t: 0.15, file: 'robot-movement.mp3', volume: 0.16, pitch: 0.94, duration: 2.2, fadeOut: 0.7 },
-    { phase: 'stow', t: stowSec * 0.62, file: 'metal-sliding.mp3', volume: 0.16, pitch: 0.78 },
-    { phase: 'stow', t: stowSec - 0.1, file: 'medium-close.mp3', volume: 0.18, pitch: 0.9 },
-    { phase: 'rise', t: 0, file: 'metal-sliding.mp3', volume: 0.16, pitch: 0.86 },
-    { phase: 'rise', t: riseSec * 0.25, file: 'robot-movement.mp3', volume: 0.2, pitch: 0.9, duration: 2.2, fadeOut: 0.7 },
-    { phase: 'rise', t: riseSec - 0.15, file: 'metal-connect.mp3', volume: 0.14, pitch: 0.95 },
+    { t: 0, file: 'metal-sliding.mp3', volume: 0.16, pitch: 0.86 },
+    { t: riseSec * 0.25, file: 'robot-movement.mp3', volume: 0.2, pitch: 0.9, duration: 2.2, fadeOut: 0.7 },
+    { t: riseSec - 0.15, file: 'metal-connect.mp3', volume: 0.14, pitch: 0.95 },
   ];
 }
