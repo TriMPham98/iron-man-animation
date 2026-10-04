@@ -56,6 +56,9 @@ export interface FlightCheckFrame {
   repulsorR: number;
   /** Boot thruster burn 0–1. */
   thrusters: number;
+  /** Per-boot burn (the low side pushes harder to level the suit). */
+  thrusterL: number;
+  thrusterR: number;
   /** JARVIS status line for this step. */
   status: string;
   /** False before the first step and after the last. */
@@ -243,6 +246,56 @@ export const FLARE_POPS: ReadonlyArray<{ t: number; side: 'L' | 'R' }> = [
   { t: W + 4.3, side: 'R' },
 ];
 
+/**
+ * Where JARVIS has the pilot look, step by step: [time, yaw, pitch, roll,
+ * move s]. Yaw + = to the suit's left, pitch + = chin down, roll + = ear
+ * to the left shoulder. Glances are quick (~0.3 s, like a real head turn)
+ * and hold while the part works; the head always comes home before the
+ * diagnostic.
+ */
+const GAZE: ReadonlyArray<readonly [number, number, number, number, number?]> = [
+  [AT_REPULSORS + 0.2, 0, 0, 0],
+  [R + 1.15, 0.55, 0.14, 0.05], // left palm
+  [R + 1.95, -0.55, 0.14, -0.05, 0.55], // right palm
+  [R + 3.05, 0, 0.02, 0], // both, dead ahead
+  [AT_SHOULDER + 0.05, 0.75, 0.16, -0.1], // left shoulder flap
+  [AT_SHOULDER + 0.6, -0.75, 0.16, 0.1, 0.6], // right
+  [AT_SHOULDER + 1.6, 0, 0, 0, 0.45],
+  [AT_DORSAL + 0.05, 0.38, -0.04, 0], // over the shoulder at the back
+  [AT_DORSAL + 0.5, -0.38, -0.04, 0, 0.45],
+  [AT_DORSAL + 1.6, 0, 0, 0, 0.45],
+  [AT_CALF + 0.05, 0.25, 0.42, 0.04], // down at the left calf
+  [AT_CALF + 0.45, -0.25, 0.42, -0.04, 0.4],
+  [AT_CALF + 1.6, 0, 0, 0, 0.45],
+  [W + 0.5, 0.6, 0.26, 0.06], // left launcher
+  [W + 0.95, -0.6, 0.26, -0.06, 0.55], // right launcher
+  [W + 1.75, 0, -0.08, 0], // silos up front
+  [W + 2.85, 0.3, 0.46, 0.05], // left flare drum
+  [W + 3.75, -0.3, 0.46, -0.05, 0.45], // right drum, its pops
+  [W + 4.6, 0, 0.05, 0, 0.45],
+  [AT_ALL + 0.1, 0, -0.05, 0],
+  [AT_ALL + 2.0, 0, 0, 0],
+  [PALMS_DOWN, 0, 0.36, 0], // down at the deck as the palms set
+  [IGNITE + 0.6, 0, -0.06, 0, 0.6], // eyes up for the lift
+  [HOVER + 0.3, 0.26, 0, 0], // checks left …
+  [HOVER + 1.3, -0.22, 0.02, 0, 0.45], // … and right while holding
+  [HOVER + 2.2, 0, 0, 0],
+  [DESCEND + 0.1, 0, 0.3, 0, 0.5], // watches the deck come up
+  [TOUCHDOWN + 0.1, 0, 0.1, 0],
+  [TOUCHDOWN + 0.6, 0, 0, 0, 0.5],
+];
+
+/** Gaze channel (0 yaw, 1 pitch, 2 roll) at t: ease between holds. */
+function gaze(t: number, ch: 1 | 2 | 3): number {
+  let v = 0;
+  for (const g of GAZE) {
+    const dur = g[4] ?? 0.32;
+    if (t <= g[0]) break;
+    v = v + (g[ch] - v) * stroke(g[0], g[0] + dur, t);
+  }
+  return v;
+}
+
 const ARMS: Keys = [
   ...keysAt(R, [
     [0, 0],
@@ -372,8 +425,10 @@ function attitude(t: number, lift: number) {
 
 /** Breathing cycle (s) and its swell, eased in and out with the check. */
 const BREATH_PERIOD = 3.6;
+const breathEnvelope = (t: number) =>
+  move(t, FLIGHT_CHECK_START, FLIGHT_CHECK_START + 1.2, FLIGHT_CHECK_END - 1.4, FLIGHT_CHECK_END - 0.3);
 function breathing(t: number): number {
-  const env = move(t, FLIGHT_CHECK_START, FLIGHT_CHECK_START + 1.2, FLIGHT_CHECK_END - 1.4, FLIGHT_CHECK_END - 0.3);
+  const env = breathEnvelope(t);
   // Inhale quicker than the exhale: a skewed sine
   const ph = ((t - FLIGHT_CHECK_START) / BREATH_PERIOD) * Math.PI * 2;
   return env * Math.sin(ph + 0.35 * Math.sin(ph));
@@ -382,9 +437,12 @@ function breathing(t: number): number {
 export function evaluateFlightCheck(t: number): FlightCheckFrame {
   const active = t >= FLIGHT_CHECK_START && t < FLIGHT_CHECK_END;
 
-  // Neck: left, right, a glance down, centre
-  const headYaw = keyed(t, NECK_YAW);
-  const headPitch = keyed(t, NECK_PITCH);
+  // Neck: the servo check (left, right, a glance down), then the pilot's
+  // gaze follows each part under test; a faint drift keeps it alive
+  const live = breathEnvelope(t);
+  let headYaw = keyed(t, NECK_YAW) + gaze(t, 1) + live * (0.012 * Math.sin(t * 1.7) + 0.007 * Math.sin(t * 3.1 + 1));
+  let headPitch = keyed(t, NECK_PITCH) + gaze(t, 2) + live * 0.008 * Math.sin(t * 2.3 + 0.5);
+  let headRoll = gaze(t, 3) + live * 0.006 * Math.sin(t * 1.3 + 2);
 
   // Repulsors: arms out, each palm up and fires, then both
   let stance = keyed(t, ARMS);
@@ -447,6 +505,56 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
   const driftX = -0.35 * roll;
   const driftZ = 0.3 * pitch;
 
+  // Head stays level with the horizon while the body rocks (vestibular
+  // reflex), with a slight lag so it reads as muscle, not a gimbal
+  const lagged = attitude(t - 0.12, lift);
+  headRoll -= 0.75 * lagged.roll;
+  headPitch -= 0.6 * lagged.pitch;
+
+  // ── Limbs: alive in the air ──
+  const air = stroke(0, 0.18, lift);
+  // Pre-hover crouch, the push-off, and the knees soaking up the landing
+  const crouch =
+    keyed(t, [
+      [IGNITE, 0],
+      [SPOOL + 0.2, 0.2],
+      [LIFTOFF + 0.25, 0],
+    ]) +
+    keyed(t, [
+      [TOUCHDOWN - 0.1, 0],
+      [TOUCHDOWN + 0.15, 0.3],
+      [TOUCHDOWN + 0.9, 0],
+    ]);
+  // Dangling legs: soft knees, toes dropped, legs lag the body's tilt
+  const sway = (k: number, ph: number) => air * k * Math.sin(t * 1.9 + ph);
+  const knee = crouch + air * 0.16 + sway(0.03, 0);
+  const kneeL = knee + sway(0.02, 1.1);
+  const kneeR = knee + sway(0.02, 2.3);
+  // Feet vector the boot thrust against the tilt
+  const ankle = air * (0.14 + 0.25 * uPitch);
+  const limbs = {
+    // The low side's arm reaches out for balance; elbows stay soft
+    armL: air * (0.08 + 0.22 * clamp01(-uRoll)) + sway(0.015, 0.4),
+    armR: air * (0.08 + 0.22 * clamp01(uRoll)) + sway(0.015, 1.4),
+    elbowL: air * 0.18 + sway(0.03, 2),
+    elbowR: air * 0.18 + sway(0.03, 3),
+    hipL: kneeL / 2 + 0.7 * pitch,
+    hipR: kneeR / 2 + 0.7 * pitch,
+    hipOutL: -0.7 * roll,
+    hipOutR: 0.7 * roll,
+    kneeL,
+    kneeR,
+    ankleL: ankle,
+    ankleR: ankle,
+    footRollL: air * 0.2 * uRoll,
+    footRollR: air * 0.2 * uRoll,
+  };
+  // Bent knees on the deck lower the hips a touch
+  const sink = 0.035 * crouch * (1 - air);
+  // Boots: the low side burns harder too
+  const thrusterL = burn * clamp01(1 - 0.35 * uRoll);
+  const thrusterR = burn * clamp01(1 + 0.35 * uRoll);
+
   const flap = (k: readonly [number, number, number, number]) => clamp01(move(t, k[0], k[1], k[2], k[3]));
   // Full deflection drives every flap and every weapon together
   const all = flap(ALL);
@@ -478,9 +586,11 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
       chestRecoil: 0,
       headPitch,
       headYaw,
+      headRoll,
+      limbs,
       wristL: Math.max(0, wristL),
       wristR: Math.max(0, wristR),
-      lift,
+      lift: lift - sink,
       pitch,
       roll,
       driftX,
@@ -494,6 +604,8 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
     repulsorL: clamp01(repulsorL),
     repulsorR: clamp01(repulsorR),
     thrusters,
+    thrusterL: Math.max(thrusterL, ignite),
+    thrusterR: Math.max(thrusterR, ignite),
     status: active ? status : '',
     active,
   };

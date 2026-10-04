@@ -32,6 +32,13 @@ export const BONE_NAMES = [
   'foot.R',
   ...fingerNames('L'),
   ...fingerNames('R'),
+  // Joint helpers: sit on the elbow / knee hinge and turn half as far as the
+  // lower limb, so the elbow / knee cap and the crease between the plates
+  // stay round instead of folding
+  'elbow.L',
+  'elbow.R',
+  'knee.L',
+  'knee.R',
 ] as const;
 
 /** Thumb + four fingers, two phalanx bones each (proximal → distal). */
@@ -180,7 +187,7 @@ function limbChain(
   });
 }
 
-export const BONE_SPECS: readonly BoneSpec[] = [
+const BASE_SPECS: readonly BoneSpec[] = [
   { name: 'root', parent: null, head: [0, 0, 0], tail: [0, 0.98, 0], radius: 0, deform: false },
   {
     name: 'hips',
@@ -239,7 +246,34 @@ export const BONE_SPECS: readonly BoneSpec[] = [
   ...fingerSpecs('R'),
 ];
 
-const SPEC_BY_NAME = new Map(BONE_SPECS.map((s) => [s.name, s] as const));
+/**
+ * Hinge joints with a half-angle helper. `band` is the half-width (m) along
+ * the limb over which the shells blend upper → helper → lower; plates that
+ * lie wholly inside `cap` of the hinge ride the helper rigidly.
+ */
+export interface HingeJoint {
+  helper: BoneName;
+  upper: BoneName;
+  lower: BoneName;
+  band: number;
+  cap: number;
+}
+export const HINGES: readonly HingeJoint[] = (['L', 'R'] as const).flatMap((side): HingeJoint[] => [
+  { helper: `elbow.${side}`, upper: `upperArm.${side}`, lower: `forearm.${side}`, band: 0.03, cap: 0.045 },
+  { helper: `knee.${side}`, upper: `thigh.${side}`, lower: `shin.${side}`, band: 0.035, cap: 0.05 },
+]);
+
+/** Helpers sit on the lower bone's head (the hinge) as children of the upper. */
+function hingeSpecs(): BoneSpec[] {
+  return HINGES.map((h) => {
+    const lower = BASE_SPECS.find((b) => b.name === h.lower)!;
+    return { name: h.helper, parent: h.upper, head: lower.head, tail: lower.tail, radius: 0, deform: true };
+  });
+}
+
+export const BONE_SPECS: readonly BoneSpec[] = [...BASE_SPECS, ...hingeSpecs()];
+
+const SPEC_BY_NAME = new Map([...BONE_SPECS, ...hingeSpecs()].map((s) => [s.name, s] as const));
 
 export function boneSpec(name: BoneName): BoneSpec {
   const s = SPEC_BY_NAME.get(name);
@@ -424,16 +458,53 @@ export function skinWeightsAt(
     w[k] = wk < 0.02 ? 0 : wk;
     total += w[k];
   }
+  const inf = new Map<number, number>();
+  for (let k = 0; k < top; k++) if (w[k] > 0) inf.set(cand[order[k]], (inf.get(cand[order[k]]) ?? 0) + w[k] / total);
+  hingeBlend(x, y, z, inf);
+  const sorted = [...inf].filter(([, v]) => v > 1e-4).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const sum = sorted.reduce((a, [, v]) => a + v, 0) || 1;
   for (let k = 0; k < 4; k++) {
-    if (k < top && w[k] > 0) {
-      outIndex[offset + k] = cand[order[k]];
-      outWeight[offset + k] = w[k] / total;
+    if (k < sorted.length) {
+      outIndex[offset + k] = sorted[k][0];
+      outWeight[offset + k] = sorted[k][1] / sum;
     } else {
       outIndex[offset + k] = 0;
       outWeight[offset + k] = 0;
     }
   }
-  return cand[order[0]];
+  return sorted[0][0];
+}
+
+/** Signed distance (m) of a point past a hinge, along the limb. */
+export function hingeOffset(h: HingeJoint, x: number, y: number, z: number): number {
+  const up = boneSpec(h.upper);
+  const lo = boneSpec(h.lower);
+  // Limb direction through the hinge: upper head → lower tail
+  const dx = lo.tail[0] - up.head[0];
+  const dy = lo.tail[1] - up.head[1];
+  const dz = lo.tail[2] - up.head[2];
+  const len = Math.hypot(dx, dy, dz) || 1;
+  return ((x - lo.head[0]) * dx + (y - lo.head[1]) * dy + (z - lo.head[2]) * dz) / len;
+}
+
+/**
+ * Re-split an upper / lower blend across a hinge: whatever share the pair
+ * holds is spread over upper → half-angle helper → lower with a quadratic
+ * Bézier in the distance past the hinge, inside a narrow band. Plates bend
+ * only right at the joint and the crease keeps its volume.
+ */
+function hingeBlend(x: number, y: number, z: number, inf: Map<number, number>): void {
+  for (const h of HINGES) {
+    const iu = boneIndex(h.upper);
+    const il = boneIndex(h.lower);
+    const share = (inf.get(iu) ?? 0) + (inf.get(il) ?? 0);
+    if (share <= 0) continue;
+    const u = Math.min(1, Math.max(0, (hingeOffset(h, x, y, z) + h.band) / (2 * h.band)));
+    const sm = u * u * (3 - 2 * u);
+    inf.set(iu, share * (1 - sm) * (1 - sm));
+    inf.set(boneIndex(h.helper), share * 2 * sm * (1 - sm));
+    inf.set(il, share * sm * sm);
+  }
 }
 
 export interface SkinRig {
@@ -510,6 +581,26 @@ export function computeSkinWeights(
     );
   }
 
+  // Elbow / knee caps: limb plates lying wholly within a hinge's cap zone
+  // ride its half-angle helper rigidly
+  const capOf = new Int32Array(islandCount).fill(-2);
+  for (let i = 0; i < n; i++) {
+    const id = island[i];
+    if (capOf[id] === -1) continue;
+    const limb = islandLimb[id];
+    const side = limb.endsWith('.L') ? 'L' : limb.endsWith('.R') ? 'R' : null;
+    let hit = -1;
+    if (side) {
+      for (let k = 0; k < HINGES.length; k++) {
+        const h = HINGES[k];
+        if (!h.helper.endsWith(side)) continue;
+        if ((limb.startsWith('arm') ? h.helper.startsWith('elbow') : h.helper.startsWith('knee')) &&
+          Math.abs(hingeOffset(h, positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])) <= h.cap) hit = k;
+      }
+    }
+    capOf[id] = hit < 0 || (capOf[id] >= 0 && capOf[id] !== hit) ? -1 : hit;
+  }
+
   // Snap mostly-single-bone islands rigid
   const votes = new Map<number, Map<number, number>>();
   for (let i = 0; i < n; i++) {
@@ -531,6 +622,7 @@ export function computeSkinWeights(
       }
     }
     if (bestN / Math.max(1, count[id]) >= rigidFraction) islandBone[id] = best;
+    if (capOf[id] >= 0) islandBone[id] = boneIndex(HINGES[capOf[id]].helper);
   }
   for (let i = 0; i < n; i++) {
     const b = islandBone[island[i]];

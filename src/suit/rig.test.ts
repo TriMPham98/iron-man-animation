@@ -85,3 +85,27 @@ describe('computeSkinWeights', () => {
     expect(r.skinIndex[4 * 4]).toBe(boneIndex('shin.L'));
   });
 });
+
+describe('elbow / knee hinges', () => {
+  const weightsAt = (x: number, y: number, z: number, limb: Parameters<typeof skinWeightsAt>[3]) => {
+    const idx = [0, 0, 0, 0];
+    const w = [0, 0, 0, 0];
+    skinWeightsAt(x, y, z, limb, idx, w);
+    const out: Record<string, number> = {};
+    idx.forEach((b, k) => {
+      if (w[k] > 0) out[BONE_NAMES[b]] = (out[BONE_NAMES[b]] ?? 0) + w[k];
+    });
+    return out;
+  };
+
+  it('blends a shell across the knee through its half-angle helper', () => {
+    const w = weightsAt(0.14, 0.51, 0.06, 'leg.L');
+    expect(w['knee.L']).toBeGreaterThan(0.3);
+  });
+
+  it('keeps plates well clear of the joint on one bone', () => {
+    expect(weightsAt(0.15, 0.3, 0.05, 'leg.L')['shin.L']).toBeGreaterThan(0.99);
+    expect(weightsAt(0.32, 1.1, 0.0, 'arm.L')['forearm.L']).toBeGreaterThan(0.99);
+  });
+});
+

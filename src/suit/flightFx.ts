@@ -37,6 +37,16 @@ function glowTexture(): THREE.Texture {
   return t;
 }
 
+/** Irregular engine flicker 0.8–1.05: no single sine reads as a loop. */
+function flick(t: number, seed: number): number {
+  return (
+    0.92 +
+    0.06 * Math.sin(t * 53 + seed) * Math.sin(t * 31 + seed * 1.7) +
+    0.04 * Math.sin(t * 97 + seed * 2.3) +
+    0.03 * Math.sin(t * 7.3 + seed * 0.7)
+  );
+}
+
 /**
  * Flight-check effects in model space: palm repulsor flares, boot thruster
  * jets with a glow pool on the platform, and vapour blowing out under the
@@ -60,6 +70,9 @@ export class FlightFx {
   private readonly palmSpecs: PalmEmitter[];
   private readonly palmJets: THREE.Mesh[] = [];
   private readonly palmCores: THREE.Mesh[] = [];
+  /** Wash under each palm on the deck while it pushes down near it. */
+  private readonly palmPools: THREE.Mesh[] = [];
+  private lastPalmPuff = -1;
 
   /** `palms`: repulsor centres + normals measured off the gauntlet palms. */
   constructor(palms: PalmEmitter[] = DEFAULT_PALMS) {
@@ -87,14 +100,29 @@ export class FlightFx {
         blending: THREE.AdditiveBlending,
         side: THREE.DoubleSide,
         toneMapped: false,
-        uniforms: { uColor: { value: new THREE.Color(color) }, uOpacity: { value: 0 }, uTime: { value: 0 } },
+        uniforms: {
+          uColor: { value: new THREE.Color(color) },
+          uOpacity: { value: 0 },
+          uTime: { value: 0 },
+          uSeed: { value: Math.random() * 100 },
+        },
         vertexShader: /* glsl */ `
+          uniform float uTime;
+          uniform float uSeed;
           varying float vH;
           varying vec3 vN;
           varying vec3 vV;
           void main() {
             vH = -position.y;
-            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            // Turbulent plume: the column wanders and breathes more toward
+            // its tip, never a rigid cone
+            vec3 p = position;
+            float h = clamp(vH, 0.0, 1.0);
+            float a = uTime * 23.0 + uSeed;
+            p.x += h * h * 0.025 * (sin(a + vH * 9.0) + 0.5 * sin(a * 1.9 - vH * 17.0));
+            p.z += h * h * 0.025 * (cos(a * 1.3 + vH * 7.0) + 0.5 * sin(a * 2.3 + vH * 13.0));
+            p.xz *= 1.0 + 0.12 * sin(a * 3.1 - vH * 21.0) * h;
+            vec4 mv = modelViewMatrix * vec4(p, 1.0);
             vN = normalize(normalMatrix * normal);
             vV = normalize(-mv.xyz);
             gl_Position = projectionMatrix * mv;
@@ -104,13 +132,17 @@ export class FlightFx {
           uniform vec3 uColor;
           uniform float uOpacity;
           uniform float uTime;
+          uniform float uSeed;
           varying float vH;
           varying vec3 vN;
           varying vec3 vV;
           void main() {
-            // Bright at the nozzle, thinning out; shock bands pulse down it
+            // Bright at the nozzle, thinning out; standing shock diamonds
+            // near the nozzle plus turbulent bands racing down it
             float along = pow(1.0 - clamp(vH, 0.0, 1.0), ${power.toFixed(1)});
-            float bands = 0.8 + 0.2 * sin(vH * 38.0 - uTime * 40.0);
+            float diamonds = 0.75 + 0.5 * pow(0.5 + 0.5 * cos(vH * 34.0 + sin(uTime * 9.0 + uSeed) * 0.6), 6.0) * (1.0 - vH);
+            float race = 0.85 + 0.15 * sin(vH * 47.0 - uTime * 55.0 + uSeed) * sin(vH * 19.0 - uTime * 31.0);
+            float bands = diamonds * race;
             float edge = pow(abs(dot(vN, vV)), 0.8);
             gl_FragColor = vec4(uColor * bands, along * edge * uOpacity);
           }
@@ -139,6 +171,11 @@ export class FlightFx {
       pool.renderOrder = 3;
       this.pools.push(pool);
       this.group.add(pool);
+      const pp = new THREE.Mesh(poolGeo, new THREE.MeshBasicMaterial({ map: tex, color: 0x9fd8ff, ...add }));
+      pp.visible = false;
+      pp.renderOrder = 3;
+      this.palmPools.push(pp);
+      this.group.add(pp);
     }
   }
 
@@ -166,60 +203,97 @@ export class FlightFx {
       (s.material as THREE.MeshBasicMaterial).opacity = Math.min(1, k * 1.4);
       // Thrust plume straight out of the palm (jet geometry runs along −Y)
       this._q.setFromUnitVectors(new THREE.Vector3(0, -1, 0), this._n);
-      const flick = 0.88 + 0.12 * Math.sin(t * 57 + i) * Math.sin(t * 33);
+      const fl = flick(t, i * 3.1);
+      // Disc throbs with the burn
+      s.scale.multiplyScalar(0.94 + 0.08 * fl);
       for (const [m, w, len, op] of [
-        [this.palmJets[i], 0.75, 0.32, 0.8],
-        [this.palmCores[i], 0.8, 0.22, 1.1],
+        [this.palmJets[i], 0.75, 0.36, 0.8],
+        [this.palmCores[i], 0.8, 0.24, 1.1],
       ] as const) {
         m.position.copy(s.position);
         m.quaternion.copy(this._q);
-        m.scale.set(w, len * (0.35 + 0.65 * k), w);
+        m.scale.set(w * (0.9 + 0.15 * k), len * (0.35 + 0.65 * k) * (0.9 + 0.12 * fl), w * (0.9 + 0.15 * k));
         const u = (m.material as THREE.ShaderMaterial).uniforms;
-        u.uOpacity.value = k * flick * op;
+        u.uOpacity.value = k * fl * op;
         u.uTime.value = t;
       }
+      // Pointed at the deck and close to it: the blast lights and blows
+      // across the floor under the palm
+      const pool = this.palmPools[i];
+      const down = Math.max(0, -this._n.y);
+      const h = Math.max(0, s.position.y);
+      const near = down * THREE.MathUtils.clamp(1 - h / 1.4, 0, 1) * k;
+      pool.visible = near > 0.02;
+      if (pool.visible) {
+        pool.position.set(s.position.x + this._n.x * h, 0.005, s.position.z + this._n.z * h);
+        pool.scale.setScalar(0.35 + 0.35 * near * fl);
+        (pool.material as THREE.MeshBasicMaterial).opacity = 0.55 * near * fl;
+        const puff = Math.floor(t * 9);
+        if (near > 0.25 && puff !== this.lastPalmPuff && i === 1) {
+          for (let j = 0; j < this.palmPools.length; j++) {
+            const pj = this.palmPools[j];
+            if (!pj.visible) continue;
+            const a = puff * 2.39996 + j;
+            this._d.set(Math.cos(a), 0.05, Math.sin(a));
+            particles.burst('steam', this._p.set(pj.position.x, 0.012, pj.position.z), 1 + Math.round(2 * near), this._d);
+          }
+          this.lastPalmPuff = puff;
+        }
+      }
     });
+    for (let i = 0; i < this.palmPools.length; i++) if (!(flashes[i] > 0.01)) this.palmPools[i].visible = false;
 
     const burn = f.thrusters;
-    const flicker = 0.88 + 0.12 * Math.sin(t * 61) * Math.sin(t * 37);
+    const burns = [f.thrusterL, f.thrusterR];
     const puff = Math.floor(t * 12);
     SOLES.forEach((p, i) => {
       const jet = this.jets[i];
       const core = this.cores[i];
       const pool = this.pools[i];
-      const on = burn > 0.01;
+      const b = burns[i];
+      const on = b > 0.01;
       jet.visible = core.visible = pool.visible = on;
       if (!on) return;
       const nozzle = this.carried(rig, modelInv, p.bone, p.at, this._v);
+      // Jet leaves along the sole normal, so it vectors with the ankle and
+      // the suit's tilt instead of always pointing straight down
+      this._m.multiplyMatrices(modelInv, rig.bones[p.bone].matrixWorld);
+      this._n.set(0, -1, 0).transformDirection(this._m);
+      this._q.setFromUnitVectors(new THREE.Vector3(0, -1, 0), this._n);
+      const fl = flick(t, 11 + i * 4.7);
       // Plume reaches the deck (model y 0) and splashes; capped when high
       const h = Math.max(0, nozzle.y);
-      const len = Math.min(0.7, h + 0.05) * (0.6 + 0.4 * burn);
+      const reach = h / Math.max(0.35, -this._n.y);
+      const len = Math.min(0.7, reach + 0.05) * (0.6 + 0.4 * b) * (0.92 + 0.1 * fl);
       for (const [m, w] of [
-        [jet, 1 + 0.4 * burn],
+        [jet, (1 + 0.4 * b) * (0.95 + 0.08 * fl)],
         [core, 1],
       ] as const) {
         m.position.copy(nozzle);
+        m.quaternion.copy(this._q);
         m.scale.set(w, len, w);
         const u = (m.material as THREE.ShaderMaterial).uniforms;
-        u.uOpacity.value = burn * flicker * (m === core ? 1.2 : 0.8);
+        u.uOpacity.value = b * fl * (m === core ? 1.2 : 0.8);
         u.uTime.value = t;
       }
-      // Wash on the deck: brightest while the boots are close to it
+      // Wash on the deck where the jet lands: brightest while close
       const near = THREE.MathUtils.clamp(1 - h / 0.8, 0.15, 1);
-      pool.position.set(nozzle.x, 0.004, nozzle.z);
-      pool.scale.setScalar(0.5 + 0.9 * burn * (1.2 - near * 0.4));
-      (pool.material as THREE.MeshBasicMaterial).opacity = 0.8 * burn * flicker * near;
+      pool.position.set(nozzle.x + this._n.x * reach, 0.004, nozzle.z + this._n.z * reach);
+      pool.scale.setScalar((0.5 + 0.9 * b * (1.2 - near * 0.4)) * (0.95 + 0.1 * fl));
+      (pool.material as THREE.MeshBasicMaterial).opacity = 0.8 * b * fl * near;
       // Exhaust vapour blown out across the deck
       if (burn > 0.45 && puff !== this.lastPuff) {
         const a = puff * 2.39996 + i * 1.7;
         this._d.set(Math.cos(a), 0.08, Math.sin(a));
-        particles.burst('steam', this._p.set(nozzle.x, 0.015, nozzle.z), Math.round(2 + 3 * near), this._d);
+        particles.burst('steam', this._p.copy(pool.position).setY(0.015), Math.round(2 + 3 * near), this._d);
+        // The odd spark kicked off the deck plating
+        if (near > 0.5 && (puff + i) % 3 === 0) particles.burst('sparks', this._p, 2, this._d);
       }
     });
     if (burn > 0.45) this.lastPuff = puff;
   }
 
   hide(): void {
-    for (const o of [...this.palms, ...this.palmJets, ...this.palmCores, ...this.jets, ...this.cores, ...this.pools]) o.visible = false;
+    for (const o of [...this.palms, ...this.palmJets, ...this.palmCores, ...this.palmPools, ...this.jets, ...this.cores, ...this.pools]) o.visible = false;
   }
 }

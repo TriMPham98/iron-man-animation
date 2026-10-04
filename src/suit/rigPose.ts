@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BONE_NAMES, BONE_SPECS, FINGERS, type BoneName, type Finger } from './rig';
+import { BONE_NAMES, BONE_SPECS, FINGERS, HINGES, type BoneName, type Finger } from './rig';
 
 /**
  * Scalar pose channels the suit-up choreography animates. Every channel is 0
@@ -38,6 +38,10 @@ export interface FlightPose extends SuitPose {
   driftZ?: number;
   /** Breathing phase −1…1 (chest swell, shoulders, a settling head). */
   breath?: number;
+  /** Head tilt in radians (+ = ear toward the suit's left shoulder). */
+  headRoll?: number;
+  /** Additive limb offsets (rad) for live balance in flight. */
+  limbs?: LimbOffsets;
   /** 0 = modelled stance (~30 cm between the boots), 1 = feet together. */
   legsIn?: number;
   /**
@@ -46,6 +50,29 @@ export interface FlightPose extends SuitPose {
    */
   fingersL?: readonly number[];
   fingersR?: readonly number[];
+}
+
+/**
+ * Per-side additive joint offsets (rad). Arms: `arm` raises the arm out to
+ * the side, `elbow` bends it. Legs: `hip` swings the leg forward, `hipOut`
+ * spreads it, `knee` bends it, `ankle` points the toes down, `footRoll`
+ * banks the sole (+ = toward the suit's own left).
+ */
+export interface LimbOffsets {
+  armL?: number;
+  armR?: number;
+  elbowL?: number;
+  elbowR?: number;
+  hipL?: number;
+  hipR?: number;
+  hipOutL?: number;
+  hipOutR?: number;
+  kneeL?: number;
+  kneeR?: number;
+  ankleL?: number;
+  ankleR?: number;
+  footRollL?: number;
+  footRollR?: number;
 }
 
 /** Max curl (rad) of proximal / distal phalanges at curl 1. */
@@ -146,6 +173,7 @@ const BREATH_SHOULDER = 0.008;
 /** Hover tilt pivot (bind space): about the hips. */
 const CENTRE_OF_MASS = new THREE.Vector3(0, 1.0, 0);
 const _p = new THREE.Vector3();
+const _I = new THREE.Quaternion();
 const _qa = new THREE.Quaternion();
 const _qb = new THREE.Quaternion();
 const _X = new THREE.Vector3(1, 0, 0);
@@ -173,26 +201,30 @@ export function applyPose(rig: SuitRig, pose: FlightPose): void {
 
   // Arms: abduct out to the sides, then reach slightly forward.
   // .L lives on +X, so raising it is +Z rotation; .R mirrors.
+  const lb = pose.limbs ?? {};
   for (const [side, s] of [
     ['L', 1],
     ['R', -1],
   ] as const) {
+    const o = (k: 'arm' | 'elbow' | 'hip' | 'hipOut' | 'knee' | 'ankle' | 'footRoll') =>
+      lb[`${k}${side}` as keyof LimbOffsets] ?? 0;
     setAxisAngles(
       b[`upperArm.${side}`],
       // Shoulders ride the breath a touch
-      [_Z, s * (STANCE_ARM_RAISE * st + BREATH_SHOULDER * (pose.breath ?? 0))],
+      [_Z, s * (STANCE_ARM_RAISE * st + BREATH_SHOULDER * (pose.breath ?? 0) + o('arm'))],
       [_X, -STANCE_ARM_FORWARD * st],
     );
-    setAxisAngles(b[`forearm.${side}`], [_X, -STANCE_ELBOW * st]);
+    setAxisAngles(b[`forearm.${side}`], [_X, -STANCE_ELBOW * st - o('elbow')]);
     const wrist = side === 'L' ? pose.wristL : pose.wristR;
     setAxisAngles(b[`hand.${side}`], [
       _Z,
       s * (WRIST_EXTENSION * wrist - STANCE_WRIST * st),
     ]);
-    const legs = STANCE_LEG_SPREAD * st - LEGS_IN * (pose.legsIn ?? 0);
-    setAxisAngles(b[`thigh.${side}`], [_Z, s * legs]);
-    // Soles stay flat on the deck
-    setAxisAngles(b[`foot.${side}`], [_Z, -s * legs]);
+    const legs = STANCE_LEG_SPREAD * st - LEGS_IN * (pose.legsIn ?? 0) + o('hipOut');
+    setAxisAngles(b[`thigh.${side}`], [_Z, s * legs], [_X, -o('hip')]);
+    setAxisAngles(b[`shin.${side}`], [_X, o('knee')]);
+    // Soles stay flat on the deck unless the ankle is vectoring thrust
+    setAxisAngles(b[`foot.${side}`], [_Z, -s * legs + o('footRoll')], [_X, o('ankle') - o('knee') + o('hip')]);
   }
 
   for (const [side, curl] of [
@@ -214,12 +246,16 @@ export function applyPose(rig: SuitRig, pose: FlightPose): void {
     });
   }
 
+  // Hinge helpers turn half as far as the lower limb (round elbow / knee)
+  for (const h of HINGES) b[h.helper].quaternion.slerpQuaternions(_I, b[h.lower].quaternion, 0.5);
+
   // Breathing: the chest swells (rocks back a hair) and the head
   // counters it so the gaze stays level
   const breath = pose.breath ?? 0;
   setAxisAngles(b.spine, [_X, -BREATH_SPINE * breath]);
   setAxisAngles(b.chest, [_X, -CHEST_RECOIL * pose.chestRecoil - BREATH_CHEST * breath]);
   setAxisAngles(b.head, [_X, pose.headPitch + (BREATH_SPINE + BREATH_CHEST) * breath * 0.8], [_Y, pose.headYaw ?? 0]);
+  if (pose.headRoll) b.head.quaternion.premultiply(_qa.setFromAxisAngle(_Z, pose.headRoll));
 
   // Root sits at the origin in the bind pose; hover moves the whole rig and
   // tilts it about the centre of mass (not the soles)
