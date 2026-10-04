@@ -169,6 +169,11 @@ export class Workshop {
     this.applyHome();
   }
 
+  /** Moving hardware that grounds itself with a contact shadow: arms, masts, parts stands. */
+  shadowCasters(): THREE.Object3D[] {
+    return [...[...this.arms.values()].map((a) => a.group), ...this.masts.values(), this.stands.group];
+  }
+
   private toWorld(x: number, y: number, z: number): THREE.Vector3 {
     return new THREE.Vector3(x, y, z).applyMatrix4(this.suit.kin.modelWorld);
   }

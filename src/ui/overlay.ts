@@ -1022,6 +1022,31 @@ export function createOverlay(): OverlayHandles {
   let loadLast = 0;
   let lastPct = -1;
   let lastStageShown = -1;
+  const loadingLog = elOptional<HTMLOListElement>('loading-log');
+  const loadingClock = elOptional<HTMLSpanElement>('loading-clock');
+  // Boot clock from navigation start (the page has been loading since then)
+  const loadSecs = () => performance.now() / 1000;
+  let lastClock = '';
+  const stamp = () => loadSecs().toFixed(2).padStart(5, '0');
+  /** The running stage's log line (ticks to OK when the stage completes). */
+  const pendingLog = new Map<number, HTMLLIElement>();
+  /** Boot log: a line per stage as it starts, stamped OK as it completes. */
+  const logStage = (idx: number, text: string, ok: boolean) => {
+    if (!loadingLog) return;
+    let li = pendingLog.get(idx);
+    if (!li) {
+      li = document.createElement('li');
+      li.innerHTML = `<span class="loading-log-t"></span><span class="loading-log-msg"></span><span class="loading-log-ok"></span>`;
+      li.querySelector('.loading-log-msg')!.textContent = text;
+      loadingLog.appendChild(li);
+      pendingLog.set(idx, li);
+      // Keep the last few lines (oldest drop off the top)
+      while (loadingLog.children.length > 4) loadingLog.firstElementChild?.remove();
+    }
+    li.querySelector('.loading-log-t')!.textContent = stamp();
+    li.querySelector('.loading-log-ok')!.textContent = ok ? 'OK' : '···';
+    li.classList.toggle('is-ok', ok);
+  };
   const loadFilledWaiters: Array<() => void> = [];
   const tickLoading = (now: number) => {
     const dt = loadLast ? Math.min(0.1, (now - loadLast) / 1000) : 0.016;
@@ -1035,10 +1060,21 @@ export function createOverlay(): OverlayHandles {
       lastPct = pct;
       // Compositor-only: scaleX instead of width, so the bar never relayouts
       loadingFill.style.transform = `scaleX(${loadShown.toFixed(4)})`;
+      loading.style.setProperty('--load-p', loadShown.toFixed(4));
       if (loadingPct) loadingPct.textContent = `${pct}%`;
+    }
+    const clock = `T+${loadSecs().toFixed(2).padStart(5, '0')}`;
+    if (loadingClock && clock !== lastClock) {
+      lastClock = clock;
+      loadingClock.textContent = clock;
     }
     const stageKey = done ? LOADING_STAGES.length : loadStage;
     if (stageKey !== lastStageShown) {
+      // Log every stage passed since the last frame, then the one starting
+      const name = (i: number) => LOADING_STAGES[i]!.label.replace('…', '');
+      for (let i = Math.max(0, lastStageShown); i < stageKey; i++) logStage(i, name(i), true);
+      if (!done) logStage(loadStage, name(loadStage), false);
+      else logStage(LOADING_STAGES.length, 'SYSTEMS READY', true);
       lastStageShown = stageKey;
       const label = done ? 'SYSTEMS READY' : LOADING_STAGES[loadStage]!.label;
       if (loadingLabel) {

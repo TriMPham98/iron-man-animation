@@ -12,7 +12,7 @@ import type { Suit } from '../suit/Suit';
 import type { SuitUpPlan } from '../animation/suitUpChoreography';
 import type { Workshop } from '../workshop/Workshop';
 import { diagnosticStatusForProgress } from '../suit/diagnosticScan';
-import { evaluateFlightCheck } from '../animation/flightCheck';
+import { evaluateFlightCheck, FLIGHT_CHECK_STEPS } from '../animation/flightCheck';
 import { createCuePlayer, doffCues, doffOpeningCues, flightCues } from '../audio/actionSfx';
 import {
   applyDoff,
@@ -28,6 +28,7 @@ import { gy } from '../animation/sequenceClock';
 import { armorPieceDef } from '../suit/armorPieces';
 import { FIT_TASKS } from '../workshop/fittingProgram';
 import { createFlightPanel } from '../ui/flightPanel';
+import { createWeaponReticles } from '../ui/weaponReticles';
 import { statusForIntegrityProgress } from '../suit/waves';
 import type { AudioTimelinePanel } from '../ui/audioTimelinePanel';
 import type { OverlayHandles } from '../ui/overlay';
@@ -52,8 +53,13 @@ const SHOWCASE_ORBIT_SEC = 35;
 const SPIN_EASE_OUT_RAD = 0.275;
 /** Doff camera: close on the helmet for the power-down and the faceplate. */
 const DOFF_HEAD_CAM = { x: 0.7, y: gy(1.7), z: 2.0, lx: 0, ly: gy(1.6), lz: 0, fov: 30 } as const;
-/** Doff camera: pulls down the suit with the seal-release vents. */
-const DOFF_VENT_CAM = { x: 1.05, y: gy(1.12), z: 2.6, lx: 0, ly: gy(0.86), lz: 0, fov: 33 } as const;
+/**
+ * Doff camera: eases back to the whole suit, helmet to boots, as the seals
+ * vent down it (the extraction then rides the assembly's own path).
+ */
+const DOFF_VENT_CAM = { x: 1.3, y: gy(1.2), z: 3.7, lx: 0, ly: gy(1.0), lz: 0, fov: 34 } as const;
+/** Seconds the doff camera takes to blend onto the reversed assembly path. */
+const DOFF_PATH_BLEND = 2.2;
 
 
 const VIEWER_HINT =
@@ -288,7 +294,10 @@ export function createAssemblySession(
     lastFlightT = t;
     // Checklist holds "all OK" until the diagnostic takes over
     if (orbitScanArmed) flightPanel.hide();
-    else flightPanel.update(t, f.active);
+    else flightPanel.update(t, f.active, f);
+    // Target boxes over each weapon through the arming step only
+    if (!orbitScanArmed && t >= WEAPONS_FROM && t < WEAPONS_TO) weaponReticles.update(suit.weaponTargets(f));
+    else weaponReticles.hide();
     if (f.status && f.status !== lastFlightStatus && !orbitScanArmed) {
       lastFlightStatus = f.status;
       ui.setStatus(f.status, false);
@@ -298,6 +307,7 @@ export function createAssemblySession(
   const stopCompleteSpinTracking = () => {
     suit.setFlightCheck(null);
     flightPanel.hide();
+    weaponReticles.hide();
     if (flightCamLift !== 0) {
       lookTarget.y -= flightCamLift;
       camera.position.y -= flightCamLift * 0.75;
@@ -523,6 +533,9 @@ export function createAssemblySession(
   /** Camera height offset currently applied for the hover. */
   let flightCamLift = 0;
   const flightPanel = createFlightPanel();
+  const weaponReticles = createWeaponReticles(camera);
+  const WEAPONS_FROM = FLIGHT_CHECK_STEPS[3].at;
+  const WEAPONS_TO = FLIGHT_CHECK_STEPS[4].at;
 
   assembly = createAssemblyTimeline(suit, camera, lookTarget, {
     onStatus: (text) => {
@@ -649,13 +662,24 @@ export function createAssemblySession(
       fov: HERO_END_CAM.fov,
     };
 
+    /**
+     * Opening act: the authored doff poses (proxy). Extraction: the
+     * assembly's own camera path run backwards with the fitting, so the
+     * framing matches the build shot for shot; blended in from the vent
+     * pose and ending on the open-wide frame the next cycle starts from.
+     */
     const applyHandoffCam = () => {
-      camera.position.set(proxy.x, proxy.y, proxy.z);
-      lookTarget.set(proxy.lx, proxy.ly, proxy.lz);
+      const t = clockProxy.t;
+      const k = THREE.MathUtils.smoothstep(t, DOFF_RELEASE_SEC, DOFF_RELEASE_SEC + DOFF_PATH_BLEND);
+      const path = k > 0 ? assembly.cameraAt(fittingAt(t)) : null;
+      const mix = (a: number, key: keyof typeof proxy) => (path ? a + (path[key] - a) * k : a);
+      camera.position.set(mix(proxy.x, 'x'), mix(proxy.y, 'y'), mix(proxy.z, 'z'));
+      lookTarget.set(mix(proxy.lx, 'lx'), mix(proxy.ly, 'ly'), mix(proxy.lz, 'lz'));
       controls.target.copy(lookTarget);
       camera.lookAt(lookTarget);
-      if (Math.abs(camera.fov - proxy.fov) > 1e-4) {
-        camera.fov = proxy.fov;
+      const fov = mix(proxy.fov, 'fov');
+      if (Math.abs(camera.fov - fov) > 1e-4) {
+        camera.fov = fov;
         camera.updateProjectionMatrix();
       }
     };
@@ -691,6 +715,7 @@ export function createAssemblySession(
       while (statusIdx < DOFF_STATUSES.length && DOFF_STATUSES[statusIdx].t <= t) {
         ui.setStatus(DOFF_STATUSES[statusIdx++].text);
       }
+      if (t > DOFF_RELEASE_SEC) applyHandoffCam();
     };
     handoffTween = gsap.timeline({
       onComplete: () => {
@@ -737,15 +762,12 @@ export function createAssemblySession(
     }
 
     // 2) Camera: in on the helmet for the power-down and the faceplate,
-    //    down the suit with the venting, then out to the hangar framing
-    //    while the arms take the parts away
+    //    back to the whole suit with the venting, then onto the assembly's
+    //    path in reverse while the arms take the parts away
     const camTo = (pose: Readonly<typeof proxy>, at: number, duration: number, e = 'power2.inOut') =>
       handoffTween!.to(proxy, { ...pose, duration, ease: e, onUpdate: applyHandoffCam }, at);
     camTo(DOFF_HEAD_CAM, 0, 1.3);
     camTo(DOFF_VENT_CAM, 1.3, DOFF_RELEASE_SEC - 1.3 + 0.4, 'sine.inOut');
-    // Hold on the suit while the arms work, out to the hangar as the last parts come off
-    const pull = Math.min(extractSec - 1, 5.5);
-    camTo(OPEN_WIDE_CAM, totalSec - pull, pull, 'power3.inOut');
   };
 
   const startSequence = () => {

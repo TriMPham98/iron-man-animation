@@ -153,9 +153,14 @@
       }
       #loading .loading-reactor {
         position: relative;
-        width: 4.5rem;
-        height: 4.5rem;
+        width: 5.5rem;
+        height: 5.5rem;
         margin: 0.15rem 0 0.1rem;
+      }
+      #loading .loading-frame,
+      #loading .loading-progress-ring,
+      #loading .loading-log {
+        display: none;
       }
       #loading .loading-reactor-glow {
         position: absolute;
@@ -309,6 +314,15 @@
       Chrome above/below fades during handoff while the core scales into the orb.
     -->
     <div id="loading" role="status" aria-live="polite" aria-busy="true">
+      <!-- Viewport corner brackets + readouts (decorative, no fill) -->
+      <div class="loading-frame" aria-hidden="true">
+        <span class="loading-frame-corner loading-frame-tl"></span>
+        <span class="loading-frame-corner loading-frame-tr"></span>
+        <span class="loading-frame-corner loading-frame-bl"></span>
+        <span class="loading-frame-corner loading-frame-br"></span>
+        <span class="loading-frame-text loading-frame-text-tl">STARK INDUSTRIES // WORKSHOP</span>
+        <span class="loading-frame-text loading-frame-text-br" id="loading-clock">T+00.00</span>
+      </div>
       <div class="loading-inner">
         <div class="loading-panel" aria-hidden="true">
           <span class="loading-corner loading-corner-tl"></span>
@@ -326,6 +340,12 @@
         </div>
 
         <div class="loading-reactor" aria-hidden="true">
+          <!-- Boot progress wraps the reactor (dash offset from --load-p) -->
+          <svg class="loading-progress-ring" viewBox="0 0 100 100">
+            <circle class="loading-ring-ticks" cx="50" cy="50" r="48" pathLength="120" />
+            <circle class="loading-ring-track" cx="50" cy="50" r="44" pathLength="100" />
+            <circle class="loading-ring-fill" cx="50" cy="50" r="44" pathLength="100" />
+          </svg>
           <span class="loading-reactor-glow"></span>
           <span class="loading-reactor-ring"></span>
           <span class="loading-reactor-ring loading-reactor-ring-mid"></span>
@@ -352,6 +372,8 @@
             <span class="loading-stage" data-stage="hangar">HANGAR</span>
             <span class="loading-stage" data-stage="hud">GPU</span>
           </div>
+
+          <ol id="loading-log" class="loading-log" aria-hidden="true"></ol>
         </div>
       </div>
     </div>

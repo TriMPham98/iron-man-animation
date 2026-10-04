@@ -29,7 +29,7 @@ import type { FlightCheckFrame } from '../animation/flightCheck';
 import { armorPieceDef } from './armorPieces';
 import { buildFlightFlaps, flapMotion, type Flap } from './flightFlaps';
 import { FlightFx, type PalmEmitter } from './flightFx';
-import { WeaponsFx } from './weaponsFx';
+import { WeaponsFx, type WeaponTarget } from './weaponsFx';
 import { FIT_TASKS } from '../workshop/fittingProgram';
 import { FOOT_HATCH_RADIUS } from '../workshop/workshopEnvironment';
 
@@ -344,6 +344,14 @@ export class Suit {
     }
     this.flightFx.update(f, t, this.rig, this.modelInv, this.particles);
     this.weapons.update(f, t, this.rig, this.modelInv, this.particles);
+  }
+
+  /** Deployed weapons for the HUD reticles, in world space. */
+  weaponTargets(f: FlightCheckFrame): WeaponTarget[] {
+    if (!this.flightActive) return [];
+    const targets = this.weapons.targets(f);
+    for (const w of targets) w.at.applyMatrix4(this.model.matrixWorld);
+    return targets;
   }
 
   private endFlightCheck(): void {

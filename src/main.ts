@@ -5,6 +5,7 @@ import { createCamera, updateCameraAspect } from './scene/createCamera';
 import { createEnvironment } from './scene/createEnvironment';
 import { createLights } from './scene/createLights';
 import { createPostProcessing } from './scene/postProcessing';
+import { CONTACT_SHADOW_LAYER, createContactShadow } from './scene/contactShadow';
 import { createAdaptiveResolution } from './scene/adaptiveResolution';
 import { warmUp } from './scene/warmUp';
 import { createRenderer } from './scene/createRenderer';
@@ -32,6 +33,12 @@ import { createPickHighlight } from './ui/pickHighlight';
 import { prefersReducedMotion } from './ui/viewerMode';
 import { SOUNDS } from './audio/sounds';
 import { simplifierReady } from './utils/simplify';
+
+/** Lit, opaque surfaces only — glows, holograms and FX cast no shadow. */
+function isLitOpaque(mesh: THREE.Mesh): boolean {
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  return mats.every((m) => (m as THREE.MeshStandardMaterial).isMeshStandardMaterial === true && !m.transparent);
+}
 
 async function boot(): Promise<void> {
   const canvas = document.getElementById('scene-canvas') as HTMLCanvasElement;
@@ -134,6 +141,21 @@ async function boot(): Promise<void> {
   const plan = buildSuitUpPlan();
   const workshop = new Workshop(suit, plan);
   scene.add(workshop.group);
+
+  // Contact shadow on the deck under the suit, the arms and the stands
+  const contact = createContactShadow(renderer, scene, {
+    y: SUIT_GROUND_CLEARANCE + 0.002,
+    size: 5.6,
+    height: 1.1,
+    opacity: 0.95,
+  });
+  scene.add(contact.mesh);
+  for (const root of [suit.group, ...workshop.shadowCasters()]) {
+    root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && isLitOpaque(m)) m.layers.enable(CONTACT_SHADOW_LAYER);
+    });
+  }
 
   const pick = createPickHighlight(scene);
 
@@ -293,6 +315,7 @@ async function boot(): Promise<void> {
       if (cue) ui.setTelemetry(cue.line, { kind: cue.kind });
       else ui.setTelemetry(null);
     }
+    contact.update();
     post.render(delta);
   };
 
@@ -303,6 +326,7 @@ async function boot(): Promise<void> {
   await warmUp(renderer, scene, camera, () => {
     // Also the workshop's off-screen scan view (its own scene)
     workshop.update(0, renderer);
+    contact.update();
     post.render(0);
   });
   report('gpu', 0.75);

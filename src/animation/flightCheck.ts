@@ -58,6 +58,20 @@ export interface FlightCheckFrame {
   /** Palm repulsor glow 0–1 (flash or stabilizer burn). */
   repulsorL: number;
   repulsorR: number;
+  /** Palm charge-up glow 0–1 before each shot (glow only, no plume). */
+  chargeL: number;
+  chargeR: number;
+  /** Launcher lock pulse 0–1: 1 on the lock, decaying (lens, laser). */
+  lockL: number;
+  lockR: number;
+  /**
+   * Silo arming progress 0–6: rocket i runs out of its cell over
+   * [i, i + 1] and its cell light goes amber → green when it is out.
+   */
+  siloArmed: number;
+  /** Stabilizer commands (−1…1) from the attitude controller: + roll = right low. */
+  trimRoll: number;
+  trimPitch: number;
   /** Boot thruster burn 0–1. */
   thrusters: number;
   /** Per-boot burn (the low side pushes harder to level the suit). */
@@ -337,6 +351,34 @@ const CALF_R = lag(CALF_L);
 /** Full deflection: every flap and every weapon out together, held, stowed. */
 const ALL = at(AT_ALL, [0.1, 0.8, 1.6, 2.3]);
 
+/**
+ * Silo arming: from the lock, the cells arm one at a time — each rocket
+ * runs out of its cell and its light goes green. [lock, stowed, s per cell].
+ */
+const SILO_ARMING: ReadonlyArray<readonly [number, number, number]> = [
+  [SILOS[1], SILOS[3], 0.22],
+  [ALL[1], ALL[3], 0.11],
+];
+/** Launcher lock times per side (the arming step, then full deflection). */
+const LOCKS_L = [LAUNCH_L[1], ALL[1]];
+const LOCKS_R = [LAUNCH_R[1], ALL[1]];
+/** Palm charge-up before each shot (s). */
+const CHARGE_SEC = 0.4;
+
+/**
+ * When each side of a checklist step reads done (flight-check s), indexed
+ * like {@link FLIGHT_CHECK_STEPS}; null where the step is not per side.
+ */
+export const FLIGHT_STEP_SIDES: ReadonlyArray<readonly [number, number] | null> = [
+  [FIST_L[3], FIST_R[3]],
+  [FLASH_L[0] + 0.2, FLASH_R[0] + 0.2],
+  [CALF_L[3], CALF_R[3]],
+  [LAUNCH_L[1], LAUNCH_R[1]],
+  null,
+  null,
+  null,
+];
+
 /** Sound / FX cue sheet for the check (flight-check seconds). */
 export const FLIGHT_EVENTS: readonly FlightEvent[] = ([
   { t: IGNITE, kind: 'ignite' },
@@ -469,6 +511,17 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
   const flash = (a: number) => (t >= a ? Math.exp(-(t - a) * 5) : 0);
   let repulsorL = Math.max(...FLASH_L.map(flash));
   let repulsorR = Math.max(...FLASH_R.map(flash));
+  // The palm builds before it fires (the film's whine-up): glow only
+  const charge = (a: number) => (t < a ? stroke(a - CHARGE_SEC, a, t) * 0.6 : 0);
+  const chargeL = Math.max(...FLASH_L.map(charge));
+  const chargeR = Math.max(...FLASH_R.map(charge));
+  const lock = (a: number) => (t >= a ? Math.exp(-(t - a) * 2.2) : 0);
+  const lockL = Math.max(...LOCKS_L.map(lock));
+  const lockR = Math.max(...LOCKS_R.map(lock));
+  let siloArmed = 0;
+  for (const [a, end, dt] of SILO_ARMING) {
+    if (t >= a && t < end) siloArmed = Math.min(6, (t - a) / dt);
+  }
 
   const ignite = t >= IGNITE && t < SPOOL ? (t < IGNITE + 0.18 || (t > IGNITE + 0.32 && t < IGNITE + 0.5) ? 0.5 : 0.15) : 0;
   // Throttles back on the way down, flares to arrest the descent, then
@@ -655,6 +708,13 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
     flaps,
     repulsorL: clamp01(repulsorL),
     repulsorR: clamp01(repulsorR),
+    chargeL,
+    chargeR,
+    lockL,
+    lockR,
+    siloArmed,
+    trimRoll: Math.max(-1, Math.min(1, uRoll)),
+    trimPitch: Math.max(-1, Math.min(1, uPitch)),
     thrusters,
     thrusterL: Math.max(thrusterL, ignite),
     thrusterR: Math.max(thrusterR, ignite),

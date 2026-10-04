@@ -6,6 +6,7 @@ import { isSystemsOnlineStatus } from '../ui/jarvisHud';
 import {
   audioTimelineOffset,
   sequenceGsapDuration,
+  type CameraPose,
 } from './sequenceClock';
 import {
   buildSuitUpPlan,
@@ -111,6 +112,8 @@ export interface AssemblyController {
   toSeed: (gsapT: number) => number;
   /** GSAP time the seamless suit swaps in (last frame with real parts). */
   getFinalSwapTime: () => number;
+  /** The cinematic camera pose at a GSAP time (not applied). */
+  cameraAt: (gsapT: number) => CameraPose;
 }
 
 /**
@@ -468,6 +471,7 @@ export function createAssemblyTimeline(
       workshop?.apply(frame);
     },
     getFinalSwapTime: () => finalSwapTime,
+    cameraAt: (gsapT: number) => evaluateCamera(plan, gsapT - offset),
     toSeed: (gsapT: number) => gsapT - offset,
     setUserOwnsCamera: (owns: boolean) => {
       userOwnsCamera = owns;

@@ -158,6 +158,57 @@ interface Mount {
   root: THREE.Group;
 }
 
+interface Launcher extends Mount {
+  side: 'L' | 'R';
+  /** Muzzle point and bore axis in the launcher frame. */
+  muzzle: THREE.Vector3;
+  lens: THREE.MeshStandardMaterial;
+  ring: THREE.MeshBasicMaterial;
+  laser: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  lastLock: number;
+  /** Latched from the lock until the launcher starts to stow. */
+  locked: boolean;
+}
+
+/** A weapon JARVIS is tracking, for the HUD reticles (model space). */
+export interface WeaponTarget {
+  id: string;
+  label: string;
+  at: THREE.Vector3;
+  /** 0 tracking → 1 locked / armed. */
+  lock: number;
+}
+
+/** Cell light colours (HDR so they bloom): off, arming, armed. */
+const CELL_OFF = new THREE.Color(0x140c06);
+const CELL_ARMING = new THREE.Color(0xffa018).multiplyScalar(2.2);
+const CELL_ARMED = new THREE.Color(0x4dff9a).multiplyScalar(2.4);
+
+/** Targeting laser: a hairline beam fading out along its length. */
+function laserMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    uniforms: { uOpacity: { value: 0 } },
+    vertexShader: /* glsl */ `
+      varying float vH;
+      void main() {
+        vH = uv.y;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform float uOpacity;
+      varying float vH;
+      void main() {
+        // uv.y runs 0 at the far end → 1 at the muzzle
+        float a = vH * vH * uOpacity;
+        gl_FragColor = vec4(vec3(1.0, 0.16, 0.08) * 2.4, a);
+      }`,
+  });
+}
+
 /**
  * Weapons ride the suit's own armor: the forearm launcher sits under an
  * outer forearm panel that rises out on it; each trapezius silo sits under
@@ -165,11 +216,28 @@ interface Mount {
  */
 export class WeaponsFx {
   readonly group = new THREE.Group();
-  private readonly launchers: Mount[] = [];
-  private readonly silos: Array<Mount & { rockets: THREE.Object3D[]; front: number }> = [];
+  private readonly launchers: Launcher[] = [];
+  private readonly silos: Array<
+    Mount & { rockets: THREE.Object3D[]; cells: THREE.MeshBasicMaterial[]; front: number; side: number; center: THREE.Vector3 }
+  > = [];
   private readonly dispensers: Array<Mount & { cells: THREE.Vector3[]; side: number }> = [];
-  /** Live flares (model space). */
-  private readonly flares: Array<{ p: THREE.Vector3; v: THREE.Vector3; life: number; sprite: THREE.Sprite; puff?: number }> = [];
+  /** Live flares (model space), each with a hot spot on the deck under it. */
+  private readonly flares: Array<{
+    p: THREE.Vector3;
+    v: THREE.Vector3;
+    life: number;
+    sprite: THREE.Sprite;
+    spot: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+    puff?: number;
+  }> = [];
+  private readonly spotGeo = new THREE.CircleGeometry(0.5, 24).rotateX(-Math.PI / 2);
+  /**
+   * One light carried by the youngest flare so the hip, the suit and the
+   * deck catch its glare. Always in the scene (intensity 0 when idle): a
+   * light that comes and goes changes every lit shader and recompiles.
+   */
+  private readonly flareLight = new THREE.PointLight(0xffa860, 0, 2.2, 2);
+  private siloArmed = 0;
   private readonly _v = new THREE.Vector3();
   private readonly flareTex = flareTexture();
   private lastT = Number.NaN;
@@ -178,6 +246,7 @@ export class WeaponsFx {
 
   constructor(flaps: readonly Flap[]) {
     this.group.name = 'weapons';
+    this.group.add(this.flareLight);
     const m = mats();
     for (const side of ['L', 'R'] as const) {
       const s = side === 'L' ? 1 : -1;
@@ -191,7 +260,7 @@ export class WeaponsFx {
   }
 
   /** Launcher frame: +X out of the forearm, +Y along it toward the hand. */
-  private makeLauncher(side: 'L' | 'R', flap: Flap, m: ReturnType<typeof mats>): Mount {
+  private makeLauncher(side: 'L' | 'R', flap: Flap, m: ReturnType<typeof mats>): Launcher {
     const spec = boneSpec(`forearm.${side}`);
     const y = new THREE.Vector3(...spec.tail).sub(new THREE.Vector3(...spec.head)).normalize();
     const x = forearmNormal(side);
@@ -210,9 +279,34 @@ export class WeaponsFx {
     pod.add(tube(0.0175, 0.0175, -0.07, -0.056, m.gold, 20));
     pod.add(tube(0.0115, 0.0, 0.067, 0.093, m.red, 16));
     pod.add(tube(0.012, 0.012, 0.06, 0.0685, m.steel, 16));
-    pod.add(box(0.006, 0.01, 0.008, m.lens, 0.015, 0.03, 0));
+    // Targeting lens (its own material: it flares on this launcher's lock)
+    const lens = m.lens.clone();
+    lens.emissiveIntensity = 0.6;
+    pod.add(box(0.006, 0.01, 0.008, lens, 0.015, 0.03, 0));
+    // Muzzle ring glows round the rocket nose once locked
+    const ring = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(0xff6a2a).multiplyScalar(2),
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+      side: THREE.DoubleSide,
+    });
+    const ringMesh = new THREE.Mesh(new THREE.RingGeometry(0.0118, 0.0168, 24).rotateX(-Math.PI / 2), ring);
+    ringMesh.position.y = 0.0656;
+    pod.add(ringMesh);
     rig.add(pod);
-    return this.mount(`forearm.${side}`, flap, bind, rig);
+    // Laser: from the nose tip down the bore axis (toward the hand), 1.6 m
+    const len = 1.6;
+    const laserGeo = new THREE.CylinderGeometry(0.0012, 0.0012, len, 6, 1, true);
+    laserGeo.translate(0, len / 2, 0);
+    const laser = new THREE.Mesh(laserGeo, laserMaterial());
+    laser.position.set(0.012, 0.094, 0);
+    laser.visible = false;
+    rig.add(laser);
+    const muzzle = new THREE.Vector3(0.012, 0.094, 0);
+    return { ...this.mount(`forearm.${side}`, flap, bind, rig), side, muzzle, lens, ring, laser, lastLock: 0, locked: false };
   }
 
   /**
@@ -249,6 +343,7 @@ export class WeaponsFx {
     const bezel = box(w, 0.042, 0.006, m.gun, cx, -0.0222, front + 0.001);
     rig.add(bezel);
     const rockets: THREE.Object3D[] = [];
+    const cells: THREE.MeshBasicMaterial[] = [];
     // 2 × 3 rack; neighbouring collars must not touch (touching facets flicker)
     const collar = Math.min(0.0054, w * 0.25 - 0.0008);
     const band = Math.min(0.0064, collar - 0.0004);
@@ -264,11 +359,21 @@ export class WeaponsFx {
         r.add(tube(body, 0.0, 0.016, 0.028, m.red, 10));
         rig.add(r);
         rockets.push(r);
+        // Cell light on the bezel beside each rocket, outboard of its column
+        const led = new THREE.MeshBasicMaterial({ color: CELL_OFF.clone(), toneMapped: false });
+        const lx = r.position.x + (i === 0 ? -1 : 1) * (collar + 0.0032);
+        rig.add(box(0.0024, 0.0024, 0.002, led, lx, r.position.y, front + 0.0045));
+        cells.push(led);
       }
     }
+    // Arming order: top row first, outboard column before inboard
+    const order = [0, 3, 1, 4, 2, 5].map((k) => (s > 0 ? k : k < 3 ? k + 3 : k - 3));
+    const byArm = order.map((k) => rockets[k]);
+    const cellsByArm = order.map((k) => cells[k]);
+    const center = new THREE.Vector3(cx, -0.022, front);
     // Hinge pins + sensor
     rig.add(box(0.008, 0.005, 0.003, m.lens, cx + s * w * 0.42, -0.006, front + 0.0045));
-    return { ...this.mount('chest', flap, bind, rig), rockets, front };
+    return { ...this.mount('chest', flap, bind, rig), rockets: byArm, cells: cellsByArm, front, side: s, center };
   }
 
   /**
@@ -340,9 +445,30 @@ export class WeaponsFx {
     for (const mt of this.launchers) {
       const k = f.flaps[mt.flap.id] ?? 0;
       mt.root.visible = k > 0.01;
-      if (!mt.root.visible) continue;
+      const lock = mt.side === 'L' ? f.lockL : f.lockR;
+      if (!mt.root.visible) {
+        mt.lastLock = lock;
+        mt.locked = false;
+        continue;
+      }
       // Rides the panel exactly (lift + its small tilt)
       this.place(mt, rig, modelInv, flapMotion(mt.flap, k, this._lift));
+      // Lock: lens flares, the muzzle ring lights, a laser ranges the bore
+      // line for a beat and a puff of gas vents from the tube
+      const up = ease(0.85, 1, k);
+      mt.lens.emissiveIntensity = 0.6 + 4 * lock * up;
+      mt.ring.opacity = up * (0.15 + 0.85 * lock);
+      const beam = Math.min(1, Math.max(0, (lock - 0.3) / 0.7)) * up;
+      mt.laser.visible = beam > 0.01;
+      mt.laser.material.uniforms.uOpacity.value = beam;
+      if (lock > mt.lastLock + 0.5) {
+        mt.locked = true;
+        const at = this._v.copy(mt.muzzle).applyMatrix4(mt.root.matrix);
+        const dir = new THREE.Vector3(0, 1, 0).transformDirection(mt.root.matrix);
+        particles.burst('steam', at, 2, dir);
+      }
+      if (k < 0.9) mt.locked = false;
+      mt.lastLock = lock;
     }
     for (const mt of this.silos) {
       const k = f.flaps[mt.flap.id] ?? 0;
@@ -350,9 +476,16 @@ export class WeaponsFx {
       if (!mt.root.visible) continue;
       // Rides the trap panel straight up (the same lift)
       this.place(mt, rig, modelInv, flapMotion(mt.flap, k, this._lift));
-      // Rockets run out of their cells one after another once clear
+      // Cells arm one at a time after the lock: each rocket runs out of
+      // its cell and its light goes amber → green; all slide home first
+      // as the silo sinks
+      const home = ease(0.85, 1, k);
       mt.rockets.forEach((r, i) => {
-        r.position.z = mt.front - 0.012 + 0.012 * ease(0.72 + i * 0.035, 0.82 + i * 0.035, k);
+        const out = Math.min(ease(0, 1, f.siloArmed - i), home);
+        r.position.z = mt.front - 0.012 + 0.012 * out;
+        const led = mt.cells[i].color;
+        if (home < 0.98) led.copy(CELL_OFF);
+        else led.copy(f.siloArmed - i >= 1 ? CELL_ARMED : CELL_ARMING);
       });
     }
     for (const mt of this.dispensers) {
@@ -361,7 +494,41 @@ export class WeaponsFx {
       if (!mt.root.visible) continue;
       this.place(mt, rig, modelInv, flapMotion(mt.flap, k, this._lift));
     }
+    this.siloArmed = f.siloArmed;
     this.updateFlares(t, particles);
+  }
+
+  /**
+   * Deployed weapons for the HUD reticles (model space): launcher muzzles,
+   * silo racks and flare drums, with how far each is locked / armed.
+   */
+  targets(f: FlightCheckFrame): WeaponTarget[] {
+    const out: WeaponTarget[] = [];
+    for (const mt of this.launchers) {
+      if (!mt.root.visible) continue;
+      const k = f.flaps[mt.flap.id] ?? 0;
+      out.push({
+        id: `at.${mt.side}`,
+        label: `AT-${mt.side} ${mt.locked ? 'LOCK' : 'TRK'}`,
+        at: mt.muzzle.clone().applyMatrix4(mt.root.matrix),
+        lock: mt.locked ? 1 : 0.3 * k,
+      });
+    }
+    // Both silos arm together: one box between the racks
+    const silos = this.silos.filter((mt) => mt.root.visible);
+    if (silos.length) {
+      const at = new THREE.Vector3();
+      for (const mt of silos) at.add(this._v.copy(mt.center).applyMatrix4(mt.root.matrix));
+      const n = Math.floor(Math.min(6, this.siloArmed));
+      out.push({ id: 'silos', label: `SILOS ${n}/6`, at: at.divideScalar(silos.length), lock: n / 6 });
+    }
+    for (const mt of this.dispensers) {
+      if (!mt.root.visible) continue;
+      const side = mt.side > 0 ? 'L' : 'R';
+      const k = f.flaps[mt.flap.id] ?? 0;
+      out.push({ id: `flr.${side}`, label: `FLR-${side}`, at: new THREE.Vector3().applyMatrix4(mt.root.matrix), lock: k > 0.9 ? 1 : 0.3 * k });
+    }
+    return out;
   }
 
   /** Pop flares on schedule and fly the live ones. */
@@ -381,21 +548,28 @@ export class WeaponsFx {
           new THREE.SpriteMaterial({ map: this.flareTex, color: 0xfff1d0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }),
         );
         this.group.add(sprite);
-        this.flares.push({ p: cell, v, life: 1.6, sprite });
+        const spot = new THREE.Mesh(
+          this.spotGeo,
+          new THREE.MeshBasicMaterial({ map: this.flareTex, color: 0xffb070, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }),
+        );
+        spot.renderOrder = 3;
+        this.group.add(spot);
+        this.flares.push({ p: cell, v, life: 1.6, sprite, spot });
         particles.burst('sparks', cell, 16, v.clone().normalize());
         particles.burst('steam', cell, 3, v.clone().normalize());
       }
     }
     const step = Math.max(0, Math.min(0.05, dt));
+    let lit: (typeof this.flares)[number] | null = null;
     for (let i = this.flares.length - 1; i >= 0; i--) {
       const fl = this.flares[i];
       fl.life -= step;
       if (fl.life <= 0 || dt < 0) {
-        this.group.remove(fl.sprite);
-        fl.sprite.material.dispose();
+        this.removeFlare(fl);
         this.flares.splice(i, 1);
         continue;
       }
+      if (!lit || fl.life > lit.life) lit = fl;
       // Light flares: heavy drag, gentle fall, skid on the deck
       fl.v.multiplyScalar(Math.exp(-1.8 * step));
       fl.v.y -= 4.5 * step;
@@ -405,8 +579,14 @@ export class WeaponsFx {
         fl.v.y = Math.abs(fl.v.y) * 0.2;
       }
       const flick = 0.75 + 0.25 * Math.sin(t * 70 + i * 3);
+      const fade = Math.min(1, fl.life * 2);
       fl.sprite.position.copy(fl.p);
-      fl.sprite.scale.setScalar((0.07 + 0.05 * flick) * Math.min(1, fl.life * 2));
+      fl.sprite.scale.setScalar((0.07 + 0.05 * flick) * fade);
+      // Hot spot on the deck under it: tight and bright as it comes down
+      const near = Math.max(0, 1 - fl.p.y / 0.7);
+      fl.spot.position.set(fl.p.x, 0.004, fl.p.z);
+      fl.spot.scale.setScalar(0.12 + 0.22 * (1 - near));
+      fl.spot.material.opacity = 0.65 * near * near * fade * flick;
       // Smoke trail — one puff per ~0.12 s of flight (time-based, so it
       // costs the same at any frame rate) and thin enough that the big soft
       // sprites never pile up into fill-rate-heavy overdraw
@@ -416,17 +596,28 @@ export class WeaponsFx {
         particles.burst('steam', fl.p, 1, this._v.copy(fl.v).multiplyScalar(-0.2));
       }
     }
+    if (lit) {
+      this.flareLight.position.copy(lit.p);
+      this.flareLight.intensity = 1.6 * Math.min(1, lit.life * 2) * (0.85 + 0.15 * Math.sin(t * 53));
+    } else {
+      this.flareLight.intensity = 0;
+    }
+  }
+
+  private removeFlare(fl: (typeof this.flares)[number]): void {
+    this.group.remove(fl.sprite, fl.spot);
+    fl.sprite.material.dispose();
+    fl.spot.material.dispose();
   }
 
   private readonly _lift = new THREE.Matrix4();
 
   hide(): void {
     for (const mt of [...this.launchers, ...this.silos, ...this.dispensers]) mt.root.visible = false;
-    for (const fl of this.flares) {
-      this.group.remove(fl.sprite);
-      fl.sprite.material.dispose();
-    }
+    for (const fl of this.flares) this.removeFlare(fl);
     this.flares.length = 0;
+    this.flareLight.intensity = 0;
+    this.siloArmed = 0;
     this.lastT = Number.NaN;
   }
 }

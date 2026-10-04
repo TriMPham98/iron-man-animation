@@ -195,10 +195,16 @@ export class FlightFx {
 
   update(f: FlightCheckFrame, t: number, rig: SuitRig, modelInv: THREE.Matrix4, particles: SuitParticles): void {
     const flashes = [f.repulsorL, f.repulsorR];
+    const charges = [f.chargeL, f.chargeR];
     this.palmSpecs.forEach((p, i) => {
       const s = this.palms[i];
       const k = flashes[i];
-      s.visible = this.palmJets[i].visible = this.palmCores[i].visible = k > 0.01;
+      // Charge-up: the palm disc swells and brightens toward the shot, but
+      // no plume leaves it until it fires
+      const c = charges[i];
+      const glow = Math.max(k, c);
+      s.visible = glow > 0.01;
+      this.palmJets[i].visible = this.palmCores[i].visible = k > 0.01;
       if (!s.visible) return;
       this.carried(rig, modelInv, p.bone, p.at, s.position);
       // Face out of the palm: disc normal = palm normal carried by the hand
@@ -206,8 +212,9 @@ export class FlightFx {
       this._n.set(p.normal[0], p.normal[1], p.normal[2]).transformDirection(this._m);
       s.quaternion.copy(this._q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), this._n));
       s.position.addScaledVector(this._n, 0.012);
-      s.scale.setScalar(0.07 + 0.22 * k);
-      (s.material as THREE.MeshBasicMaterial).opacity = Math.min(1, k * 1.4);
+      s.scale.setScalar(0.07 + 0.22 * k + 0.1 * c);
+      (s.material as THREE.MeshBasicMaterial).opacity = Math.min(1, glow * 1.4);
+      if (!(k > 0.01)) return;
       // Thrust plume straight out of the palm (jet geometry runs along −Y)
       this._q.setFromUnitVectors(new THREE.Vector3(0, -1, 0), this._n);
       const fl = flick(t, i * 3.1);
