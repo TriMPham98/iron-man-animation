@@ -4,6 +4,7 @@ import { RobotArm } from './robotArm';
 import type { RobotMaterials } from './robotMaterials';
 import { boltCircle, drum, lathe } from './robotParts';
 import { buildToolWall } from './wallTools';
+import { simplifyGeometry } from '../utils/simplify';
 import { PLATFORM_RADIUS, PLATFORM_TOP, ROOM_RADIUS } from './workshopEnvironment';
 
 /**
@@ -150,8 +151,9 @@ export function createWorkshopDetail(suitGeometry: THREE.BufferGeometry, mats: R
       mat: new THREE.MeshStandardMaterial({ color: 0xd8dde3, metalness: 1, roughness: 0.18 }),
     },
   ];
-  // Display suits are metres away: a clustered copy at ~1/3 the triangles
-  const displayGeo = decimate(suitGeometry, 0.011);
+  // Display suits are metres away behind glass: a quadric-simplified copy
+  // at ~1/6 of the triangles (clustering only as a fallback)
+  const displayGeo = simplifyGeometry(suitGeometry, 0.16) ?? decimate(suitGeometry, 0.011);
   for (const d of displays) {
     const g = new THREE.Group();
     g.position.set(d.x, 0, d.z);

@@ -944,7 +944,10 @@ export function createWorkshopEnvironment(
   holoTable.add(tableBase);
   const tableTop = new THREE.Mesh(
     keep(new THREE.CylinderGeometry(0.75, 0.75, 0.04, 48)),
-    keep(new THREE.MeshPhysicalMaterial({ color: 0x0c1a22, metalness: 0.2, roughness: 0.05, transmission: 0.2, transparent: true, opacity: 0.85 })),
+    // Dark smoked glass. No `transmission`: on any material it makes three
+    // re-render the whole opaque scene into a refraction target every frame
+    // (≈ a second full scene pass) for a barely visible 20 % see-through
+    keep(new THREE.MeshPhysicalMaterial({ color: 0x0c1a22, metalness: 0.2, roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0.05, transparent: true, opacity: 0.8 })),
   );
   tableTop.position.y = 0.87;
   holoTable.add(tableTop);

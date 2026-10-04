@@ -103,6 +103,9 @@ export class FlightFx {
           uOpacity: { value: 0 },
           uTime: { value: 0 },
           uSeed: { value: Math.random() * 100 },
+          // Throttle 0–1: drives colour temperature, shock-diamond count
+          // and how far the hot core reaches
+          uPower: { value: 0 },
         },
         vertexShader: /* glsl */ `
           uniform float uTime;
@@ -131,18 +134,24 @@ export class FlightFx {
           uniform float uOpacity;
           uniform float uTime;
           uniform float uSeed;
+          uniform float uPower;
           varying float vH;
           varying vec3 vN;
           varying vec3 vV;
           void main() {
             // Bright at the nozzle, thinning out; standing shock diamonds
             // near the nozzle plus turbulent bands racing down it
-            float along = pow(1.0 - clamp(vH, 0.0, 1.0), ${power.toFixed(1)});
-            float diamonds = 0.85 + 0.3 * pow(0.5 + 0.5 * cos(vH * 34.0), 6.0) * (1.0 - vH);
+            // Higher throttle: the hot core reaches further down the plume
+            float along = pow(1.0 - clamp(vH, 0.0, 1.0), ${power.toFixed(1)} * (1.5 - 1.0 * uPower));
+            // More, crisper shock diamonds as the jet runs harder
+            float freq = 18.0 + 22.0 * uPower;
+            float diamonds = 0.85 + (0.1 + 0.35 * uPower) * pow(0.5 + 0.5 * cos(vH * freq), 6.0) * (1.0 - vH);
             float race = 0.95 + 0.05 * sin(vH * 30.0 - uTime * 18.0 + uSeed);
             float bands = diamonds * race;
             float edge = pow(abs(dot(vN, vV)), 0.8);
-            gl_FragColor = vec4(uColor * bands, along * edge * uOpacity);
+            // Colour temperature: dim deep blue at idle → white-hot at full
+            vec3 col = mix(uColor * vec3(0.45, 0.65, 1.0), mix(uColor, vec3(1.0), 0.55), uPower);
+            gl_FragColor = vec4(col * bands, along * edge * uOpacity);
           }
         `,
       });
@@ -208,9 +217,13 @@ export class FlightFx {
       ] as const) {
         m.position.copy(s.position);
         m.quaternion.copy(this._q);
-        m.scale.set(w * (0.9 + 0.15 * k), len * (0.35 + 0.65 * k) * (0.9 + 0.12 * fl), w * (0.9 + 0.15 * k));
+        // Length and width follow the output: a short stub at idle, a long
+        // tight column at full power
+        const pw = Math.pow(k, 1.3);
+        m.scale.set(w * (0.75 + 0.35 * k), len * (0.15 + 0.95 * pw) * (0.97 + 0.04 * fl), w * (0.75 + 0.35 * k));
         const u = (m.material as THREE.ShaderMaterial).uniforms;
-        u.uOpacity.value = k * fl * op;
+        u.uPower.value = k;
+        u.uOpacity.value = (0.35 + 0.65 * k) * k * fl * op;
         u.uTime.value = t;
       }
       // Pointed at the deck and close to it: the blast lights and blows
@@ -260,16 +273,18 @@ export class FlightFx {
       // Plume reaches the deck (model y 0) and splashes; capped when high
       const h = Math.max(0, nozzle.y);
       const reach = h / Math.max(0.35, -this._n.y);
-      const len = Math.min(0.7, reach + 0.05) * (0.6 + 0.4 * b) * (0.92 + 0.1 * fl);
+      // Output sets the plume: length ~ power^1.3, still capped by the deck
+      const len = Math.min(0.75 * (0.2 + 0.8 * Math.pow(b, 1.3)), reach + 0.05) * (0.97 + 0.04 * fl);
       for (const [m, w] of [
-        [jet, (1 + 0.4 * b) * (0.95 + 0.08 * fl)],
-        [core, 1],
+        [jet, (0.75 + 0.6 * b) * (0.98 + 0.03 * fl)],
+        [core, 0.7 + 0.4 * b],
       ] as const) {
         m.position.copy(nozzle);
         m.quaternion.copy(this._q);
         m.scale.set(w, len, w);
         const u = (m.material as THREE.ShaderMaterial).uniforms;
-        u.uOpacity.value = b * fl * (m === core ? 1.2 : 0.8);
+        u.uPower.value = b;
+        u.uOpacity.value = (0.3 + 0.7 * b) * b * fl * (m === core ? 1.2 : 0.8);
         u.uTime.value = t;
       }
       // Wash on the deck where the jet lands: brightest while close

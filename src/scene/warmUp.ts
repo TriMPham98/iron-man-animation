@@ -9,7 +9,18 @@ const TEXTURE_SLOTS = ['map', 'emissiveMap', 'normalMap', 'roughnessMap', 'metal
  * uploaded, so nothing hitches mid-sequence. Hidden objects are shown just
  * for the compile, then restored.
  */
-export async function warmUp(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): Promise<void> {
+export async function warmUp(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.Camera,
+  /**
+   * Draw one real frame through the actual pipeline (shadows, post) while
+   * everything is shown. `compile` alone builds programs against a generic
+   * state; the real passes can still key a different variant and compile it
+   * on first use — a mid-sequence hitch. One frame here catches all of them.
+   */
+  renderFrame?: () => void,
+): Promise<void> {
   const hidden: THREE.Object3D[] = [];
   scene.traverse((o) => {
     if (!o.visible) {
@@ -47,5 +58,6 @@ export async function warmUp(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   } catch {
     renderer.compile(scene, camera);
   }
+  renderFrame?.();
   for (const o of hidden) o.visible = false;
 }

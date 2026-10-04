@@ -31,6 +31,7 @@ import { createOverlay } from './ui/overlay';
 import { createPickHighlight } from './ui/pickHighlight';
 import { prefersReducedMotion } from './ui/viewerMode';
 import { SOUNDS } from './audio/sounds';
+import { simplifierReady } from './utils/simplify';
 
 async function boot(): Promise<void> {
   const canvas = document.getElementById('scene-canvas') as HTMLCanvasElement;
@@ -99,6 +100,7 @@ async function boot(): Promise<void> {
   ]);
 
   const suit = await Suit.create((r) => report('suit', r, r < 0.7 ? 'mesh' : undefined));
+  await simplifierReady.catch(() => undefined);
   await fonts;
   report('hangar', 0, done.audio < 1 ? 'audio' : 'hangar');
   await audio;
@@ -298,7 +300,11 @@ async function boot(): Promise<void> {
   // fitting / flight check / diagnostic use later) so nothing stalls mid-run
   report('hangar', 1, 'hud');
   suit.prepareDiagnosticScan();
-  await warmUp(renderer, scene, camera);
+  await warmUp(renderer, scene, camera, () => {
+    // Also the workshop's off-screen scan view (its own scene)
+    workshop.update(0, renderer);
+    post.render(0);
+  });
   report('gpu', 0.75);
 
   // ── Phase 3: scene ready under the loader ────────────────────────

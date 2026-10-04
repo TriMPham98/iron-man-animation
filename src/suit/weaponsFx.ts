@@ -148,7 +148,8 @@ export class WeaponsFx {
   private readonly silos: Array<Mount & { rockets: THREE.Object3D[]; front: number }> = [];
   private readonly dispensers: Array<Mount & { cells: THREE.Vector3[]; side: number }> = [];
   /** Live flares (model space). */
-  private readonly flares: Array<{ p: THREE.Vector3; v: THREE.Vector3; life: number; sprite: THREE.Sprite }> = [];
+  private readonly flares: Array<{ p: THREE.Vector3; v: THREE.Vector3; life: number; sprite: THREE.Sprite; puff?: number }> = [];
+  private readonly _v = new THREE.Vector3();
   private readonly flareTex = flareTexture();
   private lastT = Number.NaN;
   private readonly _m = new THREE.Matrix4();
@@ -379,9 +380,14 @@ export class WeaponsFx {
       const flick = 0.75 + 0.25 * Math.sin(t * 70 + i * 3);
       fl.sprite.position.copy(fl.p);
       fl.sprite.scale.setScalar((0.07 + 0.05 * flick) * Math.min(1, fl.life * 2));
-      // Smoke trail
-      // Smoke trail — kept thin so it never curtains the suit from the lens
-      if (Math.random() < 0.3) particles.burst('steam', fl.p, 1, fl.v.clone().multiplyScalar(-0.2));
+      // Smoke trail — one puff per ~0.12 s of flight (time-based, so it
+      // costs the same at any frame rate) and thin enough that the big soft
+      // sprites never pile up into fill-rate-heavy overdraw
+      fl.puff = (fl.puff ?? 0) + step;
+      if (fl.puff > 0.12) {
+        fl.puff = 0;
+        particles.burst('steam', fl.p, 1, this._v.copy(fl.v).multiplyScalar(-0.2));
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { NOISE_FUNCS, type Weathering } from './robotMaterials';
+import { NOISE_FUNCS, noiseTexture, type Weathering } from './robotMaterials';
 
 /**
  * Static mesh merging for the robot cell.
@@ -27,6 +27,7 @@ export function uberMaterial(): THREE.MeshPhysicalMaterial {
     clearcoatRoughness: 0.3,
   });
   m.onBeforeCompile = (shader) => {
+    shader.uniforms.uNoise3D = { value: noiseTexture() };
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
