@@ -227,7 +227,8 @@ export function createAssemblySession(
    * {@link SHOWCASE_ORBIT_SEC}, then soft-restart.
    * Spin is applied manually each frame (not OrbitControls.autoRotate) so
    * the period is exact wall-clock and independent of damping / FPS.
-   * Free-look (user drag) cancels this auto-replay.
+   * Free-look (user drag) keeps the camera but the check plays on, as in
+   * the build; Space holds / resumes it in place (never restarts it).
    * Space pauses/resumes the spin without restarting (R still replays).
    */
   let completeSpinActive = false;
@@ -393,7 +394,7 @@ export function createAssemblySession(
    * pivot (lifted with the hover), the flight check and the doff prep run on
    * the same clock and the diagnostic sweeps the ease-out.
    */
-  const renderShowcase = (t: number, opts?: { scrub?: boolean }) => {
+  const renderShowcase = (t: number, opts?: { scrub?: boolean; camera?: boolean }) => {
     completeSpinT = THREE.MathUtils.clamp(t, 0, SHOWCASE_TURN_SEC);
     const { yaw, ease } = showcaseYaw(completeSpinT);
     if (opts?.scrub) lastFlightT = Number.NaN;
@@ -402,6 +403,7 @@ export function createAssemblySession(
     // Diagnostic locked to the ease-out window
     updateOrbitDiagnostic(ease);
     updateFlightCheck();
+    if (opts?.camera === false) return;
     // Same sign as OrbitControls._rotateLeft (theta decreases → CW from above)
     _spinOffset.copy(_heroPos).sub(_heroLook).applyAxisAngle(_spinAxis, -yaw);
     lookTarget.copy(_heroLook);
@@ -444,9 +446,12 @@ export function createAssemblySession(
     showcaseSpinPaused = false;
     controls.autoRotate = false;
     if (!completeSpinActive) {
-      // Drag killed tracking earlier — start a fresh full-turn watch.
+      // Never started (free-look held at the end of the build): begin the turn
       startCompleteSpinTracking();
+      return;
     }
+    // Carry on from where it was held (free-look, if claimed, is kept, as
+    // in the build)
   };
 
   const refreshHintCopy = () => {
@@ -569,13 +574,11 @@ export function createAssemblySession(
     suit.showFinal(); // seamless mesh — no grid-shard square blooms
     // Preserve free-look framing (no idle auto-rotate snap)
     const preserve = opts?.preserveCamera || assembly.userOwnsCamera();
-    if (preserve) {
-      setOrbitMode('free', { preserveTarget: true });
-      stopCompleteSpinTracking();
-    } else {
-      setOrbitMode('complete');
-      startCompleteSpinTracking();
-    }
+    // The flight check runs either way (under free-look it plays on the
+    // user's camera, as the build does)
+    if (preserve) setOrbitMode('free', { preserveTarget: true });
+    else setOrbitMode('complete');
+    startCompleteSpinTracking();
     ui.setReplayEnabled(true);
     ui.setSkipEnabled(false);
     ui.setHintVisible(true);
@@ -1205,7 +1208,7 @@ export function createAssemblySession(
 
   const isCyclePlaying = (): boolean => {
     if (handoffTween) return !handoffTween.paused();
-    if (assemblyComplete) return completeSpinActive && !showcaseSpinPaused && !assembly.userOwnsCamera();
+    if (assemblyComplete) return completeSpinActive && !showcaseSpinPaused;
     return assembly.isPlaying() && !assembly.isPaused();
   };
 
@@ -1285,12 +1288,6 @@ export function createAssemblySession(
     // Scan holds at the current progress (still armed).
     if (showcaseSpinPaused) return false;
 
-    // User drag claimed free-look — stay on finished suit, no auto-replay.
-    if (assembly.userOwnsCamera()) {
-      stopOrbitDiagnostic();
-      stopCompleteSpinTracking();
-      return false;
-    }
 
     // Clamp tab-resume spikes so we don't skip most of the orbit in one frame
     const dt = Math.min(0.05, Math.max(0, deltaSec));
@@ -1299,7 +1296,10 @@ export function createAssemblySession(
     // Ease spin down as the turn completes so the handoff doesn’t cut hard:
     // an even deceleration that comes to rest on the exact frame the turn
     // ends (no crawl through the last degrees)
-    renderShowcase(Math.min(SHOWCASE_TURN_SEC, completeSpinT + dt));
+    // A drag claims free-look, as in the build: the check plays on under
+    // the user's camera
+    const free = assembly.userOwnsCamera();
+    renderShowcase(Math.min(SHOWCASE_TURN_SEC, completeSpinT + dt), { camera: !free });
 
     // Finish when the turn has come to rest
     if (completeSpinT >= SHOWCASE_TURN_SEC) {
@@ -1309,7 +1309,7 @@ export function createAssemblySession(
       softRestartFromShowcase();
       return false;
     }
-    return true;
+    return !free;
   };
 
   return {

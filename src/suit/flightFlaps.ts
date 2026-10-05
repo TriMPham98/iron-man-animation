@@ -37,7 +37,8 @@ interface FlapSpec {
 
 /**
  * Flap motion at channel k: optionally lift straight out by `lift`
- * (k 0 → liftEnd), then swing `angle` about the hinge (k swingStart → 1).
+ * (k 0 → liftEnd), slide by `slide` (k over slideSpan), then swing `angle`
+ * about the hinge (k swingStart → swingEnd).
  */
 interface Motion {
   pivot: THREE.Vector3;
@@ -46,12 +47,32 @@ interface Motion {
   lift?: THREE.Vector3;
   liftEnd?: number;
   swingStart?: number;
+  swingEnd?: number;
+  slide?: THREE.Vector3;
+  slideSpan?: readonly [number, number];
 }
 
-/** How far the trapezius rocket silo rises out of the shoulder (m). */
-export const SILO_RISE = 0.04;
-/** How far the outer forearm panel rises on the launcher (m). */
-export const LAUNCHER_LIFT = 0.05;
+/**
+ * The trap plate and the missile pod under it rise together, level, the
+ * plate riding on top of the pod and the tubes aimed straight ahead (m).
+ */
+export const SILO_RISE = 0.034;
+/** Height of the launcher block (m). */
+export const SILO_POD_H = 0.026;
+/**
+ * The outer forearm lid lifts straight out, then slides back toward the
+ * elbow (m), and the anti-tank missile under it rises out of the forearm.
+ */
+export const LAUNCHER_LID_OUT = 0.026;
+export const LAUNCHER_LID_BACK = 0.042;
+export const MISSILE_RISE = 0.019;
+export const MISSILE_RISE_SPAN = [0.45, 0.92] as const;
+
+/** Forearm axis (bind), elbow → hand. */
+export function forearmAxis(side: 'L' | 'R'): THREE.Vector3 {
+  const spec = boneSpec(`forearm.${side}`);
+  return new THREE.Vector3(...spec.tail).sub(new THREE.Vector3(...spec.head)).normalize();
+}
 /** How far the round hip plate pushes out on its flare drum (m). */
 export const FLARE_PUSH = 0.05;
 
@@ -163,17 +184,21 @@ const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
         skin: 0.006,
         wall: 0.006,
       },
-      hinge: (b) => ({
-        pivot: new THREE.Vector3(mid(b, 'x'), b.max.y, mid(b, 'z')),
+      // Unlatches and lifts straight out of the forearm, then slides back
+      // toward the elbow, clear of the missile bay
+      hinge: () => ({
+        pivot: new THREE.Vector3(),
         axis: Z,
-        angle: 0.1 * s,
-        lift: forearmNormal(side).multiplyScalar(LAUNCHER_LIFT),
-        liftEnd: 0.7,
-        swingStart: 0.6,
+        angle: 0,
+        lift: forearmNormal(side).multiplyScalar(LAUNCHER_LID_OUT),
+        liftEnd: 0.32,
+        slide: forearmAxis(side).multiplyScalar(-LAUNCHER_LID_BACK),
+        slideSpan: [0.22, 0.6],
       }),
     },
     {
-      // Trapezius cap shifts straight up on the mini-rocket silo
+      // Trapezius cap: the top plate of the mini-missile pod under it — the
+      // two rise together, level, baring the forward-facing rack
       id: `trap.${side}`,
       piece: 'back.upper',
       region: { min: [xr(0.09, 0.165)[0], 1.6, -0.1], max: [xr(0.09, 0.165)[1], 1.7, -0.02] },
@@ -182,7 +207,7 @@ const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
         pivot: new THREE.Vector3(mid(b, 'x'), b.max.y, b.min.z),
         axis: X,
         angle: 0,
-        lift: new THREE.Vector3(0, SILO_RISE, 0),
+        lift: new THREE.Vector3(0, SILO_RISE, 0.004),
       }),
     },
     {
@@ -275,8 +300,15 @@ export function flapMotion(f: Flap, k: number, out: THREE.Matrix4): THREE.Matrix
   out.identity();
   if (k <= 1e-4) return out;
   const lift = f.lift ? smooth(0, f.liftEnd ?? 1, k) : 0;
-  const swing = f.swingStart !== undefined ? smooth(f.swingStart, 1, k) : k;
-  if (f.lift) out.makeTranslation(f.lift.x * lift, f.lift.y * lift, f.lift.z * lift);
+  const swing = f.swingStart !== undefined || f.swingEnd !== undefined ? smooth(f.swingStart ?? 0, f.swingEnd ?? 1, k) : k;
+  const sl = f.slide ? smooth(f.slideSpan?.[0] ?? 0, f.slideSpan?.[1] ?? 1, k) : 0;
+  if (f.lift || f.slide) {
+    out.makeTranslation(
+      (f.lift?.x ?? 0) * lift + (f.slide?.x ?? 0) * sl,
+      (f.lift?.y ?? 0) * lift + (f.slide?.y ?? 0) * sl,
+      (f.lift?.z ?? 0) * lift + (f.slide?.z ?? 0) * sl,
+    );
+  }
   return out
     .multiply(_t.makeTranslation(f.pivot.x, f.pivot.y, f.pivot.z))
     .multiply(_r.makeRotationAxis(f.axis, f.angle * swing))

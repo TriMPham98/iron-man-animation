@@ -2,7 +2,17 @@ import * as THREE from 'three';
 import { FLARE_POPS, type FlightCheckFrame } from '../animation/flightCheck';
 import { boneSpec, type BoneName } from './rig';
 import type { SuitRig } from './rigPose';
-import { FLARE_PUSH, flapMotion, forearmNormal, SILO_RISE, type Flap } from './flightFlaps';
+import {
+  FLARE_PUSH,
+  flapMotion,
+  forearmAxis,
+  forearmNormal,
+  MISSILE_RISE,
+  MISSILE_RISE_SPAN,
+  SILO_POD_H,
+  SILO_RISE,
+  type Flap,
+} from './flightFlaps';
 import type { SuitParticles } from './particles';
 
 /**
@@ -24,14 +34,17 @@ const mats = () => ({
   lens: new THREE.MeshStandardMaterial({ color: 0x0a2430, emissive: new THREE.Color(0x6fe0ff), emissiveIntensity: 2 }),
 });
 
-/** Launcher gun along its bore: tail cap at −0.07 → nose tip at 0.093 (m). */
-const GUN_LEN = 0.163;
-const GUN_MID = 0.0115;
 /** Silo outline as a share of the trap lid's footprint (the lid overhangs it). */
 const SILO_SCALE = 0.7;
-/** Launch tube's outer (cap) radius and its offset out from the rail (m). */
-const POD_R = 0.0175;
-const POD_X = 0.012;
+/** Anti-tank missile: body radius, warhead and nozzle lengths, fin span (m). */
+const MISSILE_R = 0.0068;
+const NOSE = 0.02;
+const NOZZLE = 0.004;
+const FIN = 0.0055;
+/** Half-width the missile and its fins take across the bay (m). */
+const MISSILE_SPAN = MISSILE_R + FIN * 0.75;
+
+const UP = new THREE.Vector3(0, 1, 0);
 
 const ease = (a: number, b: number, u: number) => {
   const k = Math.min(1, Math.max(0, (u - a) / (b - a)));
@@ -67,21 +80,14 @@ function hull2(points: Array<[number, number]>): Array<[number, number]> {
   return lo.slice(0, -1).concat(up.slice(0, -1));
 }
 
-/** Keep the part of a convex outline with z ≤ c (Sutherland–Hodgman). */
-function clipZ(poly: Array<[number, number]>, c: number): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i];
-    const b = poly[(i + 1) % poly.length];
-    const ina = a[1] <= c;
-    const inb = b[1] <= c;
-    if (ina) out.push(a);
-    if (ina !== inb) {
-      const t = (c - a[1]) / (b[1] - a[1]);
-      out.push([a[0] + (b[0] - a[0]) * t, c]);
-    }
-  }
-  return out.length >= 3 ? out : poly;
+/** Solid with a (z, y) side profile, extruded across x0 → x1. */
+function sideProfile(profile: Array<[number, number]>, x0: number, x1: number, m: THREE.Material): THREE.Mesh {
+  const shape = new THREE.Shape(profile.map(([z, y]) => new THREE.Vector2(z, y)));
+  const g = new THREE.ExtrudeGeometry(shape, { depth: x1 - x0, bevelEnabled: false });
+  // Shape (s, y) extruded along e: (s, y, e) → (x1 − e, y, s), a proper rotation (keeps the winding)
+  g.applyMatrix4(new THREE.Matrix4().set(0, 0, -1, x1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1));
+  g.computeVertexNormals();
+  return new THREE.Mesh(g, m);
 }
 
 /** Scale a convex outline about its centroid (never degenerates, unlike a radial inset). */
@@ -89,54 +95,6 @@ function scaleAbout(poly: Array<[number, number]>, k: number): Array<[number, nu
   const cx = poly.reduce((a, p) => a + p[0], 0) / poly.length;
   const cz = poly.reduce((a, p) => a + p[1], 0) / poly.length;
   return poly.map(([x, z]) => [cx + (x - cx) * k, cz + (z - cz) * k]);
-}
-
-/**
- * Prism over a convex (x, z) outline from a flat bottom up to a top that
- * follows `tops` (one height per outline point). Faces wound outward.
- */
-function cappedPrism(outline: Array<[number, number]>, tops: number[], bottom: number, m: THREE.Material): THREE.Mesh {
-  const n = outline.length;
-  const cx = outline.reduce((a, p) => a + p[0], 0) / n;
-  const cz = outline.reduce((a, p) => a + p[1], 0) / n;
-  const cy = (tops.reduce((a, t) => a + t, 0) / n + bottom) / 2;
-  const c = new THREE.Vector3(cx, cy, cz);
-  const pos: number[] = [];
-  const e1 = new THREE.Vector3();
-  const e2 = new THREE.Vector3();
-  const tri = (a: THREE.Vector3, b: THREE.Vector3, d: THREE.Vector3, out: THREE.Vector3) => {
-    const nrm = e1.subVectors(b, a).cross(e2.subVectors(d, a));
-    const flip = nrm.dot(out) < 0;
-    for (const v of flip ? [a, d, b] : [a, b, d]) pos.push(v.x, v.y, v.z);
-  };
-  const T = outline.map(([x, z], i) => new THREE.Vector3(x, tops[i], z));
-  const B = outline.map(([x, z]) => new THREE.Vector3(x, bottom, z));
-  const up = new THREE.Vector3(0, 1, 0);
-  const down = new THREE.Vector3(0, -1, 0);
-  for (let i = 1; i + 1 < n; i++) {
-    tri(T[0], T[i], T[i + 1], up);
-    tri(B[0], B[i + 1], B[i], down);
-  }
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    const out = T[i].clone().add(T[j]).multiplyScalar(0.5).sub(c).setY(0);
-    tri(T[i], B[i], B[j], out);
-    tri(T[i], B[j], T[j], out);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.computeVertexNormals();
-  return new THREE.Mesh(g, m);
-}
-
-/** Vertical prism over an (x, z) outline from y0 to y1. */
-function prism(outline: Array<[number, number]>, y0: number, y1: number, m: THREE.Material): THREE.Mesh {
-  const shape = new THREE.Shape(outline.map(([x, z]) => new THREE.Vector2(x, z)));
-  const g = new THREE.ExtrudeGeometry(shape, { depth: y1 - y0, bevelEnabled: false });
-  // Shape (x, z) extruded along +Z → rotateX(+90°): (x, z, e) → (x, −e, z)
-  g.rotateX(Math.PI / 2);
-  g.translate(0, y1, 0);
-  return new THREE.Mesh(g, m);
 }
 
 function flareTexture(): THREE.Texture {
@@ -165,8 +123,22 @@ interface Mount {
   root: THREE.Group;
 }
 
+interface Ram {
+  base: THREE.Vector3;
+  end: THREE.Vector3;
+  sleeve: THREE.Mesh;
+  rod: THREE.Mesh;
+  eye: THREE.Mesh;
+}
+
 interface Launcher extends Mount {
   side: 'L' | 'R';
+  /** Outward forearm normal (bind): the missile rises along it. */
+  normal: THREE.Vector3;
+  /** Rams carrying the lid: base fixed in the bay, end on the lid (bind). */
+  rams: Ram[];
+  /** Holds the rams in the forearm's frame. */
+  fixed: THREE.Group;
   /** Muzzle point and bore axis in the launcher frame. */
   muzzle: THREE.Vector3;
   lens: THREE.MeshStandardMaterial;
@@ -225,7 +197,13 @@ export class WeaponsFx {
   readonly group = new THREE.Group();
   private readonly launchers: Launcher[] = [];
   private readonly silos: Array<
-    Mount & { rockets: THREE.Object3D[]; cells: THREE.MeshBasicMaterial[]; front: number; side: number; center: THREE.Vector3 }
+    Mount & {
+      rockets: THREE.Object3D[];
+      cells: THREE.MeshBasicMaterial[];
+      front: number;
+      side: number;
+      center: THREE.Vector3;
+    }
   > = [];
   private readonly dispensers: Array<Mount & { cells: THREE.Vector3[]; side: number }> = [];
   /** Live flares (model space), each with a hot spot on the deck under it. */
@@ -246,6 +224,9 @@ export class WeaponsFx {
   private readonly flareLight = new THREE.PointLight(0xffa860, 0, 2.2, 2);
   private siloArmed = 0;
   private readonly _v = new THREE.Vector3();
+  private readonly _lid = new THREE.Matrix4();
+  private readonly _dir = new THREE.Vector3();
+  private readonly _dir2 = new THREE.Vector3();
   private readonly flareTex = flareTexture();
   private lastT = Number.NaN;
   private readonly _m = new THREE.Matrix4();
@@ -267,19 +248,18 @@ export class WeaponsFx {
   }
 
   /**
-   * Launcher frame: +X out of the forearm, +Y along it toward the hand.
-   * The whole gun is sized and seated from the panel that carries it: as
-   * long as the plate (less a margin) and tucked a few mm under its inner
-   * face, so it rides up inside the plate's opening and never pokes through
-   * the plate or the forearm shell beside it.
+   * Anti-tank missile in a bay under the outer forearm lid. Frame: +X out
+   * of the forearm, +Y along it toward the hand. Slim and finned, as long
+   * as the bay (less a margin) and seated a few mm under the lid's inner
+   * face, so it rises out through the opening the lid leaves and never
+   * through the shell beside it.
    */
   private makeLauncher(side: 'L' | 'R', flap: Flap, m: ReturnType<typeof mats>): Launcher {
-    const spec = boneSpec(`forearm.${side}`);
-    const y = new THREE.Vector3(...spec.tail).sub(new THREE.Vector3(...spec.head)).normalize();
+    const y = forearmAxis(side);
     const x = forearmNormal(side);
     const z = new THREE.Vector3().crossVectors(x, y);
     const c = flap.bounds.getCenter(new THREE.Vector3());
-    // The plate in this frame, origin at its centre
+    // The lid in this frame, origin at its centre
     const pos = flap.mesh.geometry.getAttribute('position');
     const local: Array<[number, number, number]> = [];
     const v = new THREE.Vector3();
@@ -290,42 +270,60 @@ export class WeaponsFx {
     const zMin = Math.min(...local.map((p) => p[2]));
     const zMax = Math.max(...local.map((p) => p[2]));
     const zm = (zMin + zMax) / 2;
-    // The plate's length where the gun runs (its outline is not square)
-    const lane = local.filter((p) => Math.abs(p[2] - zm) < POD_R);
+    // The bay's length where the missile lies (the lid's outline is not square)
+    const lane = local.filter((p) => Math.abs(p[2] - zm) < MISSILE_SPAN);
     const yMin = Math.min(...lane.map((p) => p[1]));
     const yMax = Math.max(...lane.map((p) => p[1]));
-    const fit = Math.min(1, (yMax - yMin - 0.016) / GUN_LEN);
+    const len = Math.min(0.11, yMax - yMin - 0.016 - NOZZLE);
     const ym = (yMin + yMax) / 2;
-    // Lowest point of the plate's underside over the gun's footprint
+    // Lowest point of the lid's underside over the missile
     let under = Infinity;
     for (const [a, b, w] of local) {
-      if (Math.abs(w - zm) < POD_R + 0.004 && Math.abs(b - ym) < (GUN_LEN * fit) / 2) under = Math.min(under, a);
+      if (Math.abs(w - zm) < MISSILE_SPAN && Math.abs(b - ym) < len / 2) under = Math.min(under, a);
     }
     if (!Number.isFinite(under)) under = 0;
     const at = c
       .clone()
-      .addScaledVector(x, under - 0.003 - (POD_X + POD_R))
-      .addScaledVector(y, ym - GUN_MID * fit)
+      .addScaledVector(x, under - 0.003 - MISSILE_SPAN)
+      .addScaledVector(y, ym + NOZZLE / 2)
       .addScaledVector(z, zm);
     const bind = new THREE.Matrix4().makeBasis(x, y, z).setPosition(at);
 
+    const R = MISSILE_R;
+    const tail = -len / 2;
+    const noseAt = len / 2 - NOSE;
     const rig = new THREE.Group();
-    // Rail under the panel, launch tube, rocket nose in the muzzle
-    rig.add(box(0.012, 0.126 * fit, 0.03, m.gun, 0.006, 0, 0));
-    const pod = new THREE.Group();
-    pod.position.set(POD_X, 0, 0);
-    pod.scale.set(1, fit, 1);
-    // End caps are staggered by a millimetre or more: two caps in one plane flicker
-    pod.add(tube(0.016, 0.016, -0.069, 0.064, m.gun, 20));
-    pod.add(tube(POD_R, POD_R, 0.048, 0.065, m.gold, 20));
-    pod.add(tube(POD_R, POD_R, -0.07, -0.056, m.gold, 20));
-    pod.add(tube(0.0115, 0.0, 0.067, 0.093, m.red, 16));
-    pod.add(tube(0.012, 0.012, 0.06, 0.0685, m.steel, 16));
-    // Targeting lens (its own material: it flares on this launcher's lock)
+    // Launch rail and saddle clamps under it
+    rig.add(box(0.004, len * 0.82, 0.007, m.gun, -R - 0.002, 0, 0));
+    for (const yy of [-len * 0.28, len * 0.2]) rig.add(box(0.005, 0.004, 0.011, m.gun, -R + 0.0005, yy, 0));
+    const missile = new THREE.Group();
+    // Nozzle, steel motor section, red body, gold band behind the warhead
+    missile.add(tube(0.0052, 0.0042, tail - NOZZLE, tail, m.gun, 16));
+    missile.add(tube(R, R, tail, tail + 0.016, m.steel, 20));
+    missile.add(tube(R, R, tail + 0.016, noseAt, m.red, 20));
+    missile.add(tube(R + 0.0006, R + 0.0006, noseAt - 0.007, noseAt - 0.0035, m.gold, 20));
+    // Ogive warhead
+    const ogive: THREE.Vector2[] = [];
+    for (let i = 0; i <= 10; i++) {
+      const u = i / 10;
+      ogive.push(new THREE.Vector2(Math.max(0.0004, R * Math.sqrt(Math.max(0, 1 - u * u)) * (1 - 0.15 * u)), noseAt + u * NOSE));
+    }
+    missile.add(new THREE.Mesh(new THREE.LatheGeometry(ogive, 20), m.steel));
+    // Seeker head (its own material: it flares on this launcher's lock)
     const lens = m.lens.clone();
     lens.emissiveIntensity = 0.6;
-    pod.add(box(0.006, 0.01, 0.008, lens, 0.015, 0.03, 0));
-    // Muzzle ring glows round the rocket nose once locked
+    const seeker = new THREE.Mesh(new THREE.SphereGeometry(0.0019, 10, 8), lens);
+    seeker.position.y = len / 2 - 0.0006;
+    missile.add(seeker);
+    // Cruciform tail fins, set at 45° so none points into the rail
+    for (let i = 0; i < 4; i++) {
+      const fin = new THREE.Group();
+      fin.rotation.y = Math.PI / 4 + (i * Math.PI) / 2;
+      fin.add(box(FIN, 0.013, 0.0006, m.gun, R + FIN / 2 - 0.0005, tail + 0.0085, 0));
+      missile.add(fin);
+    }
+    rig.add(missile);
+    // Seeker ring glows behind the warhead once locked
     const ring = new THREE.MeshBasicMaterial({
       color: new THREE.Color(0xff6a2a).multiplyScalar(2),
       transparent: true,
@@ -335,29 +333,60 @@ export class WeaponsFx {
       toneMapped: false,
       side: THREE.DoubleSide,
     });
-    const ringMesh = new THREE.Mesh(new THREE.RingGeometry(0.0118, 0.0168, 24).rotateX(-Math.PI / 2), ring);
-    ringMesh.position.y = 0.0656;
-    pod.add(ringMesh);
-    rig.add(pod);
+    const ringMesh = new THREE.Mesh(new THREE.RingGeometry(R + 0.0008, R + 0.0026, 24).rotateX(-Math.PI / 2), ring);
+    ringMesh.position.y = noseAt - 0.0052;
+    rig.add(ringMesh);
     // Laser: from the nose tip down the bore axis (toward the hand), 1.6 m
-    const len = 1.6;
-    const laserGeo = new THREE.CylinderGeometry(0.0012, 0.0012, len, 6, 1, true);
-    laserGeo.translate(0, len / 2, 0);
+    const beam = 1.6;
+    const laserGeo = new THREE.CylinderGeometry(0.0012, 0.0012, beam, 6, 1, true);
+    laserGeo.translate(0, beam / 2, 0);
     const laser = new THREE.Mesh(laserGeo, laserMaterial());
-    const muzzle = new THREE.Vector3(POD_X, 0.094 * fit, 0);
+    const muzzle = new THREE.Vector3(0, len / 2, 0);
     laser.position.copy(muzzle);
     laser.visible = false;
     rig.add(laser);
-    return { ...this.mount(`forearm.${side}`, flap, bind, rig), side, muzzle, lens, ring, laser, lastLock: 0, locked: false };
+    // Lid rams: two telescoping arms either side of the missile at the
+    // elbow end of the bay, from the bay floor up to the lid's underside, so
+    // the lid is carried out and back on them (bind coords; the lid end
+    // rides the lid's motion each frame)
+    const ramY = yMin + 0.016;
+    const rams = [zm - MISSILE_SPAN - 0.005, zm + MISSILE_SPAN + 0.005].map((w) => {
+      const at2 = (a: number) => c.clone().addScaledVector(x, a).addScaledVector(y, ramY).addScaledVector(z, w);
+      return {
+        base: at2(under - 0.022),
+        end: at2(under + 0.0015),
+        sleeve: new THREE.Mesh(new THREE.CylinderGeometry(0.0028, 0.0028, 1, 12).translate(0, 0.5, 0), m.gun),
+        rod: new THREE.Mesh(new THREE.CylinderGeometry(0.0017, 0.0017, 1, 10).translate(0, 0.5, 0), m.steel),
+        eye: new THREE.Mesh(new THREE.SphereGeometry(0.0029, 10, 8), m.gold),
+      };
+    });
+    const fixed = new THREE.Group();
+    fixed.matrixAutoUpdate = false;
+    fixed.visible = false;
+    for (const r of rams) fixed.add(r.sleeve, r.rod, r.eye);
+    this.group.add(fixed);
+    return {
+      ...this.mount(`forearm.${side}`, flap, bind, rig),
+      side,
+      muzzle,
+      lens,
+      ring,
+      laser,
+      lastLock: 0,
+      locked: false,
+      normal: x,
+      rams,
+      fixed,
+    };
   }
 
   /**
-   * Mini-rocket silo contoured to the trap panel: the panel's own footprint,
-   * drawn in about its middle (so the lifted panel overhangs it like a lid)
-   * and extruded down as the silo body, so it rises as one with the armor.
-   * Its top follows the lid's underside a few mm below it — the trap slopes
-   * down to the shoulder, and a flat top poked out through the low side.
-   * Its front face carries a 3 × 2 rack of rockets pointing forward.
+   * Mini-missile pod in a well under the trap plate, as in the film: the
+   * plate hinges back out of the way (it is the only moving armor), and the
+   * pod — a gunmetal launcher block with a 3 × 2 bank of tubes — elevates
+   * about its own back edge so its muzzles aim forward and up. The pivot
+   * sits inside the well, so the pod never floats free of the shoulder.
+   * Frame: bind axes, origin at the lid's mid height.
    */
   private makeSilo(s: number, flap: Flap, m: ReturnType<typeof mats>) {
     const b = flap.bounds;
@@ -366,67 +395,107 @@ export class WeaponsFx {
     const pos = geo.getAttribute('position');
     const pts: THREE.Vector3[] = [...new Set(geo.index!.array)].map((i) => new THREE.Vector3().fromBufferAttribute(pos, i));
     const lid = hull2(pts.map((p) => [p.x, p.z] as [number, number]));
-    // Flat front face for the rocket rack (outline clipped at z ≤ face)
     const inner = scaleAbout(lid, SILO_SCALE);
-    const face = Math.max(...inner.map((q) => q[1])) - 0.008;
-    const foot = clipZ(inner, face);
-    // Lid underside (relative to the frame) over a footprint point
-    const under = (x: number, z: number) => {
-      let lo = Infinity;
-      for (const p of pts) if (Math.hypot(p.x - x, p.z - z) < 0.015) lo = Math.min(lo, p.y);
-      return (Number.isFinite(lo) ? lo : b.min.y) - cy;
-    };
-    const tops = foot.map(([x, z]) => under(x, z) - 0.003);
-    // Rack and bands hang under the lid's lowest point
-    const top = Math.min(...tops);
+    const fx0 = Math.min(...inner.map((q) => q[0]));
+    const fx1 = Math.max(...inner.map((q) => q[0]));
+    const fz0 = Math.min(...inner.map((q) => q[1]));
+    const fz1 = Math.max(...inner.map((q) => q[1]));
+    // Lid underside (relative to the frame) over the pod
+    let under = Infinity;
+    for (const p of pts) {
+      if (p.x > fx0 && p.x < fx1 && p.z > fz0 && p.z < fz1) under = Math.min(under, p.y);
+    }
+    const top = (Number.isFinite(under) ? under : b.min.y) - cy - 0.003;
     const bind = new THREE.Matrix4().makeTranslation(0, cy, 0);
     const rig = new THREE.Group();
-    // Body (contoured, sloped top) + gold rim just under the lid
-    rig.add(cappedPrism(foot, tops, top - SILO_RISE - 0.012, m.red));
-    rig.add(prism(scaleAbout(foot, 1.04), top - 0.006, top - 0.002, m.gold));
-    // Second gold band low on the exposed sleeve + a dark seam between
-    rig.add(prism(scaleAbout(foot, 1.035), top - SILO_RISE * 0.86, top - SILO_RISE * 0.8, m.gold));
-    rig.add(prism(scaleAbout(foot, 1.025), top - SILO_RISE * 0.5, top - SILO_RISE * 0.47, m.gun));
-    // Front face: bezel plate and the rocket rack, aimed forward (+Z)
-    // Rack sits on the silo's own front face
-    const front = Math.max(...foot.map((q) => q[1]));
-    const cx = foot.filter((q) => q[1] > front - 0.003).reduce((a, q, _i, arr) => a + q[0] / arr.length, 0);
-    // Rack spans the silo's own front face (never wider than the silo)
-    const fx = foot.filter((q) => q[1] > front - 0.003).map((q) => q[0]);
-    const w = Math.min(0.055, (Math.max(...fx) - Math.min(...fx)) * 0.82);
-    const bezel = box(w, 0.042, 0.006, m.gun, cx, top - 0.0242, front + 0.001);
-    rig.add(bezel);
+
+    // Pod block: a hair inside the well, top just under the lid
+    const W = fx1 - fx0;
+    const D = fz1 - fz0;
+    const H = SILO_POD_H;
+    const cx = (fx0 + fx1) / 2;
+    const pod = new THREE.Group();
+    rig.add(pod);
+    const zc = (fz0 + fz1) / 2;
+    // Sleeve below the body that stays down in the well at full rise, so the
+    // pod is always seated in the shoulder
+    pod.add(box(W * 0.9, SILO_RISE + 0.008, D * 0.86, m.gun, cx, top - H - (SILO_RISE + 0.008) / 2 + 0.001, zc - D * 0.04));
+    // Gunmetal body, chamfered along its length, under a red armored cowl
+    // that sweeps down to the back; gold pinstripes along the cheeks
+    pod.add(sideProfile(
+      [
+        [fz0, top - H],
+        [fz1 - 0.003, top - H],
+        [fz1, top - H + 0.003],
+        [fz1, top - 0.004],
+        [fz1 - 0.004, top],
+        [fz0 + 0.008, top],
+        [fz0, top - 0.008],
+      ],
+      fx0,
+      fx1,
+      m.gun,
+    ));
+    pod.add(sideProfile(
+      [
+        [fz0 + 0.004, top - 0.004],
+        [fz1 - 0.004, top - 0.0012],
+        [fz1 - 0.008, top + 0.0028],
+        [fz0 + 0.01, top + 0.0012],
+      ],
+      fx0 + 0.0015,
+      fx1 - 0.0015,
+      m.red,
+    ));
+    for (const sx of [fx0, fx1]) pod.add(box(0.0008, 0.0016, D * 0.72, m.gold, sx + Math.sign(sx - cx) * 0.0004, top - H * 0.55, zc + D * 0.06));
+    // Front bezel and the tube bank: gold rims, dark bores, warheads seated in them
+    const front = fz1;
+    pod.add(box(W * 0.94, H * 0.9, 0.003, m.gun, cx, top - H / 2, front + 0.0015));
+    const cols = 3;
+    const rows = 2;
+    const pitchX = (W * 0.9) / cols;
+    const pitchY = (H * 0.8) / rows;
+    const rimR = Math.min(pitchX, pitchY) * 0.42;
     const rockets: THREE.Object3D[] = [];
     const cells: THREE.MeshBasicMaterial[] = [];
-    // 2 × 3 rack; neighbouring collars must not touch (touching facets flicker)
-    const collar = Math.min(0.0054, w * 0.25 - 0.0008);
-    const band = Math.min(0.0064, collar - 0.0004);
-    const body = Math.min(0.0055, collar - 0.0012);
-    for (let i = 0; i < 2; i++) {
-      for (let j = 0; j < 3; j++) {
+    const bore = new THREE.MeshStandardMaterial({ color: 0x07080a, metalness: 0.6, roughness: 0.7 });
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const x = cx + (i - (cols - 1) / 2) * pitchX;
+        const y = top - H / 2 + ((rows - 1) / 2 - j) * pitchY;
+        // Tube muzzle (along +Z)
+        const rim = tube(rimR, rimR, 0, 0.004, m.gold, 16, true);
+        rim.rotation.x = Math.PI / 2;
+        rim.position.set(x, y, front + 0.0004);
+        pod.add(rim);
+        const hole = new THREE.Mesh(new THREE.CircleGeometry(rimR * 0.92, 16), bore);
+        hole.position.set(x, y, front + 0.0034);
+        pod.add(hole);
+        // Missile in its tube: slides out of the muzzle as it arms
         const r = new THREE.Group();
-        r.position.set(cx + (i - 0.5) * w * 0.5, top - 0.012 - j * 0.0122, front - 0.012);
-        r.rotation.x = Math.PI / 2; // tube +Y → forward
-        r.add(tube(collar, collar, -0.004, 0.0, m.gold, 12)); // cell collar
-        r.add(tube(body, body, 0.0008, 0.016, m.steel, 10));
-        r.add(tube(band, band, 0.011, 0.014, m.gold, 10)); // warhead band
-        r.add(tube(body, 0.0, 0.016, 0.028, m.red, 10));
-        rig.add(r);
+        r.position.set(x, y, front);
+        r.rotation.x = Math.PI / 2; // +Y → forward
+        r.add(tube(rimR * 0.62, rimR * 0.62, -0.006, 0.0008, m.steel, 10));
+        r.add(tube(rimR * 0.7, 0, 0.0008, 0.0008 + rimR * 2.4, m.red, 12));
+        pod.add(r);
         rockets.push(r);
-        // Cell light on the bezel beside each rocket, outboard of its column
-        const led = new THREE.MeshBasicMaterial({ color: CELL_OFF.clone(), toneMapped: false });
-        const lx = r.position.x + (i === 0 ? -1 : 1) * (collar + 0.0032);
-        rig.add(box(0.0024, 0.0024, 0.002, led, lx, r.position.y, front + 0.0045));
-        cells.push(led);
       }
     }
+    // Cell lights in a strip along the bezel's foot, one under each tube
+    for (let k = 0; k < cols * rows; k++) {
+      const led = new THREE.MeshBasicMaterial({ color: CELL_OFF.clone(), toneMapped: false });
+      const x = cx - W * 0.4 + (k / (cols * rows - 1)) * W * 0.8;
+      pod.add(box(0.0022, 0.0016, 0.0012, led, x, top - H + 0.0016, front + 0.0035));
+      cells.push(led);
+    }
+    // Sensor on the outboard cheek
+    pod.add(box(0.0012, 0.004, 0.006, m.lens, s > 0 ? fx1 + 0.0006 : fx0 - 0.0006, top - H * 0.35, front - 0.006));
     // Arming order: top row first, outboard column before inboard
-    const order = [0, 3, 1, 4, 2, 5].map((k) => (s > 0 ? k : k < 3 ? k + 3 : k - 3));
+    const outboard = (i: number) => (s > 0 ? cols - 1 - i : i);
+    const order = [0, 1, 2].flatMap((n) => [outboard(n), cols + outboard(n)]).sort((p, q) => Math.floor(p / cols) - Math.floor(q / cols));
     const byArm = order.map((k) => rockets[k]);
     const cellsByArm = order.map((k) => cells[k]);
-    const center = new THREE.Vector3(cx, top - 0.024, front);
-    // Hinge pins + sensor
-    rig.add(box(0.008, 0.005, 0.003, m.lens, cx + s * w * 0.42, top - 0.008, front + 0.0045));
+    const center = new THREE.Vector3(cx, top - H / 2, front);
     return { ...this.mount('chest', flap, bind, rig), rockets: byArm, cells: cellsByArm, front, side: s, center };
   }
 
@@ -499,16 +568,35 @@ export class WeaponsFx {
     for (const mt of this.launchers) {
       const k = f.flaps[mt.flap.id] ?? 0;
       mt.root.visible = k > 0.01;
+      mt.fixed.visible = mt.root.visible;
       const lock = mt.side === 'L' ? f.lockL : f.lockR;
       if (!mt.root.visible) {
         mt.lastLock = lock;
         mt.locked = false;
         continue;
       }
-      // Rides the panel exactly (lift + its small tilt)
-      this.place(mt, rig, modelInv, flapMotion(mt.flap, k, this._lift));
-      // Lock: lens flares, the muzzle ring lights, a laser ranges the bore
-      // line for a beat and a puff of gas vents from the tube
+      // The lid swings clear, then the missile rises out of its bay
+      const rise = MISSILE_RISE * ease(MISSILE_RISE_SPAN[0], MISSILE_RISE_SPAN[1], k);
+      this.place(mt, rig, modelInv, this._lift.makeTranslation(mt.normal.x * rise, mt.normal.y * rise, mt.normal.z * rise));
+      // Rams: forearm frame, from the bay floor to the lid as it lifts and slides back
+      mt.fixed.matrix.copy(this._m);
+      mt.fixed.matrixWorldNeedsUpdate = true;
+      const lid = flapMotion(mt.flap, k, this._lid);
+      for (const r of mt.rams) {
+        const end = this._v.copy(r.end).applyMatrix4(lid);
+        const dir = this._dir.subVectors(end, r.base);
+        const d = dir.length();
+        dir.divideScalar(Math.max(1e-6, d));
+        r.sleeve.position.copy(r.base);
+        r.sleeve.quaternion.setFromUnitVectors(UP, dir);
+        r.sleeve.scale.set(1, Math.max(0.012, d * 0.6), 1);
+        r.rod.position.copy(end);
+        r.rod.quaternion.setFromUnitVectors(UP, this._dir2.copy(dir).negate());
+        r.rod.scale.set(1, Math.max(0.012, d * 0.6), 1);
+        r.eye.position.copy(end);
+      }
+      // Lock: the seeker flares, its ring lights, a laser ranges the bore
+      // line for a beat and a puff of gas vents off the nose
       const up = ease(0.85, 1, k);
       mt.lens.emissiveIntensity = 0.6 + 4 * lock * up;
       mt.ring.opacity = up * (0.15 + 0.85 * lock);
@@ -528,7 +616,8 @@ export class WeaponsFx {
       const k = f.flaps[mt.flap.id] ?? 0;
       mt.root.visible = k > 0.01;
       if (!mt.root.visible) continue;
-      // Rides the trap panel straight up (the same lift)
+      // The pod elevates under the trap plate, which rides on top of it,
+      // parallel: both turn about the plate's back edge
       this.place(mt, rig, modelInv, flapMotion(mt.flap, k, this._lift));
       // Cells arm one at a time after the lock: each rocket runs out of
       // its cell and its light goes amber → green; all slide home first
@@ -536,7 +625,7 @@ export class WeaponsFx {
       const home = ease(0.85, 1, k);
       mt.rockets.forEach((r, i) => {
         const out = Math.min(ease(0, 1, f.siloArmed - i), home);
-        r.position.z = mt.front - 0.012 + 0.012 * out;
+        r.position.z = mt.front + 0.006 * out;
         const led = mt.cells[i].color;
         if (home < 0.98) led.copy(CELL_OFF);
         else led.copy(f.siloArmed - i >= 1 ? CELL_ARMED : CELL_ARMING);
@@ -668,6 +757,7 @@ export class WeaponsFx {
 
   hide(): void {
     for (const mt of [...this.launchers, ...this.silos, ...this.dispensers]) mt.root.visible = false;
+    for (const mt of this.launchers) mt.fixed.visible = false;
     for (const fl of this.flares) this.removeFlare(fl);
     this.flares.length = 0;
     this.flareLight.intensity = 0;
