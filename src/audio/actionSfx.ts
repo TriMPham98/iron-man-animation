@@ -246,10 +246,17 @@ export function flightCues(): SfxCue[] {
       case 'cutoff':
         return [{ t: e.t, file: 'steam-release.mp3', volume: 0.3, duration: 2.2, fadeOut: 1.2 }];
       case 'flare':
+        // A salvo: every shot is a short, light pop; the first also carries
+        // the drum's spin-up and the crackle and hiss of the burning string
         return [
-          { t: e.t, file: 'repulsor.mp3', volume: 0.32, pitch: 1.7, duration: 0.6, fadeOut: 0.3 },
-          { t: e.t + 0.02, file: 'spark-crackle.mp3', volume: 0.35 },
-          { t: e.t + 0.05, file: 'steam-hiss.mp3', volume: 0.18, pitch: 1.3 },
+          { t: e.t, file: 'repulsor.mp3', volume: e.n ? 0.16 : 0.26, pitch: 1.9, duration: 0.28, fadeOut: 0.18 },
+          ...(e.n
+            ? []
+            : [
+                { t: e.t - 0.25, file: 'electric-motor.mp3', volume: 0.16, pitch: 1.5, duration: 0.95, fadeIn: 0.08, fadeOut: 0.4 },
+                { t: e.t + 0.02, file: 'spark-crackle.mp3', volume: 0.35 },
+                { t: e.t + 0.1, file: 'steam-hiss.mp3', volume: 0.16, pitch: 1.3 },
+              ]),
         ];
       case 'nominal':
         return [{ t: e.t, file: 'light-attach.mp3', volume: 0.3, pitch: 0.85 }];

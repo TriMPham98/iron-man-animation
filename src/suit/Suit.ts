@@ -131,7 +131,7 @@ export class Suit {
     const split = buildFlightFlaps(suit.pieces);
     suit.flaps = split.flaps;
     suit.flapRests = split.rests;
-    for (const f of split.flaps) suit.flapped.add(f.piece.id);
+    for (const f of split.flaps) for (const id of f.parts) suit.flapped.add(id);
     const flapMeshes = [
       ...split.flaps.map((f) => f.mesh),
       ...split.flaps.flatMap((f) => (f.walls ? [f.walls] : [])),
@@ -354,7 +354,7 @@ export class Suit {
     // while one of its flaps is moving. Nothing is drawn in the opening.
     const openPieces = new Set<ArmorPieceId>();
     for (const flap of this.flaps) {
-      if ((f.flaps[flap.id] ?? 0) > 1e-4) openPieces.add(flap.piece.id);
+      if ((f.flaps[flap.id] ?? 0) > 1e-4) for (const id of flap.parts) openPieces.add(id);
     }
     for (const piece of this.pieces) {
       const mesh = piece.mesh as THREE.Mesh;
@@ -369,7 +369,7 @@ export class Suit {
       const k = f.flaps[flap.id] ?? 0;
       const m = flap.mesh;
       const back = this.flapBacks.get(flap);
-      m.visible = openPieces.has(flap.piece.id);
+      m.visible = flap.parts.some((id) => openPieces.has(id));
       m.matrixWorldNeedsUpdate = true;
       if (back) back.visible = k > 1e-4;
       if (k <= 1e-4) {
@@ -379,7 +379,7 @@ export class Suit {
         continue;
       }
       // frame = dock · motion; mesh matrix = frame · dock⁻¹
-      const frame = this.kin.dock(armorPieceDef(flap.piece.id).anchor, this._tf).multiply(flapMotion(flap, k, this._hm));
+      const frame = this.kin.dock(armorPieceDef(flap.piece.id).anchor, this._tf).multiply(flapMotion(flap, k, this._hm, f.spin[flap.id] ?? 0));
       this.kin.meshMatrix(flap.piece.id, frame, m.matrix);
       if (back) {
         back.matrix.copy(m.matrix);

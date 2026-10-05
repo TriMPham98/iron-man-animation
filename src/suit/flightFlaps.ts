@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { FlapId } from '../animation/flightCheck';
 import type { ArmorPieceId } from './armorPieces';
 import type { ArmorPiece } from './waves';
-import { boneSpec } from './rig';
+import { boneIndex, boneSpec, type BoneName } from './rig';
 import { cutSoup, soupFrom, soupGeometry, wallFor, type FlapCut, type Soup } from './flapCut';
 
 type V3 = [number, number, number];
@@ -28,6 +28,13 @@ interface FlapSpec {
   slack?: number;
   /** Clean-edged plate clipped out of the part's surface (see flapCut). */
   cut?: FlapCut;
+  /**
+   * Round assembly gathered from several parts (the part seams run through
+   * it): every whole plate of `parts` inside a cylinder about the flap's
+   * own axis — `radius` out, `depth` along the axis (m, from its centre).
+   * The plates are merged into one mesh rigid on `bone`.
+   */
+  drum?: { parts: ArmorPieceId[]; radius: number; depth: readonly [number, number]; bone: BoneName };
   /**
    * Hinge from the flap's bind bounds (+ optional straight lift first).
    * `edge` is the middle of a cut plate's top edge on its outer skin.
@@ -73,8 +80,32 @@ export function forearmAxis(side: 'L' | 'R'): THREE.Vector3 {
   const spec = boneSpec(`forearm.${side}`);
   return new THREE.Vector3(...spec.tail).sub(new THREE.Vector3(...spec.head)).normalize();
 }
-/** How far the round hip plate pushes out on its flare drum (m). */
-export const FLARE_PUSH = 0.05;
+/**
+ * How far the round hip drum pushes out of its seat (m): just enough to
+ * clear the ports at the front of its rim past the seat's lip.
+ */
+export const FLARE_PUSH = 0.025;
+
+/**
+ * The round hip drum on the model: a face plate inside an outer ring whose
+ * rim runs back into the hip as a true cylinder (fitted to the rim's own
+ * vertices). Centre and axis are for the left hip (the right mirrors), the
+ * rim radius and its axial span are measured from the centre (m).
+ */
+export const FLARE_DRUM = {
+  center: [0.1797, 1.0013, 0.0345] as V3,
+  normal: [0.9917, 0.0541, 0.1163] as V3,
+  radius: 0.0631,
+  rim: [-0.0253, 0.0043] as const,
+};
+
+/** Hip drum centre and outward axis (bind). */
+export function flareDrum(side: 'L' | 'R'): { center: THREE.Vector3; normal: THREE.Vector3 } {
+  const s = side === 'L' ? 1 : -1;
+  const [cx, cy, cz] = FLARE_DRUM.center;
+  const [nx, ny, nz] = FLARE_DRUM.normal;
+  return { center: new THREE.Vector3(s * cx, cy, cz), normal: new THREE.Vector3(s * nx, ny, nz).normalize() };
+}
 
 /** Outward normal of the outer forearm (bind), ⊥ to the forearm axis. */
 export function forearmNormal(side: 'L' | 'R'): THREE.Vector3 {
@@ -211,25 +242,17 @@ const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
       }),
     },
     {
-      // Round hip plate: pushes straight out on its flare drum, then the
-      // drum indexes a sixth of a turn like a revolver cylinder to line its
-      // ports up — the flares leave from the drum's side
+      // Round hip drum: the face plate and the larger ring round it push
+      // straight out together, baring the ring's rim (the flare ports sit
+      // in it), and spin about the axis through the salvo. The part seams
+      // cut the ring between the hip, abdomen and lower back parts, so its
+      // plates are gathered from all of them
       id: `flare.${side}`,
       piece: 'hips.front',
-      region: { min: [xr(0.16, 0.2)[0], 0.962, -0.012], max: [xr(0.16, 0.2)[1], 1.041, 0.075] },
-      plates: true,
-      slack: 0.006,
-      hinge: (b) => {
-        // The plate's face normal (it looks out and a touch forward)
-        const n = new THREE.Vector3(s, 0, 0.17).normalize();
-        return {
-          pivot: b.getCenter(new THREE.Vector3()),
-          axis: n,
-          angle: Math.PI / 3,
-          lift: n.clone().multiplyScalar(FLARE_PUSH),
-          liftEnd: 0.5,
-          swingStart: 0.4,
-        };
+      drum: { parts: ['hips.front', 'hips.back', 'abdomen', 'back.lower'], radius: 0.072, depth: [-0.045, 0.03], bone: 'hips' },
+      hinge: () => {
+        const { center, normal } = flareDrum(side);
+        return { pivot: center, axis: normal, angle: 0, lift: normal.clone().multiplyScalar(FLARE_PUSH) };
       },
     },
     {
@@ -277,6 +300,8 @@ const FLAPS: FlapSpec[] = (['L', 'R'] as const).flatMap((side): FlapSpec[] => {
 export interface Flap extends Motion {
   id: FlapId;
   piece: ArmorPiece;
+  /** Every part that lends the flap panels (split while it is open). */
+  parts: ArmorPieceId[];
   mesh: THREE.SkinnedMesh;
   /**
    * Side walls of a cut plate. Drawn only while this flap is open: at rest
@@ -295,8 +320,11 @@ const smooth = (a: number, b: number, k: number) => {
 const _r = new THREE.Matrix4();
 const _t = new THREE.Matrix4();
 
-/** Bind-space motion of a flap at channel k: T(lift) · T(p) R T(−p). */
-export function flapMotion(f: Flap, k: number, out: THREE.Matrix4): THREE.Matrix4 {
+/**
+ * Bind-space motion of a flap at channel k: T(lift) · T(p) R T(−p), the
+ * swing turned a further `spin` (rad) about the same axis.
+ */
+export function flapMotion(f: Flap, k: number, out: THREE.Matrix4, spin = 0): THREE.Matrix4 {
   out.identity();
   if (k <= 1e-4) return out;
   const lift = f.lift ? smooth(0, f.liftEnd ?? 1, k) : 0;
@@ -311,7 +339,7 @@ export function flapMotion(f: Flap, k: number, out: THREE.Matrix4): THREE.Matrix
   }
   return out
     .multiply(_t.makeTranslation(f.pivot.x, f.pivot.y, f.pivot.z))
-    .multiply(_r.makeRotationAxis(f.axis, f.angle * swing))
+    .multiply(_r.makeRotationAxis(f.axis, f.angle * swing + spin))
     .multiply(_t.makeTranslation(-f.pivot.x, -f.pivot.y, -f.pivot.z));
 }
 
@@ -386,6 +414,57 @@ function panels(
   return { panel, plate };
 }
 
+/**
+ * The chosen triangles of several parts as one compact geometry, every
+ * vertex bound wholly to one bone (it moves as a single rigid assembly).
+ */
+function rigidMerge(
+  chosen: ReadonlyArray<{ geo: THREE.BufferGeometry; index: ArrayLike<number>; keep: (t: number) => boolean }>,
+  bone: number,
+): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const nrm: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  for (const { geo, index, keep } of chosen) {
+    const p = geo.getAttribute('position');
+    const nA = geo.getAttribute('normal');
+    const uA = geo.getAttribute('uv');
+    const remap = new Map<number, number>();
+    for (let t = 0; t < index.length / 3; t++) {
+      if (!keep(t)) continue;
+      for (let k = 0; k < 3; k++) {
+        const i = index[3 * t + k];
+        let j = remap.get(i);
+        if (j === undefined) {
+          j = pos.length / 3;
+          remap.set(i, j);
+          pos.push(p.getX(i), p.getY(i), p.getZ(i));
+          nrm.push(nA.getX(i), nA.getY(i), nA.getZ(i));
+          uv.push(uA ? uA.getX(i) : 0, uA ? uA.getY(i) : 0);
+        }
+        idx.push(j);
+      }
+    }
+  }
+  const n = pos.length / 3;
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  out.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  const si = new Uint16Array(n * 4);
+  const sw = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    si[i * 4] = bone;
+    sw[i * 4] = 1;
+  }
+  out.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+  out.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+  out.setIndex(idx);
+  out.computeBoundingBox();
+  return out;
+}
+
 /** Same attributes, only the chosen triangles. */
 function subset(geo: THREE.BufferGeometry, index: ArrayLike<number>, keep: (t: number) => boolean): THREE.BufferGeometry {
   const idx: number[] = [];
@@ -443,6 +522,7 @@ export function buildFlightFlaps(pieces: readonly ArmorPiece[]): {
     {
       index: ArrayLike<number>;
       panel: Int32Array;
+      plate: Int32Array;
       bounds: Map<number, THREE.Box3>;
       centre: Map<number, THREE.Vector3>;
       plateOf: Map<number, number>;
@@ -450,14 +530,8 @@ export function buildFlightFlaps(pieces: readonly ArmorPiece[]): {
       platePanels: Map<number, Set<number>>;
     }
   >();
-
-  for (const spec of FLAPS) {
-    if (spec.cut) continue;
-    const piece = pieces.find((p) => p.id === spec.piece);
-    if (!piece) continue;
-    const src = piece.mesh as THREE.SkinnedMesh;
-    const geo = src.geometry;
-    let info = cache.get(spec.piece);
+  const infoFor = (id: ArmorPieceId, geo: THREE.BufferGeometry) => {
+    let info = cache.get(id);
     if (!info) {
       const index = indexOf(geo);
       const pos = geo.getAttribute('position');
@@ -489,10 +563,24 @@ export function buildFlightFlaps(pieces: readonly ArmorPiece[]): {
       const centre = new Map([...sums].map(([id, c]) => [id, c.divideScalar(counts.get(id)!)] as const));
       const plateOf = new Map<number, number>();
       for (let t = 0; t < panel.length; t++) plateOf.set(panel[t], plate[t]);
-      info = { index, panel, bounds, centre, plateOf, plateBounds, platePanels };
-      cache.set(spec.piece, info);
+      info = { index, panel, plate, bounds, centre, plateOf, plateBounds, platePanels };
+      cache.set(id, info);
     }
-    const { index, panel, bounds, centre, plateOf, plateBounds, platePanels } = info;
+    return info;
+  };
+
+  for (const spec of FLAPS) {
+    if (spec.cut) continue;
+    const piece = pieces.find((p) => p.id === spec.piece);
+    if (!piece) continue;
+    if (spec.drum) {
+      const flap = drumFlap(spec, spec.drum, piece);
+      if (flap) flaps.push(flap);
+      continue;
+    }
+    const src = piece.mesh as THREE.SkinnedMesh;
+    const geo = src.geometry;
+    const { index, panel, bounds, centre, plateOf, plateBounds, platePanels } = infoFor(spec.piece, geo);
     let mine: (t: number) => boolean;
     if (spec.region) {
       const region = new THREE.Box3(new THREE.Vector3(...spec.region.min), new THREE.Vector3(...spec.region.max));
@@ -531,7 +619,56 @@ export function buildFlightFlaps(pieces: readonly ArmorPiece[]): {
     const mesh = skinned(flapGeo, src, `flap-${spec.id}`);
     if (spec.plates) mesh.material = bothSides(src.material);
     const h = spec.hinge(flapGeo.boundingBox!, flapGeo.boundingBox!.getCenter(new THREE.Vector3()));
-    flaps.push({ id: spec.id, piece, mesh, bounds: flapGeo.boundingBox!.clone(), ...h });
+    flaps.push({ id: spec.id, piece, parts: [piece.id], mesh, bounds: flapGeo.boundingBox!.clone(), ...h });
+  }
+
+  /** Whole plates of every part inside the drum's cylinder, merged rigid on its bone. */
+  function drumFlap(spec: FlapSpec, drum: NonNullable<FlapSpec['drum']>, piece: ArmorPiece): Flap | null {
+    const h = spec.hinge(new THREE.Box3(), new THREE.Vector3());
+    const n = h.axis.clone().normalize();
+    const d = new THREE.Vector3();
+    const inside = (v: THREE.Vector3) => {
+      d.subVectors(v, h.pivot);
+      const ax = d.dot(n);
+      return ax > drum.depth[0] && ax < drum.depth[1] && d.addScaledVector(n, -ax).length() < drum.radius;
+    };
+    const chosen: Array<{ geo: THREE.BufferGeometry; index: ArrayLike<number>; keep: (t: number) => boolean }> = [];
+    const parts: ArmorPieceId[] = [];
+    for (const id of drum.parts) {
+      const part = pieces.find((p) => p.id === id);
+      if (!part) continue;
+      const geo = (part.mesh as THREE.SkinnedMesh).geometry;
+      const { index, panel, plate, platePanels } = infoFor(id, geo);
+      const pos = geo.getAttribute('position');
+      const set = taken.get(id) ?? new Set<number>();
+      // A plate goes only if every vertex of it is inside
+      const out = new Set<number>();
+      const v = new THREE.Vector3();
+      for (let t = 0; t < panel.length; t++) {
+        if (out.has(plate[t])) continue;
+        for (let k = 0; k < 3; k++) {
+          if (!inside(v.fromBufferAttribute(pos, index[3 * t + k]))) {
+            out.add(plate[t]);
+            break;
+          }
+        }
+      }
+      const ids = new Set<number>();
+      for (const [pl, members] of platePanels) {
+        if (out.has(pl)) continue;
+        for (const m of members) if (!set.has(m)) ids.add(m);
+      }
+      if (ids.size === 0) continue;
+      ids.forEach((m) => set.add(m));
+      taken.set(id, set);
+      parts.push(id);
+      chosen.push({ geo, index, keep: (t) => ids.has(panel[t]) });
+    }
+    if (chosen.length === 0) return null;
+    const flapGeo = rigidMerge(chosen, boneIndex(drum.bone));
+    const mesh = skinned(flapGeo, piece.mesh as THREE.SkinnedMesh, `flap-${spec.id}`);
+    mesh.material = bothSides((piece.mesh as THREE.Mesh).material);
+    return { id: spec.id, piece, parts, mesh, bounds: flapGeo.boundingBox!.clone(), ...h };
   }
 
   // Clean-edged plates cut from whatever each part still has
@@ -559,7 +696,7 @@ export function buildFlightFlaps(pieces: readonly ArmorPiece[]): {
     const mesh = skinned(flapGeo, src, `flap-${spec.id}`);
     const walls = wallTris.length ? skinned(soupGeometry(wallTris), src, `flap-walls-${spec.id}`) : undefined;
     const h = spec.hinge(flapGeo.boundingBox!, outerTopEdge(plate, spec.cut));
-    flaps.push({ id: spec.id, piece, mesh, bounds: flapGeo.boundingBox!.clone(), walls, ...h });
+    flaps.push({ id: spec.id, piece, parts: [piece.id], mesh, bounds: flapGeo.boundingBox!.clone(), walls, ...h });
   }
 
   // Remainders for parts that only lost some panels

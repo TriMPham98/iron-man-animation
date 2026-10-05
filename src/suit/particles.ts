@@ -124,7 +124,7 @@ export class SuitParticles {
   private readonly lineColor: Float32Array;
 
   // Steam
-  private readonly vN = 360;
+  private readonly vN = 900;
   private readonly vPos = new Float32Array(this.vN * 3);
   private readonly vVel = new Float32Array(this.vN * 3);
   private readonly vLife = new Float32Array(this.vN);
@@ -135,7 +135,10 @@ export class SuitParticles {
   private readonly vSeed = new Float32Array(this.vN);
   private readonly vRot = new Float32Array(this.vN);
   private readonly vSpin = new Float32Array(this.vN);
-  /** 1 for pressure-jet puffs (no buoyancy until they slow; spread on the deck). */
+  /**
+   * 1 for pressure-jet puffs (no buoyancy until they slow; spread on the
+   * deck), 2 for flare smoke laid along a flight path (hangs and spreads).
+   */
   private readonly vJet = new Uint8Array(this.vN);
   private vNext = 0;
   private readonly steam: THREE.Points;
@@ -248,6 +251,25 @@ export class SuitParticles {
     this.sMax[k] = this.sLife[k] = fast ? 0.35 + Math.random() * 0.45 : 0.6 + Math.random() * 0.5;
     this.sSize[k] = fast ? 0.006 + Math.random() * 0.006 : 0.011 + Math.random() * 0.006;
     this.sBounce[k] = 0;
+  }
+
+  /**
+   * One puff of a burning flare's smoke trail at `at`, drifting with
+   * `drift` (a share of the flare's velocity). Laid every few centimetres
+   * of flight it reads as a continuous trail that hangs, spreads and fades.
+   */
+  trail(at: THREE.Vector3, drift: THREE.Vector3): void {
+    const k = this.vNext;
+    this.vNext = (this.vNext + 1) % this.vN;
+    this.vJet[k] = 2;
+    this.vPos.set([at.x + (Math.random() - 0.5) * 0.004, at.y + (Math.random() - 0.5) * 0.004, at.z + (Math.random() - 0.5) * 0.004], k * 3);
+    this.vVel.set([drift.x + (Math.random() - 0.5) * 0.06, drift.y + (Math.random() - 0.5) * 0.06, drift.z + (Math.random() - 0.5) * 0.06], k * 3);
+    this.vMax[k] = this.vLife[k] = 1.8 + Math.random() * 0.8;
+    this.vSize0[k] = 0.016 + Math.random() * 0.01;
+    this.vSize[k] = this.vSize0[k];
+    this.vSeed[k] = Math.random();
+    this.vRot[k] = Math.random() * Math.PI * 2;
+    this.vSpin[k] = (Math.random() - 0.5) * 0.8;
   }
 
   private spawnSteam(at: THREE.Vector3, dir: THREE.Vector3 | null, jet = false): void {
@@ -372,13 +394,14 @@ export class SuitParticles {
       const s = this.vSeed[i] * 40;
       const tt = this.time * 1.7;
       const jet = this.vJet[i] === 1;
+      const trail = this.vJet[i] === 2;
       // A jet core barely brakes for its first tenth of a second, and only
       // starts to rise once it has slowed to a drift
       const d = jet && age < 0.08 ? Math.exp(-0.9 * step) : drag;
       const speed = Math.hypot(V[i3], V[i3 + 1], V[i3 + 2]);
       const lift = jet ? Math.min(1, Math.max(0, 1 - speed / 0.6)) : 1;
       V[i3] = V[i3] * d + Math.sin(tt + s) * 0.25 * step;
-      V[i3 + 1] = V[i3 + 1] * d + (0.45 + 0.2 * Math.sin(tt * 0.7 + s)) * lift * step;
+      V[i3 + 1] = V[i3 + 1] * d + (0.45 + 0.2 * Math.sin(tt * 0.7 + s)) * lift * (trail ? 0.25 : 1) * step;
       V[i3 + 2] = V[i3 + 2] * d + Math.cos(tt * 1.3 + s * 1.7) * 0.25 * step;
       P[i3] += V[i3] * step;
       P[i3 + 1] += V[i3 + 1] * step;
@@ -393,9 +416,10 @@ export class SuitParticles {
         V[i3 + 2] += (V[i3 + 2] / h) * fan + (Math.random() - 0.5) * fan * 0.8;
         V[i3 + 1] = 0;
       }
-      // Billow out as it thins; quick bloom in, long fade
-      this.vSize[i] = this.vSize0[i] * (1 + 5.5 * Math.sqrt(age));
-      this.vAlpha[i] = Math.min(1, age * 9) * Math.pow(u, 1.3);
+      // Billow out as it thins; quick bloom in, long fade (flare smoke is
+      // dense right behind the flare and spreads as it hangs)
+      this.vSize[i] = this.vSize0[i] * (1 + (trail ? 4 : 5.5) * Math.sqrt(age));
+      this.vAlpha[i] = trail ? Math.min(1, age * 30) * Math.pow(u, 1.6) * 1.25 : Math.min(1, age * 9) * Math.pow(u, 1.3);
       this.vRot[i] += this.vSpin[i] * step;
     }
     this.steam.visible = any;

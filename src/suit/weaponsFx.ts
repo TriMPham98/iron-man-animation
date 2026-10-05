@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { FLARE_POPS, type FlightCheckFrame } from '../animation/flightCheck';
+import { FLARE_POPS, FLARE_PORTS, FLARE_RELOAD, type FlightCheckFrame } from '../animation/flightCheck';
 import { boneSpec, type BoneName } from './rig';
 import type { SuitRig } from './rigPose';
 import {
+  FLARE_DRUM,
   FLARE_PUSH,
   flapMotion,
   forearmAxis,
@@ -114,6 +115,17 @@ function flareTexture(): THREE.Texture {
   return t;
 }
 
+/** One flare port in the drum's rim (drum frame). */
+interface FlarePort {
+  /** Mouth of the bore and its outward direction. */
+  at: THREE.Vector3;
+  dir: THREE.Vector3;
+  /** Cartridge cap: shown while loaded. */
+  cap: THREE.Object3D;
+  /** Hot glow left in the bore after the shot. */
+  ember: THREE.MeshBasicMaterial;
+}
+
 interface Mount {
   bone: BoneName;
   flap: Flap;
@@ -205,15 +217,20 @@ export class WeaponsFx {
       center: THREE.Vector3;
     }
   > = [];
-  private readonly dispensers: Array<Mount & { cells: THREE.Vector3[]; side: number }> = [];
+  private readonly dispensers: Array<Mount & { ports: FlarePort[]; side: number }> = [];
   /** Live flares (model space), each with a hot spot on the deck under it. */
   private readonly flares: Array<{
     p: THREE.Vector3;
     v: THREE.Vector3;
     life: number;
+    /** Life it was launched with (s). */
+    max: number;
     sprite: THREE.Sprite;
+    halo: THREE.Sprite;
     spot: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
-    puff?: number;
+    /** Path left since the last smoke puff / sparkle (m, s). */
+    laid: number;
+    spark: number;
   }> = [];
   private readonly spotGeo = new THREE.CircleGeometry(0.5, 24).rotateX(-Math.PI / 2);
   /**
@@ -500,50 +517,72 @@ export class WeaponsFx {
   }
 
   /**
-   * Flare drum under the suit's own round hip plate: the plate pushes out
-   * along its normal and the drum it caps comes out with it — a short
-   * cylinder the plate's own size (so it stays hidden in the plate's seat
-   * when stowed), suit red with a gold band, six ports round its side. Drum and
-   * plate index a sixth of a turn together; flares leave from the ports.
+   * Flare drum: the suit's own round hip assembly — face plate and the
+   * outer ring round it — pushes straight out of the hip, baring the
+   * ring's rim, a true cylinder on the model. The rim carries a ring of
+   * flare ports (dark bores in gold collars, each loaded with a cartridge
+   * cap); a gunmetal drum body with a gold band runs on behind the rim so
+   * the seat is sleeved at every point of the push. The drum spins through
+   * the salvo and each port fires as it comes round to the station up and
+   * aft, like the hip flares that shake the F-22s off in the film.
    */
   private makeDispenser(s: number, flap: Flap, m: ReturnType<typeof mats>) {
-    const b = flap.bounds;
-    const n = flap.axis.clone().normalize();
-    // Plate radius in its own plane (it faces out along ±X); the drum is a
-    // hair inside it so the face disk reads as a lid
-    const size = b.getSize(new THREE.Vector3());
-    const r = (Math.min(size.y, size.z) / 2) * 0.93;
-    // Drum frame: +Y along the plate normal, origin at the plate's centre
-    const y = n;
+    // Drum frame: +Y along the axis, origin at the drum centre
+    const y = flap.axis.clone().normalize();
     const x = new THREE.Vector3(0, 1, 0).cross(y).normalize();
     const z = new THREE.Vector3().crossVectors(x, y);
     const bind = new THREE.Matrix4().makeBasis(x, y, z).setPosition(flap.pivot);
-    // The face disk is the plate's outer few mm (a hub runs in behind it):
-    // the drum starts right under the disk and runs back past the push, so
-    // the hub and the plate's seat are sleeved at every point of travel
-    const face = size.x / 2;
-    const y1 = face - 0.007;
-    const y0 = y1 - FLARE_PUSH - 0.02;
+    const R = FLARE_DRUM.radius;
+    const [rim0, rim1] = FLARE_DRUM.rim;
     const rig = new THREE.Group();
-    rig.add(tube(r, r, y0, y1, m.red, 32, true));
-    // Bands stand a millimetre proud of the drum (closer, they flicker)
-    rig.add(tube(r + 0.0012, r + 0.0012, y1 - 0.007, y1 - 0.003, m.gold, 32, true));
-    rig.add(tube(r + 0.0012, r + 0.0012, y0 + 0.004, y0 + 0.007, m.gold, 32, true));
-    const cells: THREE.Vector3[] = [];
-    const portY = y1 - FLARE_PUSH * 0.55;
-    for (let k = 0; k < 6; k++) {
-      const a = (k / 6) * Math.PI * 2;
+    // Body behind the rim: a hair inside it, running back past the push
+    const back = rim0 - FLARE_PUSH - 0.012;
+    rig.add(tube(R - 0.0007, R - 0.0007, back, rim0 + 0.001, m.gun, 48, true));
+    rig.add(tube(R + 0.0002, R + 0.0002, rim0 - 0.006, rim0 - 0.002, m.gold, 48, true));
+    // The firing station: up and aft, in the drum's plane
+    const station = new THREE.Vector3(0, 0.8, -0.6);
+    const a0 = Math.atan2(station.dot(z), station.dot(x));
+    // Ports at the front of the rim, so a short push bares them
+    const portY = rim1 - 0.0085;
+    const bore = new THREE.CylinderGeometry(0.0048, 0.0048, 0.0012, 20).rotateZ(-Math.PI / 2);
+    const capGeo = new THREE.CylinderGeometry(0.0036, 0.0036, 0.0006, 20).rotateZ(-Math.PI / 2);
+    const primer = new THREE.CylinderGeometry(0.0012, 0.0012, 0.0003, 12).rotateZ(-Math.PI / 2);
+    const collar = new THREE.TorusGeometry(0.0057, 0.0008, 8, 24).rotateY(Math.PI / 2);
+    const emberGeo = new THREE.CircleGeometry(0.0044, 20).rotateY(Math.PI / 2);
+    const dark = new THREE.MeshStandardMaterial({ color: 0x050506, metalness: 0.4, roughness: 0.8 });
+    const brass = new THREE.MeshStandardMaterial({ color: 0xa8743c, metalness: 1, roughness: 0.3 });
+    const ports: FlarePort[] = [];
+    for (let k = 0; k < FLARE_PORTS; k++) {
+      // Half a pitch short of the station, so port k fires as the turn
+      // reaches (k + ½) / FLARE_PORTS of a revolution
+      const a = a0 + ((k + 0.5) / FLARE_PORTS) * Math.PI * 2;
       const dir = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
-      // Dark port recess with a gold collar on the drum's side
       const port = new THREE.Group();
-      port.position.copy(dir).multiplyScalar(r).setY(portY);
+      port.position.copy(dir).multiplyScalar(R).setY(portY);
       port.rotation.y = -a;
-      port.add(box(0.003, 0.012, 0.009, m.gold, 0, 0, 0));
-      port.add(box(0.004, 0.009, 0.0065, m.gun, 0.0012, 0, 0));
+      const hole = new THREE.Mesh(bore, dark);
+      hole.position.x = 0.0004;
+      const ring = new THREE.Mesh(collar, m.gold);
+      ring.position.x = 0.0004;
+      const cap = new THREE.Group();
+      cap.add(new THREE.Mesh(capGeo, brass));
+      cap.add(new THREE.Mesh(primer, m.steel).translateX(0.0003));
+      cap.position.x = 0.0013;
+      const ember = new THREE.MeshBasicMaterial({
+        color: 0xff7a2a,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      });
+      const glow = new THREE.Mesh(emberGeo, ember);
+      glow.position.x = 0.0011;
+      port.add(hole, ring, cap, glow);
       rig.add(port);
-      cells.push(dir.clone().multiplyScalar(r + 0.004).setY(portY));
+      ports.push({ at: dir.clone().multiplyScalar(R + 0.002).setY(portY), dir, cap, ember });
     }
-    return { ...this.mount('hips', flap, bind, rig), cells, side: s };
+    return { ...this.mount('hips', flap, bind, rig), ports, side: s };
   }
 
   private mount(bone: BoneName, flap: Flap, bind: THREE.Matrix4, rig: THREE.Group): Mount {
@@ -635,7 +674,17 @@ export class WeaponsFx {
       const k = f.flaps[mt.flap.id] ?? 0;
       mt.root.visible = k > 0.01;
       if (!mt.root.visible) continue;
-      this.place(mt, rig, modelInv, flapMotion(mt.flap, k, this._lift));
+      this.place(mt, rig, modelInv, flapMotion(mt.flap, k, this._lift, f.spin[mt.flap.id] ?? 0));
+      // Spent ports stay empty until the drum is home and reloaded; the
+      // bore glows a moment after each shot
+      const side = mt.side > 0 ? 'L' : 'R';
+      for (const pop of FLARE_POPS) {
+        if (pop.side !== side) continue;
+        const port = mt.ports[pop.port];
+        const fired = t >= pop.t && t < FLARE_RELOAD;
+        port.cap.visible = !fired;
+        port.ember.opacity = fired ? Math.exp(-(t - pop.t) * 2.5) : 0;
+      }
     }
     this.siloArmed = f.siloArmed;
     this.updateFlares(t, particles);
@@ -684,22 +733,40 @@ export class WeaponsFx {
         if (pop.t <= prev || pop.t > t) continue;
         const mt = this.dispensers.find((d) => (d.side > 0 ? 'L' : 'R') === pop.side && d.root.visible);
         if (!mt) continue;
-        const cell = mt.cells[Math.floor(Math.random() * mt.cells.length)].clone().applyMatrix4(mt.root.matrix);
-        // Out from the hip, kicked aft and a little up, then they fall
-        const v = new THREE.Vector3(mt.side * (1.4 + Math.random() * 0.5), 0.9 + Math.random() * 0.4, -1.1 - Math.random() * 0.4);
-        const sprite = new THREE.Sprite(
-          new THREE.SpriteMaterial({ map: this.flareTex, color: 0xfff1d0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }),
-        );
-        this.group.add(sprite);
+        const port = mt.ports[pop.port];
+        const at = port.at.clone().applyMatrix4(mt.root.matrix);
+        // Out of the port (up and aft), kicked off the hip along the drum's
+        // axis, then they arc over and fall
+        const out = this._dir.copy(port.dir).transformDirection(mt.root.matrix);
+        const axis = this._dir2.set(0, 1, 0).transformDirection(mt.root.matrix);
+        const v = out
+          .clone()
+          .multiplyScalar(3 + Math.random() * 0.6)
+          .addScaledVector(axis, 0.9 + Math.random() * 0.4)
+          .add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.35));
+        const add = (color: number) => {
+          const sp = new THREE.Sprite(
+            new THREE.SpriteMaterial({ map: this.flareTex, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }),
+          );
+          sp.position.copy(at);
+          sp.scale.setScalar(0.001);
+          this.group.add(sp);
+          return sp;
+        };
+        // White-hot core in a hot orange halo
+        const sprite = add(0xfff6e6);
+        const halo = add(0xff8a34);
         const spot = new THREE.Mesh(
           this.spotGeo,
           new THREE.MeshBasicMaterial({ map: this.flareTex, color: 0xffb070, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }),
         );
         spot.renderOrder = 3;
         this.group.add(spot);
-        this.flares.push({ p: cell, v, life: 1.6, sprite, spot });
-        particles.burst('sparks', cell, 16, v.clone().normalize());
-        particles.burst('steam', cell, 3, v.clone().normalize());
+        const life = 1.9 + Math.random() * 0.3;
+        this.flares.push({ p: at, v, life, max: life, sprite, halo, spot, laid: 0, spark: 0 });
+        // Muzzle: a spit of sparks and a puff of ejection gas from the port
+        particles.burst('sparks', at, 10, out);
+        particles.burst('steam', at, 2, out);
       }
     }
     const step = Math.max(0, Math.min(0.05, dt));
@@ -721,22 +788,36 @@ export class WeaponsFx {
         fl.p.y = 0.01;
         fl.v.y = Math.abs(fl.v.y) * 0.2;
       }
-      const flick = 0.75 + 0.25 * Math.sin(t * 70 + i * 3);
+      // Magnesium burn: a hard white core that sputters, in a wider orange
+      // halo that breathes slower
+      const flick = 0.7 + 0.3 * Math.sin(t * 70 + i * 3) * Math.sin(t * 23 + i);
       const fade = Math.min(1, fl.life * 2);
+      // Ignites a few centimetres out of the port
+      const on = Math.min(1, Math.max(0, (this.flareAge(fl) - 0.015) / 0.05)) * fade;
       fl.sprite.position.copy(fl.p);
-      fl.sprite.scale.setScalar((0.07 + 0.05 * flick) * fade);
+      fl.sprite.scale.setScalar((0.045 + 0.03 * flick) * on);
+      fl.halo.position.copy(fl.p);
+      fl.halo.scale.setScalar((0.15 + 0.03 * Math.sin(t * 17 + i)) * on);
+      fl.halo.material.opacity = 0.55;
       // Hot spot on the deck under it: tight and bright as it comes down
       const near = Math.max(0, 1 - fl.p.y / 0.7);
       fl.spot.position.set(fl.p.x, 0.004, fl.p.z);
       fl.spot.scale.setScalar(0.12 + 0.22 * (1 - near));
       fl.spot.material.opacity = 0.65 * near * near * fade * flick;
-      // Smoke trail — one puff per ~0.12 s of flight (time-based, so it
-      // costs the same at any frame rate) and thin enough that the big soft
-      // sprites never pile up into fill-rate-heavy overdraw
-      fl.puff = (fl.puff ?? 0) + step;
-      if (fl.puff > 0.12) {
-        fl.puff = 0;
-        particles.burst('steam', fl.p, 1, this._v.copy(fl.v).multiplyScalar(-0.2));
+      // Smoke trail: a small puff every ~2.5 cm of path (so it stays one
+      // unbroken streak at any speed or frame rate) that hangs, spreads
+      // and fades long after the flare has gone; capped per second so a
+      // fast flare can't flood the pool
+      fl.laid += Math.min(fl.v.length() * step, 0.06);
+      while (fl.laid > 0.025 && fade > 0.2) {
+        fl.laid -= 0.025;
+        particles.trail(fl.p, this._v.copy(fl.v).multiplyScalar(0.06));
+      }
+      // Burning metal sheds the odd spark
+      fl.spark += step;
+      if (fl.spark > 0.11) {
+        fl.spark = 0;
+        particles.burst('sparks', fl.p, 1, this._v.copy(fl.v).negate());
       }
     }
     if (lit) {
@@ -747,9 +828,15 @@ export class WeaponsFx {
     }
   }
 
+  /** Seconds since a flare left its port. */
+  private flareAge(fl: (typeof this.flares)[number]): number {
+    return fl.max - fl.life;
+  }
+
   private removeFlare(fl: (typeof this.flares)[number]): void {
-    this.group.remove(fl.sprite, fl.spot);
+    this.group.remove(fl.sprite, fl.halo, fl.spot);
     fl.sprite.material.dispose();
+    fl.halo.material.dispose();
     fl.spot.material.dispose();
   }
 

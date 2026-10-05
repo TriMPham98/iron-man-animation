@@ -13,8 +13,9 @@ import type { FlightPose } from '../suit/rigPose';
  *   flaps (one rolling sweep down the suit: shoulder, dorsal, thigh, calf)
  *   → weapons (a forearm armor panel rises on
  *   the anti-tank launcher; each trapezius cap rises on a forward-facing
- *   mini-rocket silo; the round hip plates push out on their flare drums,
- *   which turn and test-pop) → all surfaces (every flap and every weapon
+ *   mini-rocket silo; each round hip drum — plate and outer ring — pushes
+ *   out and spins through a salvo, a flare leaving each port in its rim as
+ *   it comes round) → all surfaces (every flap and every weapon
  *   deployed together) → hover test (palms turn to the deck and the
  *   repulsors light before the boots ignite; lift off to ~45 cm and hold.
  *   Gusts tilt and drift the suit, and the flaps and the left / right
@@ -47,7 +48,7 @@ export type FlapId =
   /** Trapezius panel that lifts as the lid of the mini-rocket silo. */
   | 'trap.L'
   | 'trap.R'
-  /** Hip panel that slides out over the flare dispenser. */
+  /** Round hip drum (plate + outer ring) that pushes out and spins its flare ports round. */
   | 'flare.L'
   | 'flare.R';
 
@@ -55,6 +56,8 @@ export interface FlightCheckFrame {
   pose: FlightPose;
   /** Flap opening 0 (seated) → 1 (full deflection). */
   flaps: Record<FlapId, number>;
+  /** Extra turn (rad) of a flap about its own axis: the flare drums spin through their salvo. */
+  spin: Partial<Record<FlapId, number>>;
   /** Palm repulsor glow 0–1 (flash or stabilizer burn). */
   repulsorL: number;
   repulsorR: number;
@@ -145,6 +148,8 @@ export interface FlightEvent {
     | 'cutoff'
     | 'nominal';
   side?: 'L' | 'R' | 'both';
+  /** Shot within a flare salvo (0 = the first). */
+  n?: number;
 }
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
@@ -264,15 +269,36 @@ const W = AT_WEAPONS;
 const LAUNCH_L = at(W, [0.6, 1.3, 5.4, 6.0]);
 const LAUNCH_R = at(W, [1.0, 1.7, 5.5, 6.1]);
 const SILOS = at(W, [1.8, 2.6, 5.1, 5.9]);
-// Flare dispensers: hip drums push out and turn, test pops, slide home
+// Flare dispensers: hip drums push out, spin through a salvo, slide home
 const FLARE_DRUMS = at(W, [2.9, 3.4, 4.9, 5.4]);
-/** Flare pops (flight-check s) per side. */
-export const FLARE_POPS: ReadonlyArray<{ t: number; side: 'L' | 'R' }> = [
-  { t: W + 3.55, side: 'L' },
-  { t: W + 3.85, side: 'R' },
-  { t: W + 4.2, side: 'L' },
-  { t: W + 4.3, side: 'R' },
-];
+/** Flare ports round each drum's rim. */
+export const FLARE_PORTS = 8;
+/**
+ * Each drum turns once over its salvo, spinning up and down again. The
+ * ports start staggered half a pitch short of the firing station, so port
+ * k fires as the turn reaches (k + ½) / {@link FLARE_PORTS}: a rapid
+ * string from the middle of the spin, left drum leading the right.
+ */
+const SALVO = { L: [W + 3.5, W + 4.35], R: [W + 3.75, W + 4.6] } as const;
+const drumTurn = (side: 'L' | 'R', t: number) => Math.PI * 2 * stroke(SALVO[side][0], SALVO[side][1], t);
+/** Spent drums are reloaded inside the hip once they are home. */
+export const FLARE_RELOAD = FLARE_DRUMS[3];
+/** Flare shots (flight-check s): side and the port that fires. */
+export const FLARE_POPS: ReadonlyArray<{ t: number; side: 'L' | 'R'; port: number }> = (['L', 'R'] as const)
+  .flatMap((side) =>
+    Array.from({ length: FLARE_PORTS }, (_, port) => {
+      // Invert the spin: when the turn reaches this port
+      const goal = ((port + 0.5) / FLARE_PORTS) * Math.PI * 2;
+      let [a, b] = SALVO[side];
+      for (let i = 0; i < 40; i++) {
+        const m = (a + b) / 2;
+        if (drumTurn(side, m) < goal) a = m;
+        else b = m;
+      }
+      return { t: (a + b) / 2, side, port };
+    }),
+  )
+  .sort((p, q) => p.t - q.t);
 
 /**
  * Where JARVIS has the pilot look, step by step: [time, yaw, pitch, roll,
@@ -419,7 +445,7 @@ export const FLIGHT_EVENTS: readonly FlightEvent[] = ([
   { t: SILOS[0], kind: 'weaponDeploy', side: 'both' },
   { t: SILOS[1], kind: 'weaponLock', side: 'both' },
   { t: SILOS[2], kind: 'weaponStow', side: 'both' },
-  ...FLARE_POPS.map((p): FlightEvent => ({ t: p.t, kind: 'flare', side: p.side })),
+  ...FLARE_POPS.map((p): FlightEvent => ({ t: p.t, kind: 'flare', side: p.side, n: p.port })),
   { t: LAUNCH_L[2], kind: 'weaponStow', side: 'L' },
   { t: LAUNCH_R[2], kind: 'weaponStow', side: 'R' },
   { t: W + 6.0, kind: 'servo', side: 'both' },
@@ -706,6 +732,7 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
       fingersR: fingers(t, 'R', palms, easy),
     },
     flaps,
+    spin: { 'flare.L': drumTurn('L', t), 'flare.R': drumTurn('R', t) },
     repulsorL: clamp01(repulsorL),
     repulsorR: clamp01(repulsorR),
     chargeL,
