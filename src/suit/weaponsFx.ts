@@ -98,6 +98,15 @@ function scaleAbout(poly: Array<[number, number]>, k: number): Array<[number, nu
   return poly.map(([x, z]) => [cx + (x - cx) * k, cz + (z - cz) * k]);
 }
 
+/** Flare flight: quadratic air drag (1/m) and a light flare's sink (m/s²). */
+const FLARE_DRAG = 1.5;
+const FLARE_GRAVITY = 2.4;
+/** Dull ember that falls on once a flare has burnt out (s). */
+const FLARE_EMBER_SEC = 0.5;
+const FLARE_CORE = new THREE.Color(0xfff6e6);
+const FLARE_HALO = new THREE.Color(0xff8a34);
+const FLARE_EMBER = new THREE.Color(0xc2300c);
+
 function flareTexture(): THREE.Texture {
   if (typeof document === 'undefined') return new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
   const c = document.createElement('canvas');
@@ -222,11 +231,16 @@ export class WeaponsFx {
   private readonly flares: Array<{
     p: THREE.Vector3;
     v: THREE.Vector3;
-    life: number;
-    /** Life it was launched with (s). */
-    max: number;
+    /** Seconds since it left the port. */
+    age: number;
+    /** How long it burns (s); a dull ember falls on a moment after. */
+    burn: number;
+    /** Per-flare phase for its tumble and sputter. */
+    seed: number;
     sprite: THREE.Sprite;
     halo: THREE.Sprite;
+    /** Muzzle flash left at the port as it ignites. */
+    flash: THREE.Sprite;
     spot: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
     /** Path left since the last smoke puff / sparkle (m, s). */
     laid: number;
@@ -735,15 +749,20 @@ export class WeaponsFx {
         if (!mt) continue;
         const port = mt.ports[pop.port];
         const at = port.at.clone().applyMatrix4(mt.root.matrix);
-        // Out of the port (up and aft), kicked off the hip along the drum's
-        // axis, then they arc over and fall
+        // Angel wings: each shot of the salvo leaves a little further round
+        // the fan — the first ones up and aft out of the port, the later
+        // ones swung out off the hip and lower — so the two drums' strings
+        // spread into a pair of wide, drooping wings instead of a clump
         const out = this._dir.copy(port.dir).transformDirection(mt.root.matrix);
         const axis = this._dir2.set(0, 1, 0).transformDirection(mt.root.matrix);
-        const v = out
-          .clone()
-          .multiplyScalar(3 + Math.random() * 0.6)
-          .addScaledVector(axis, 0.9 + Math.random() * 0.4)
-          .add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.35));
+        const u = pop.port / (FLARE_PORTS - 1);
+        const dir = new THREE.Vector3()
+          .addScaledVector(out, 1 - 0.55 * u)
+          .addScaledVector(axis, 0.45 + 0.8 * u)
+          .add(new THREE.Vector3(0, -0.15 * u, 0))
+          .add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.12))
+          .normalize();
+        const v = dir.multiplyScalar(3.6 + Math.random() * 0.7);
         const add = (color: number) => {
           const sp = new THREE.Sprite(
             new THREE.SpriteMaterial({ map: this.flareTex, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }),
@@ -753,17 +772,29 @@ export class WeaponsFx {
           this.group.add(sp);
           return sp;
         };
-        // White-hot core in a hot orange halo
+        // White-hot core in a hot orange halo, and the port's muzzle flash
         const sprite = add(0xfff6e6);
         const halo = add(0xff8a34);
+        const flash = add(0xffd9a0);
         const spot = new THREE.Mesh(
           this.spotGeo,
           new THREE.MeshBasicMaterial({ map: this.flareTex, color: 0xffb070, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }),
         );
         spot.renderOrder = 3;
         this.group.add(spot);
-        const life = 1.9 + Math.random() * 0.3;
-        this.flares.push({ p: at, v, life, max: life, sprite, halo, spot, laid: 0, spark: 0 });
+        this.flares.push({
+          p: at,
+          v,
+          age: 0,
+          burn: 1.7 + Math.random() * 0.7,
+          seed: Math.random() * 100,
+          sprite,
+          halo,
+          flash,
+          spot,
+          laid: 0,
+          spark: 0,
+        });
         // Muzzle: a spit of sparks and a puff of ejection gas from the port
         particles.burst('sparks', at, 10, out);
         particles.burst('steam', at, 2, out);
@@ -771,72 +802,105 @@ export class WeaponsFx {
     }
     const step = Math.max(0, Math.min(0.05, dt));
     let lit: (typeof this.flares)[number] | null = null;
+    let litHeat = 0;
     for (let i = this.flares.length - 1; i >= 0; i--) {
       const fl = this.flares[i];
-      fl.life -= step;
-      if (fl.life <= 0 || dt < 0) {
+      fl.age += step;
+      if (fl.age >= fl.burn + FLARE_EMBER_SEC || dt < 0) {
         this.removeFlare(fl);
         this.flares.splice(i, 1);
         continue;
       }
-      if (!lit || fl.life > lit.life) lit = fl;
-      // Light flares: heavy drag, gentle fall, skid on the deck
-      fl.v.multiplyScalar(Math.exp(-1.8 * step));
-      fl.v.y -= 4.5 * step;
+      // Light flares: air drag that grows with the square of the speed
+      // brakes the ejection hard within a few tenths, then they droop
+      // over and sink at a slow terminal fall, so each string bends down
+      // into an arc; they skid where they land
+      const speed = fl.v.length();
+      fl.v.multiplyScalar(1 / (1 + FLARE_DRAG * speed * step));
+      fl.v.y -= FLARE_GRAVITY * step;
       fl.p.addScaledVector(fl.v, step);
-      if (fl.p.y < 0.01) {
-        fl.p.y = 0.01;
+      const floor = (Math.hypot(fl.p.x, fl.p.z) < 1.05 ? 0 : -0.05) + 0.01;
+      if (fl.p.y < floor) {
+        fl.p.y = floor;
         fl.v.y = Math.abs(fl.v.y) * 0.2;
+        fl.v.x *= 0.6;
+        fl.v.z *= 0.6;
       }
-      // Magnesium burn: a hard white core that sputters, in a wider orange
-      // halo that breathes slower
-      const flick = 0.7 + 0.3 * Math.sin(t * 70 + i * 3) * Math.sin(t * 23 + i);
-      const fade = Math.min(1, fl.life * 2);
-      // Ignites a few centimetres out of the port
-      const on = Math.min(1, Math.max(0, (this.flareAge(fl) - 0.015) / 0.05)) * fade;
-      fl.sprite.position.copy(fl.p);
-      fl.sprite.scale.setScalar((0.045 + 0.03 * flick) * on);
-      fl.halo.position.copy(fl.p);
-      fl.halo.scale.setScalar((0.15 + 0.03 * Math.sin(t * 17 + i)) * on);
+      // A tumbling flare wobbles about its path: the core and the smoke
+      // it lays shake a little off the line
+      const wob = this._v.set(
+        Math.sin(fl.age * 31 + fl.seed),
+        Math.sin(fl.age * 27 + fl.seed * 1.7) * 0.6,
+        Math.cos(fl.age * 29 + fl.seed * 2.3),
+      );
+      const at = wob.multiplyScalar(0.006 * Math.min(1, fl.age * 6)).add(fl.p);
+
+      // Burn: ignites a few centimetres out of the port with a bloom,
+      // burns white-hot and sputtering, then gutters — shrinking, going
+      // orange then red, cutting out in flickers — into a dull ember
+      const ignite = Math.min(1, Math.max(0, (fl.age - 0.015) / 0.05));
+      const left = fl.burn - fl.age;
+      const burning = left > 0;
+      const gutter = burning ? Math.min(1, left / 0.45) : 0;
+      const flick = 0.7 + 0.3 * Math.sin(t * 70 + fl.seed * 3) * Math.sin(t * 23 + fl.seed);
+      // Sputter: the dying flare drops out for a few frames at a time
+      const sputter = gutter < 1 && Math.sin(t * 41 + fl.seed * 5) * Math.sin(t * 13 + fl.seed) > 0.35 + 0.5 * gutter ? 0.25 : 1;
+      const heat = ignite * (burning ? (0.25 + 0.75 * gutter) * sputter : 0);
+      const bloom = 1 + 1.4 * Math.exp(-fl.age * 14);
+      const ember = burning ? 0 : 1 - (fl.age - fl.burn) / FLARE_EMBER_SEC;
+      fl.sprite.position.copy(at);
+      fl.sprite.scale.setScalar(burning ? (0.04 + 0.03 * flick) * ignite * (0.45 + 0.55 * gutter) * bloom : 0.014 * ember);
+      fl.sprite.material.color.lerpColors(FLARE_EMBER, FLARE_CORE, burning ? Math.min(1, gutter * 1.5) : 0);
+      fl.sprite.material.opacity = burning ? sputter : ember;
+      fl.halo.position.copy(at);
+      fl.halo.scale.setScalar((0.15 + 0.03 * Math.sin(t * 17 + fl.seed)) * heat * bloom);
+      fl.halo.material.color.lerpColors(FLARE_EMBER, FLARE_HALO, gutter);
       fl.halo.material.opacity = 0.55;
+      // Muzzle flash: a wide, brief bloom at the port it left
+      const muzzle = Math.max(0, 1 - fl.age / 0.09);
+      fl.flash.visible = muzzle > 0;
+      fl.flash.scale.setScalar(0.11 * Math.sqrt(muzzle) + 0.001);
+      fl.flash.material.opacity = muzzle;
       // Hot spot on the deck under it: tight and bright as it comes down
       const near = Math.max(0, 1 - fl.p.y / 0.7);
-      fl.spot.position.set(fl.p.x, 0.004, fl.p.z);
+      fl.spot.position.set(fl.p.x, Math.max(0, floor - 0.006), fl.p.z);
       fl.spot.scale.setScalar(0.12 + 0.22 * (1 - near));
-      fl.spot.material.opacity = 0.65 * near * near * fade * flick;
+      fl.spot.material.opacity = 0.65 * near * near * heat * flick;
+      if (heat > litHeat) {
+        lit = fl;
+        litHeat = heat;
+      }
+      if (!burning) continue;
       // Smoke trail: a small puff every ~2.5 cm of path (so it stays one
       // unbroken streak at any speed or frame rate) that hangs, spreads
-      // and fades long after the flare has gone; capped per second so a
-      // fast flare can't flood the pool
+      // and fades long after the flare has gone; capped per frame so a
+      // fast flare can't flood the pool. It thins as the flare gutters.
       fl.laid += Math.min(fl.v.length() * step, 0.06);
-      while (fl.laid > 0.025 && fade > 0.2) {
-        fl.laid -= 0.025;
-        particles.trail(fl.p, this._v.copy(fl.v).multiplyScalar(0.06));
+      const spacing = 0.025 / Math.max(0.35, gutter);
+      while (fl.laid > spacing) {
+        fl.laid -= spacing;
+        particles.trail(at, this._dir.copy(fl.v).multiplyScalar(0.06));
       }
-      // Burning metal sheds the odd spark
+      // Burning metal sheds sparks — a shower as it gutters out
       fl.spark += step;
-      if (fl.spark > 0.11) {
+      if (fl.spark > (gutter < 1 ? 0.05 : 0.11)) {
         fl.spark = 0;
-        particles.burst('sparks', fl.p, 1, this._v.copy(fl.v).negate());
+        particles.burst('sparks', at, 1, this._dir.copy(fl.v).negate());
       }
     }
     if (lit) {
       this.flareLight.position.copy(lit.p);
-      this.flareLight.intensity = 1.6 * Math.min(1, lit.life * 2) * (0.85 + 0.15 * Math.sin(t * 53));
+      this.flareLight.intensity = 1.6 * litHeat * (0.85 + 0.15 * Math.sin(t * 53));
     } else {
       this.flareLight.intensity = 0;
     }
   }
 
-  /** Seconds since a flare left its port. */
-  private flareAge(fl: (typeof this.flares)[number]): number {
-    return fl.max - fl.life;
-  }
-
   private removeFlare(fl: (typeof this.flares)[number]): void {
-    this.group.remove(fl.sprite, fl.halo, fl.spot);
+    this.group.remove(fl.sprite, fl.halo, fl.flash, fl.spot);
     fl.sprite.material.dispose();
     fl.halo.material.dispose();
+    fl.flash.material.dispose();
     fl.spot.material.dispose();
   }
 
