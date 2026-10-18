@@ -35,6 +35,20 @@ describe('FlightModel', () => {
     expect(m.pos.y).toBeGreaterThan(10);
   });
 
+  it('moves off on the throttle alone from a standstill without re-landing every step', () => {
+    const m = new FlightModel(flat());
+    m.placeOnGround(0, 0, 0);
+    let contacts = 0;
+    run(m, 3, (i) => {
+      i.throttle = 1;
+      if (m.contact !== 'none') contacts++;
+    });
+    expect(contacts).toBeLessThan(3);
+    expect(m.grounded).toBe(false);
+    expect(m.speedCmd).toBeGreaterThan(100);
+    expect(m.speed).toBeGreaterThan(10);
+  });
+
   it('leans over into flight on the throttle and holds the commanded speed', () => {
     const m = new FlightModel(flat());
     m.placeOnGround(0, 0, 0);
@@ -102,5 +116,57 @@ describe('FlightModel', () => {
     m.q.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);
     run(m, 3, (i) => i.aim.set(0, 0, 1));
     expect(m.up().y).toBeGreaterThan(0.5);
+  });
+
+  it('turns on a dime in a hover smoothly: eased yaw, no snap, no overshoot', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 50, 0);
+    m.grounded = false;
+    const dt = 1 / 120;
+    const input = EMPTY_INPUT();
+    let heading = 0;
+    let prevRate = 0;
+    let maxStep = 0;
+    let peak = 0;
+    let t90 = -1;
+    let overshoot = 0;
+    for (let t = 0; t < 3; t += dt) {
+      // Flick the aim 90° to the left
+      input.aim.set(t > 0.1 ? 1 : 0, 0, t > 0.1 ? 0 : 1);
+      const before = m.forward();
+      m.step(dt, input);
+      const after = m.forward();
+      heading += Math.atan2(after.x, after.z) - Math.atan2(before.x, before.z);
+      const rate = m.omega.y;
+      // Yaw acceleration per frame never jumps: the turn eases in
+      maxStep = Math.max(maxStep, Math.abs(rate - prevRate) / dt);
+      prevRate = rate;
+      peak = Math.max(peak, rate);
+      overshoot = Math.max(overshoot, heading - Math.PI / 2);
+      if (t90 < 0 && heading > Math.PI / 2 * 0.9) t90 = t;
+    }
+    expect(maxStep).toBeLessThan(16); // rad/s² (it used to step ~34)
+    expect(peak).toBeGreaterThan(2.5); // still a quick pivot
+    expect(t90).toBeGreaterThan(0);
+    expect(t90).toBeLessThan(1); // responsive
+    expect(overshoot).toBeLessThan(0.03);
+    expect(Math.abs(heading - Math.PI / 2)).toBeLessThan(0.02);
+  });
+
+  it('eases the lean-over into flight instead of kicking it', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 200, 0);
+    m.grounded = false;
+    let peakRate = 0;
+    run(m, 0.05, (i) => (i.throttle = 1));
+    const early = m.postureVel;
+    run(m, 4, (i) => {
+      i.throttle = 1;
+      peakRate = Math.max(peakRate, Math.abs(m.postureVel));
+    });
+    // Slow off the mark, swinging through the middle, landing near prone
+    expect(Math.abs(early)).toBeLessThan(peakRate * 0.25);
+    expect(m.posture).toBeGreaterThan(1.3);
+    expect(m.posture).toBeLessThan(1.5);
   });
 });

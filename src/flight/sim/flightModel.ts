@@ -65,6 +65,9 @@ const G_LIMIT = 13;
 /** Hover speed limits (m/s). */
 const HOVER_SPEED = 22;
 const CLIMB_SPEED = 16;
+/** Time to build to the full yaw rate (s), and the ease on the yaw acceleration (s). */
+const YAW_RAMP = 0.22;
+const YAW_EASE = 0.05;
 /** Above this, the air is too thin and the suit starts icing (m). */
 export const ICING_ALT = 9000;
 export const CEILING = 11500;
@@ -97,6 +100,8 @@ export class FlightModel {
   readonly omega = new THREE.Vector3();
   /** Long-axis tilt from upright (0) to prone ({@link FLIGHT_POSTURE}). */
   posture = 0;
+  /** Rate of change of the posture (rad/s). */
+  postureVel = 0;
   /** 0 = hover regime, 1 = flight regime. */
   flightness = 0;
   /** Commanded airspeed (m/s). */
@@ -104,6 +109,8 @@ export class FlightModel {
   /** Current boot thrust (m/s²) and its share of the max. */
   thrust = 0;
   throttle = 0;
+  /** Yaw acceleration (rad/s², flight frame, + = left): eased, never stepped. */
+  yawAcc = 0;
   /** Lateral thrust trim for the HUD and the palms (−1…1). */
   trimRoll = 0;
   trimPitch = 0;
@@ -141,7 +148,9 @@ export class FlightModel {
     this.vel.set(0, 0, 0);
     this.q.setFromAxisAngle(UP, heading);
     this.omega.set(0, 0, 0);
+    this.yawAcc = 0;
     this.posture = 0;
+    this.postureVel = 0;
     this.flightness = 0;
     this.speedCmd = 0;
     this.thrust = 0;
@@ -217,7 +226,16 @@ export class FlightModel {
     const maxPitch = THREE.MathUtils.lerp(2.6, Math.min(2.4, gRate), fl);
     const maxYaw = THREE.MathUtils.lerp(3.2, Math.min(1.6, gRate * 0.8), fl);
     const wantPitch = clamp(pitchErr * 5.5, -maxPitch, maxPitch) * THREE.MathUtils.lerp(0.25, 1, fl);
-    const wantYaw = clamp(yawErr * 5, -maxYaw, maxYaw);
+    // Yaw is flown like a body with inertia, not a rate dial: the suit
+    // builds into a turn over ~¼ s (the boots vector, then it swings),
+    // carries it, and brakes smoothly onto the heading — a time-optimal
+    // profile (√(2·a·err): never more rate than it can stop from) with the
+    // acceleration itself eased so the start and the stop have no edge
+    const yawAccMax = maxYaw / YAW_RAMP;
+    const yawErrAbs = Math.abs(yawErr);
+    const wantYaw = Math.sign(yawErr) * Math.min(maxYaw, yawErrAbs * 5, Math.sqrt(2 * yawAccMax * 0.75 * yawErrAbs));
+    const yawAccGoal = clamp((wantYaw - this.omega.y) / 0.07, -yawAccMax, yawAccMax);
+    this.yawAcc += (yawAccGoal - this.yawAcc) * approach(dt, YAW_EASE);
     // Bank: into the turn in flight (coordinated), level in a hover; A/D roll
     const bank = Math.atan2(l.y, u.y); // + = right wing low (left wing up)
     const nearVertical = Math.abs(f.y) > 0.93;
@@ -237,8 +255,9 @@ export class FlightModel {
       }
     }
     // In a hover the pitch is the attitude computer's (below), not the aim's
-    const rates = this._v.set(-wantPitch, wantYaw, wantRoll);
+    const rates = this._v.set(-wantPitch, this.omega.y, wantRoll);
     this.omega.lerp(rates, approach(dt, THREE.MathUtils.lerp(0.09, 0.14, fl)));
+    this.omega.y += this.yawAcc * dt;
     // Integrate the rates in the body frame
     const w = this.omega;
     const ang = w.length() * dt;
@@ -261,7 +280,12 @@ export class FlightModel {
 
     // ── Posture (long-axis tilt) ─────────────────────────────────────
     const postureGoal = fl * FLIGHT_POSTURE * (input.brake ? 0.55 : 1) * (input.stance ? 0 : 1);
-    this.posture += (postureGoal - this.posture) * approach(dt, input.brake ? 0.25 : 0.45);
+    // A sprung swing, not an exponential: the body eases into the lean-over
+    // and the flare (no kick on the first frame) and settles with a hair of
+    // follow-through, about as quickly as before
+    const pw = 2.15 / (input.brake ? 0.25 : 0.45);
+    this.postureVel += (pw * pw * (postureGoal - this.posture) - 2 * 0.85 * pw * this.postureVel) * dt;
+    this.posture += this.postureVel * dt;
 
     // ── Forces ───────────────────────────────────────────────────────
     const alt = Math.max(0, this.pos.y);
@@ -387,7 +411,12 @@ export class FlightModel {
     }
     const tangential = this._v.copy(this.vel).addScaledVector(n, -this.vel.dot(n)).length();
     const gentle = into < 7 && tangential < 9 && this.posture < 0.6;
-    const idle = input.vertical <= 0.05 && this.speedCmd < 1 && Math.abs(input.lateral) < 0.1 && Math.abs(input.forward) < 0.1;
+    // Idle must be the exact complement of step()'s "moving" test: a throttle
+    // press from a standstill puts speedCmd at 0.7 on the first step, which
+    // lifts off (> 0.5) — if this called it idle (< 1) it would set the suit
+    // straight back down, zero speedCmd and land again on every physics step
+    // (a 'landed' event at 120 Hz: the grating touchdown machine-gun)
+    const idle = input.throttle <= 0 && input.vertical <= 0.05 && this.speedCmd <= 0.5 && Math.abs(input.lateral) < 0.1 && Math.abs(input.forward) < 0.1;
     if (gentle && idle) {
       // Settled on the deck: boots down, weight on the legs
       if (!this.grounded) {

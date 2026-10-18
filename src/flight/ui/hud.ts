@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MINI_ROCKETS } from '../../animation/flightCheck';
 import type { Combat } from '../combat/combat';
 import type { FlightModel } from '../sim/flightModel';
 import { BOOST_SPEED, CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
@@ -517,8 +518,8 @@ export class Hud {
       y += 26 * s;
     };
     row('REPULSORS', W.repulsorBusy ? 'FIRING' : 'READY', W.repulsorBusy ? WHITE : CYAN);
-    row('MICRO-MISSILES', `${W.rockets}/6`, W.rockets ? CYAN : AMBER, (bx, by) => {
-      for (let i = 0; i < 6; i++) {
+    row('MICRO-MISSILES', `${W.rockets}/${MINI_ROCKETS}`, W.rockets ? CYAN : AMBER, (bx, by) => {
+      for (let i = 0; i < MINI_ROCKETS; i++) {
         g.fillStyle = i < W.rockets ? CYAN : CYAN_FAINT;
         g.fillRect(bx + i * 10 * s, by, 7 * s, 3 * s);
       }

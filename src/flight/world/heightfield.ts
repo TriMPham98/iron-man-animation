@@ -92,8 +92,12 @@ void main() {
   h = max(h, island(p, vec2(7800.0, 7200.0), 1100.0, 210.0, 7.1));
   h = max(h, island(p, vec2(2200.0, 4300.0), 420.0, 75.0, 3.7));
 
-  // The house terrace: levelled, blending back into the bluff
-  float pad = 1.0 - smoothstep(55.0, 180.0, homeD);
+  // The house terrace: levelled, blending back into the bluff — only a short
+  // way on the sea side, so the bluff drops away right below the house
+  vec2 hr = p - uHome;
+  vec2 cn = normalize(vec2(-0.5 * (coastZ(uHome.x + 1.0) - coastZ(uHome.x - 1.0)), 1.0));
+  float across = dot(hr, cn);
+  float pad = 1.0 - smoothstep(55.0, 180.0, length(vec2(dot(hr, vec2(cn.y, -cn.x)), across * (across > 0.0 ? 3.2 : 1.0))));
   h = mix(h, uHomeH, pad * pad * (3.0 - 2.0 * pad));
 
   // Past the edge of the map everything slips under the sea

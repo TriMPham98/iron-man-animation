@@ -18,6 +18,8 @@ const SOLES: Array<{ bone: BoneName; shin: BoneName; at: [number, number, number
 ];
 /** How much of the boot jet follows the sole (the rest runs down the leg). */
 const SOLE_SHARE = 0.2;
+/** Outward tilt of each boot jet off the body's centre plane (≈ rad). */
+const BOOT_SPLAY = 0.025;
 
 function glowTexture(): THREE.Texture {
   const c = document.createElement('canvas');
@@ -171,9 +173,19 @@ export class Jets {
       suit.boneWorldPoint(s.bone, s.at, j.pos);
       suit.boneWorldDir(s.bone, [0, -1, 0], j.dir).multiplyScalar(SOLE_SHARE);
       j.dir.add(suit.boneWorldDir(s.shin, [0, -1, 0], this._d).multiplyScalar(1 - SOLE_SHARE)).normalize();
-      // Start just off the plating so the sole never cuts into the flame
-      j.pos.addScaledVector(j.dir, 0.02);
     });
+    // Side by side and straight: legs drawn in together (flight, a hover)
+    // toe the two shins in, and the jets crossed into one beam a metre or
+    // so down. Keep what they share sideways (both legs swinging out in a
+    // turn) but not the toe-in: each jet runs parallel to the other with a
+    // hair of outward splay, so they never touch
+    const side = suit.boneWorldDir('root', [1, 0, 0], this._d);
+    const [jl, jr] = this.boots;
+    const mean = (jl.dir.dot(side) + jr.dir.dot(side)) / 2;
+    jl.dir.addScaledVector(side, mean + BOOT_SPLAY - jl.dir.dot(side)).normalize();
+    jr.dir.addScaledVector(side, mean - BOOT_SPLAY - jr.dir.dot(side)).normalize();
+    // Start just off the plating so the sole never cuts into the flame
+    for (const j of this.boots) j.pos.addScaledVector(j.dir, 0.02);
     suit.palms.forEach((p, i) => {
       const j = this.palms[i];
       suit.boneWorldPoint(p.bone, p.at, j.pos);
@@ -189,7 +201,7 @@ export class Jets {
     const lightPos = this._v.set(0, 0, 0);
     this.boots.forEach((j, i) => {
       const k = powers[i];
-      this.drawJet(j, k, 0.6 + 1.6 * Math.pow(k, 1.3), 0.85 + 0.75 * k, t, i);
+      this.drawJet(j, k, 0.6 + 1.6 * Math.pow(k, 1.3), 0.85 + 0.6 * k, t, i);
       lightSum += k;
       lightPos.addScaledVector(j.pos, k).addScaledVector(j.dir, 0.8 * k);
     });

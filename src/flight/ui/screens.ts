@@ -33,6 +33,17 @@ const CSS = /* css */ `
 #flight-ui .back { position: absolute; top: 22px; left: 26px; font-family: Michroma, sans-serif; font-size: 10px; letter-spacing: 0.32em; color: rgba(126,232,255,0.85); text-decoration: none; padding: 8px 10px; pointer-events: auto; }
 #flight-ui .back:hover { color: #fff; }
 @media (max-width: 720px) { #flight-ui .keys { grid-template-columns: repeat(2, auto); } }
+/* Flown in from the workshop: the world stays the picture, the controls come up beside it */
+#flight-ui .title.handoff { background: linear-gradient(90deg, rgba(3,8,14,0.5) 0%, rgba(3,8,14,0.12) 38%, rgba(3,8,14,0) 55%); transition: opacity 1.4s ease; }
+#flight-ui .title.handoff h1 { font-size: clamp(22px, 3.2vw, 44px); }
+#flight-ui .title.handoff .keys { opacity: 0.85; }
+#flight-ui .title.handoff > * { animation: fhandin 1.1s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+#flight-ui .title.handoff > :nth-child(2) { animation-delay: 0.08s; }
+#flight-ui .title.handoff > :nth-child(3) { animation-delay: 0.16s; }
+#flight-ui .title.handoff > :nth-child(4) { animation-delay: 0.26s; }
+#flight-ui .title.handoff > :nth-child(5) { animation-delay: 0.36s; }
+@keyframes fhandin { from { opacity: 0; transform: translateX(-14px); } }
+@media (prefers-reduced-motion: reduce) { #flight-ui .title.handoff > * { animation: none; } }
 `;
 
 const KEYS: Array<[string, string]> = [
@@ -71,11 +82,15 @@ export class Screens {
   settings: Settings;
   onSettings: (s: Settings) => void = () => {};
 
-  constructor() {
+  /**
+   * @param root The UI layer (defaults to #flight-ui).
+   * @param opts.embedded Flown into from the workshop: no boot screen.
+   */
+  constructor(root?: HTMLElement, opts: { embedded?: boolean } = {}) {
     const style = document.createElement('style');
     style.textContent = CSS;
     document.head.appendChild(style);
-    this.root = document.getElementById('flight-ui')!;
+    this.root = root ?? document.getElementById('flight-ui')!;
     const saved = (() => {
       try {
         return JSON.parse(localStorage.getItem('mk3-flight-settings') ?? 'null') as Settings | null;
@@ -99,6 +114,10 @@ export class Screens {
     this.pause = this.root.querySelector('.pause')!;
     this.lines = this.root.querySelector('.boot .lines')!;
     this.bar = this.root.querySelector('.boot .bar i')!;
+    if (opts.embedded) {
+      this.boot.style.transition = 'none';
+      this.boot.classList.add('hidden');
+    }
     for (const input of this.root.querySelectorAll<HTMLInputElement>('.opts input')) {
       const k = input.dataset.k as keyof Settings;
       if (input.type === 'checkbox') input.checked = this.settings[k] as boolean;
@@ -126,9 +145,14 @@ export class Screens {
     }
   }
 
-  showTitle(onEngage: () => void, skip = false): void {
+  showTitle(onEngage: () => void, skip = false, opts: { handoff?: boolean } = {}): void {
     this.boot.classList.add('hidden');
     if (skip) return;
+    if (opts.handoff) {
+      // Arrived from the workshop: a lighter card over the hovering suit
+      this.title.classList.add('handoff');
+      this.title.querySelector('.cta')!.textContent = 'CLICK TO TAKE CONTROL';
+    }
     this.title.classList.remove('hidden');
     const go = (e: Event) => {
       // The workshop link leaves; anywhere else engages

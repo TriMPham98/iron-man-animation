@@ -15,6 +15,9 @@ export const CAMERA_MODES: CameraMode[] = ['chase', 'shoulder', 'helmet', 'flyby
 export const DEFAULT_CAMERA: CameraMode = 'shoulder';
 
 const UP = new THREE.Vector3(0, 1, 0);
+const IDENTITY = new THREE.Quaternion();
+/** Most the chase camera trails its ideal spot round the suit (rad). */
+const MAX_SWING = 0.3;
 
 export interface CameraGround {
   surface(x: number, z: number): number;
@@ -28,6 +31,20 @@ export class CameraRig {
   zoom = 1;
   private readonly pos = new THREE.Vector3();
   private readonly offset = new THREE.Vector3();
+  /** Velocity of the chase offset (it swings on a spring, not a lerp). */
+  private readonly offsetVel = new THREE.Vector3();
+  /** Camera bank into the suit's yaw (rad), and its rate. */
+  private bank = 0;
+  private bankVel = 0;
+  /** Cinematic look target (smoothed suit position) and its velocity. */
+  private readonly look = new THREE.Vector3();
+  private readonly lookVel = new THREE.Vector3();
+  private readonly _w2 = new THREE.Vector3();
+  /** Next cinematic frame is a cut: start the pan clean, no smoothing across it. */
+  private cut = true;
+  private lastMode: CameraMode = 'chase';
+  /** Natural frequency of the chase camera's swing (rad/s). */
+  swing = 20;
   private fov = 62;
   private flybyAt = new THREE.Vector3();
   private flybyTimer = 0;
@@ -37,6 +54,7 @@ export class CameraRig {
   private readonly _v = new THREE.Vector3();
   private readonly _w = new THREE.Vector3();
   private readonly _q = new THREE.Quaternion();
+  private readonly _s = new THREE.Vector3();
   private initialized = false;
   /** A fixed camera (directed shots): stays put until released. */
   private planted: THREE.Vector3 | null = null;
@@ -44,6 +62,7 @@ export class CameraRig {
   /** Hold the camera at a point, watching the suit (null releases it). */
   plant(at: THREE.Vector3 | null): void {
     this.planted = at ? at.clone() : null;
+    this.cut = true;
     if (at) {
       this.mode = 'flyby';
       this.flybyAt.copy(at);
@@ -119,8 +138,13 @@ export class CameraRig {
       this.flybyTimer -= dt;
       const rel = this._v.copy(m.pos).sub(this.flybyAt);
       const passed = rel.dot(m.vel) > 0 && rel.length() > 40;
-      if (!this.planted && (this.flybyTimer <= 0 || passed || rel.length() > 900)) {
-        // Plant the next camera ahead of the path, off to one side
+      // Gone off into the distance? (Scaled with the lead: a fixed 900 m had
+      // a camera planted 2.5 s ahead at boost speed replanting — at random
+      // either side — every single frame)
+      const far = Math.max(900, speed * Math.max(2.5, Math.min(5, 220 / Math.max(speed, 20))) * 1.6);
+      if (!this.planted && (this.flybyTimer <= 0 || passed || rel.length() > far)) {
+        // Plant the next camera ahead of the path, off to one side: a cut
+        this.cut = true;
         const lead = Math.max(2.5, Math.min(5, 220 / Math.max(speed, 20)));
         const side = this._v.crossVectors(m.vel.lengthSq() > 1 ? m.vel : fwd, UP).normalize();
         if (side.lengthSq() < 0.5) side.set(1, 0, 0);
@@ -133,7 +157,29 @@ export class CameraRig {
         this.flybyTimer = lead * 2.2 + 1.5;
       }
       this.pos.copy(this.flybyAt);
-      lookAt = m.pos;
+      // The operator pans after the suit on a critically damped head that
+      // tracks its position and velocity: no lag on a steady pass, but no
+      // physics-step or contact judder in the pan either. A cut starts clean
+      if (this.cut || this.lastMode !== 'flyby') {
+        this.look.copy(m.pos);
+        this.lookVel.copy(m.vel);
+        this.fov = 50;
+        this.cut = false;
+      } else {
+        const w = 14;
+        const n = Math.min(16, Math.max(1, Math.ceil(dt * w * 4)));
+        const h = dt / n;
+        for (let i = 0; i < n; i++) {
+          // Track the suit's motion (velocity feed-forward), spring onto
+          // where it was at this sub-step of the frame
+          const behind = dt - (i + 1) * h;
+          const acc = this._s.copy(m.pos).addScaledVector(m.vel, -behind).sub(this.look).multiplyScalar(w * w);
+          acc.add(this._w2.copy(m.vel).sub(this.lookVel).multiplyScalar(2 * w));
+          this.lookVel.addScaledVector(acc, h);
+          this.look.addScaledVector(this.lookVel, h);
+        }
+      }
+      lookAt = this.look;
       fovGoal = 50;
     } else {
       const close = this.mode === 'shoulder';
@@ -147,9 +193,29 @@ export class CameraRig {
       ideal.set(0, 0, 0).addScaledVector(fwd, -dist).addScaledVector(aimUp, height).addScaledVector(right, side);
       if (!this.initialized) {
         this.offset.copy(ideal);
+        this.offsetVel.set(0, 0, 0);
         this.initialized = true;
       }
-      this.offset.lerp(ideal, 1 - Math.exp(-dt / 0.07));
+      // A near-critically damped spring: a quick swing round in a hard turn
+      // that eases in and out (no lock-step with the mouse), still well
+      // under a quarter second to settle
+      const w = this.swing;
+      const n = Math.min(32, Math.max(1, Math.ceil(dt * w * 4)));
+      const h = dt / n;
+      for (let i = 0; i < n; i++) {
+        const acc = this._s.copy(ideal).sub(this.offset).multiplyScalar(w * w).addScaledVector(this.offsetVel, -2 * 0.9 * w);
+        this.offsetVel.addScaledVector(acc, h);
+        this.offset.addScaledVector(this.offsetVel, h);
+      }
+      // Swing round the suit, never cut in across it: keep the distance
+      const len = this.offset.length();
+      if (len > 1e-3) this.offset.multiplyScalar(ideal.length() / len);
+      // …and however hard the flick, never trail so far the suit leaves the frame
+      const lag = this.offset.angleTo(ideal);
+      if (lag > MAX_SWING) {
+        this._q.setFromUnitVectors(this._s.copy(this.offset).normalize(), this._v.copy(ideal).normalize());
+        this.offset.applyQuaternion(this._q.slerp(IDENTITY, MAX_SWING / lag));
+      }
       this.pos.copy(m.pos).add(this.offset);
       fovGoal = 62 + 14 * pull + (m.boosting ? 6 : 0);
     }
@@ -164,6 +230,16 @@ export class CameraRig {
       cam.lookAt(lookAt.clone());
     } else {
       cam.quaternion.copy(this.aimQ);
+      // The operator leans into the suit's turns a touch (lagging it on a
+      // soft spring): the frame breathes with a pivot instead of staying
+      // bolted to the horizon. Roll about the view axis only — the aim
+      // point at the centre of the screen never moves
+      const chase = this.mode === 'chase' || this.mode === 'shoulder';
+      const bankGoal = chase ? THREE.MathUtils.clamp(m.omega.y * 0.022, -0.075, 0.075) : 0;
+      const bw = 7;
+      this.bankVel += (bw * bw * (bankGoal - this.bank) - 2 * 0.85 * bw * this.bankVel) * Math.min(dt, 0.05);
+      this.bank += this.bankVel * Math.min(dt, 0.05);
+      if (Math.abs(this.bank) > 1e-5) cam.quaternion.multiply(this._q.setFromAxisAngle(this._s.set(0, 0, 1), this.bank));
     }
 
     // Shake: impacts, boost, the air at speed
@@ -184,5 +260,6 @@ export class CameraRig {
       cam.updateProjectionMatrix();
     }
     cam.updateMatrixWorld();
+    this.lastMode = this.mode;
   }
 }

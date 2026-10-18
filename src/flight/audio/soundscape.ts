@@ -68,6 +68,17 @@ export const SFX = {
   jetLoop: `${KIT}jet-loop.mp3`,
 } as const;
 
+/** Least time between two plays of a state-change sound (s). */
+const DEBOUNCE: Partial<Record<SimEvent['kind'], number>> = {
+  takeoff: 0.4,
+  landed: 0.4,
+  touchdown: 0.4,
+  heroLanding: 0.4,
+  impact: 0.12,
+  splash: 0.15,
+  boostStart: 0.3,
+};
+
 const pick = <T>(xs: readonly T[]): T => xs[Math.floor(Math.random() * xs.length)];
 
 export class Soundscape {
@@ -79,6 +90,8 @@ export class Soundscape {
   private warnT = 0;
   private started = false;
   private rocketSide = 0;
+  /** When each state-change sound last played (s, sim time). */
+  private readonly lastAt = new Map<string, number>();
   private readonly _v = new THREE.Vector3();
 
   constructor(private readonly audio: GameAudio) {}
@@ -103,6 +116,15 @@ export class Soundscape {
     const A = this.audio;
     if (!A.ready) return;
     const at = e.at;
+    // Contact and regime changes come from state edges; if a state ever
+    // flaps (lift off / settle on alternate physics steps) these must not
+    // machine-gun the same sample at 120 Hz
+    const gap = DEBOUNCE[e.kind];
+    if (gap !== undefined) {
+      const last = this.lastAt.get(e.kind);
+      if (last !== undefined && e.t >= last && e.t - last < gap) return;
+      this.lastAt.set(e.kind, e.t);
+    }
     switch (e.kind) {
       case 'takeoff':
         A.play(SFX.thrusterIgnite, { at, gain: 0.9, ref: 8 });

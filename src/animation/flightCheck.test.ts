@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateFlightCheck, FLIGHT_CHECK_END, FLIGHT_CHECK_STEPS, FLIGHT_EVENTS, HOVER_HEIGHT } from './flightCheck';
+import { evaluateFlightCheck, FLIGHT_CHECK_END, FLIGHT_CHECK_STEPS, FLIGHT_EVENTS, HOVER_HEIGHT, MINI_ROCKETS } from './flightCheck';
 
 describe('flight-control check', () => {
   it('is idle before it starts and after it ends', () => {
@@ -93,5 +93,12 @@ describe('flight-control check', () => {
       for (const [k, v] of Object.entries(f.flaps)) if (v > 0.2) moved.add(k.split('.')[0]);
     }
     expect([...moved].sort()).toEqual(['back', 'calf', 'shoulder', 'thigh']);
+  });
+
+  it('arms every mini-rocket cell while the silos are up', () => {
+    expect(MINI_ROCKETS).toBe(8);
+    let max = 0;
+    for (let t = 0; t < FLIGHT_CHECK_END; t += 1 / 60) max = Math.max(max, evaluateFlightCheck(t).siloArmed);
+    expect(max).toBe(MINI_ROCKETS);
   });
 });

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MINI_ROCKETS } from '../../animation/flightCheck';
 import { flareDrum, forearmAxis, forearmNormal } from '../../suit/flightFlaps';
 import type { Suit } from '../../suit/Suit';
 import type { Particles } from '../fx/particles';
@@ -16,7 +17,7 @@ import type { Decoy, Hostile } from './types';
  * The Mark III's arsenal, flown from the suit's own hardware:
  *  - repulsors (hold LMB): the arm swings onto the aim line and the palm
  *    fires, alternating hands;
- *  - mini-rockets (hold RMB to paint up to six targets, release to ripple
+ *  - mini-rockets (hold RMB to paint up to eight targets, release to ripple
  *    them off): the trapezius silos rise and arm cell by cell;
  *  - unibeam (hold Q): the suit pulls up into a stance, the arc reactor
  *    charges and the chest fires — it cuts through anything in its line;
@@ -78,7 +79,7 @@ export class PlayerWeapons {
   /** HUD-facing state. */
   locks: Hostile[] = [];
   lockProgress = 0;
-  rockets = 6;
+  rockets = MINI_ROCKETS;
   unibeamEnergy = 1;
   unibeamCharge = 0;
   unibeamOn = false;
@@ -195,7 +196,7 @@ export class PlayerWeapons {
           const next = this.bestTarget(aim, eye, hostiles, this.locks);
           if (next) {
             this.locks.push(next);
-            this.events.emit(this.locks.length >= Math.min(this.rockets, 6) ? 'lockFull' : 'lockTick', { at: next.pos, value: this.locks.length });
+            this.events.emit(this.locks.length >= Math.min(this.rockets, MINI_ROCKETS) ? 'lockFull' : 'lockTick', { at: next.pos, value: this.locks.length });
           }
           this.lockT = 0;
         }
@@ -225,7 +226,7 @@ export class PlayerWeapons {
     this.siloOpen += THREE.MathUtils.clamp(siloGoal - this.siloOpen, -dt / 0.4, dt / 0.35);
     A.silos = this.siloOpen;
     A.siloArmed = this.rockets;
-    if (this.rockets < 6 && this.siloOpen < 0.05) {
+    if (this.rockets < MINI_ROCKETS && this.siloOpen < 0.05) {
       this.reloadT += dt;
       if (this.reloadT > 2.4) {
         this.rockets++;

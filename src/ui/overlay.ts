@@ -106,6 +106,11 @@ export interface OverlayHandles {
    */
   hasInitiated: () => boolean;
   /**
+   * The suit has flown out to the flight sim: the INITIATE gate stops
+   * listening (Space / Enter / R belong to the pilot now).
+   */
+  retire: () => void;
+  /**
    * Fired once when the user initiates via button, Enter, Space, or R.
    * May run after a short exit-animation delay.
    */
@@ -1222,6 +1227,12 @@ export function createOverlay(): OverlayHandles {
     hideStartGate,
     isStartGateVisible: () => startGateVisible,
     hasInitiated: () => startConsumed,
+    retire: () => {
+      startGateVisible = false;
+      startConsumed = true;
+      startHandler = null;
+      startGestureHandler = null;
+    },
     onStart: (cb: () => void) => {
       startHandler = cb;
     },

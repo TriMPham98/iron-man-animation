@@ -4878,3 +4878,312 @@ body.reduced-motion .cycle-scrubber {
 body:has(.cycle-scrubber.is-visible) .jarvis-telemetry {
   bottom: max(5.2rem, env(safe-area-inset-bottom, 0px) + 4.6rem);
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Workshop → flight handoff (src/transition/flightHandoff.ts)
+   The flight sim's layer sits over the workshop, invisible until the
+   dissolve; the helmet HUD + bay-light flare overlay sits over both.
+   Everything here animates transform / opacity only, so it keeps moving
+   on the compositor even through a main-thread step under the flare.
+   ═══════════════════════════════════════════════════════════════════ */
+
+#flight-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.75s cubic-bezier(0.4, 0, 0.2, 1);
+}
+#flight-layer.is-live {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+body.workshop-retired #app {
+  display: none;
+}
+/* The workshop chrome falls away as the handoff starts */
+body.flight-handoff #app > :not(#scene-canvas),
+body.flight-handoff > :not(#app):not(#flight-layer):not(#flight-handoff):not(script):not(style) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.6s ease !important;
+}
+
+/* The natural end of the suit-up: once the flight check reads nominal */
+#fly-link::before {
+  content: 'FLIGHT SYSTEMS READY · TAKE HER OUT';
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  white-space: nowrap;
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  color: rgba(126, 232, 255, 0.9);
+  text-shadow: 0 0 12px rgba(126, 232, 255, 0.45);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+  pointer-events: none;
+}
+body.fly-offered #fly-link {
+  border-color: #7ee8ff;
+  animation: fly-offer 2.4s ease-in-out infinite;
+}
+body.fly-offered #fly-link::before {
+  opacity: 1;
+  transform: none;
+}
+@keyframes fly-offer {
+  50% {
+    box-shadow: 0 0 26px rgba(126, 232, 255, 0.4);
+    background: rgba(10, 30, 44, 0.7);
+  }
+}
+
+#flight-handoff {
+  --ho-cyan: rgba(126, 232, 255, 0.92);
+  --ho-cyan-dim: rgba(126, 232, 255, 0.38);
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  color: var(--ho-cyan);
+  visibility: hidden;
+}
+#flight-handoff.is-cue {
+  visibility: visible;
+}
+
+/* Bay light: floods in from above, the dissolve happens under it */
+#flight-handoff .ho-flare {
+  position: absolute;
+  inset: -12%;
+  background:
+    radial-gradient(120% 85% at 50% -6%, rgba(255, 249, 236, 1) 0%, rgba(255, 228, 186, 0.96) 26%, rgba(255, 196, 128, 0.6) 50%, rgba(255, 170, 90, 0) 76%),
+    linear-gradient(180deg, rgba(255, 240, 220, 0.75), rgba(255, 214, 170, 0.5));
+  mix-blend-mode: screen;
+  opacity: 0;
+  transform: translate3d(0, -14%, 0) scale(1.04);
+  transition:
+    opacity 0.8s cubic-bezier(0.55, 0, 0.7, 0.3),
+    transform 1.1s cubic-bezier(0.2, 0.6, 0.3, 1);
+  will-change: opacity, transform;
+}
+#flight-handoff.is-flare .ho-flare {
+  opacity: 0.93;
+  transform: none;
+}
+#flight-handoff.is-hold .ho-flare {
+  opacity: 1;
+}
+#flight-handoff.is-open .ho-flare {
+  opacity: 0;
+  transform: translate3d(0, 8%, 0) scale(1.18);
+  transition:
+    opacity 1.7s cubic-bezier(0.25, 0.6, 0.3, 1),
+    transform 2.2s cubic-bezier(0.2, 0.6, 0.3, 1);
+}
+
+/* Helmet HUD: draws on over the picture, then hands over to the flight HUD */
+#flight-handoff .ho-hud {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.5s ease, transform 1.4s cubic-bezier(0.3, 0.5, 0.2, 1);
+  will-change: opacity, transform;
+}
+#flight-handoff.is-hud .ho-hud {
+  opacity: 1;
+}
+#flight-handoff.is-done .ho-hud {
+  opacity: 0;
+  transform: scale(1.14);
+  transition: opacity 1s ease, transform 1.6s cubic-bezier(0.3, 0.5, 0.2, 1);
+}
+
+#flight-handoff .ho-corner {
+  position: absolute;
+  width: 54px;
+  height: 54px;
+  border: 0 solid var(--ho-cyan);
+  filter: drop-shadow(0 0 6px rgba(126, 232, 255, 0.6));
+  opacity: 0;
+  transition: opacity 0.6s ease, transform 0.9s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+#flight-handoff .ho-tl { top: 7vh; left: 7vw; border-width: 2px 0 0 2px; transform: translate3d(-40px, -30px, 0); }
+#flight-handoff .ho-tr { top: 7vh; right: 7vw; border-width: 2px 2px 0 0; transform: translate3d(40px, -30px, 0); }
+#flight-handoff .ho-bl { bottom: 7vh; left: 7vw; border-width: 0 0 2px 2px; transform: translate3d(-40px, 30px, 0); }
+#flight-handoff .ho-br { bottom: 7vh; right: 7vw; border-width: 0 2px 2px 0; transform: translate3d(40px, 30px, 0); }
+#flight-handoff.is-hud .ho-corner {
+  opacity: 1;
+  transform: none;
+}
+
+#flight-handoff .ho-ribbon {
+  position: absolute;
+  top: 9vh;
+  left: 50%;
+  width: min(36vw, 420px);
+  height: 18px;
+  margin-left: calc(min(36vw, 420px) / -2);
+  border-bottom: 1px solid var(--ho-cyan-dim);
+  transform: scaleX(0);
+  transition: transform 0.9s 0.15s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+#flight-handoff .ho-ribbon i {
+  position: absolute;
+  bottom: 0;
+  left: calc(var(--i) * 100% / 12);
+  width: 1px;
+  height: 8px;
+  background: var(--ho-cyan);
+}
+#flight-handoff .ho-ribbon i:nth-child(3n + 1) {
+  height: 14px;
+}
+#flight-handoff .ho-ribbon b {
+  position: absolute;
+  left: 50%;
+  top: -14px;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+}
+#flight-handoff.is-hud .ho-ribbon {
+  transform: none;
+}
+
+#flight-handoff .ho-ladder {
+  position: absolute;
+  top: 32vh;
+  height: 36vh;
+  width: 14px;
+  background: repeating-linear-gradient(180deg, var(--ho-cyan) 0 1px, transparent 1px 18px);
+  opacity: 0.7;
+  transform: scaleY(0);
+  transition: transform 1s 0.25s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+#flight-handoff .ho-ladder-l { left: 18vw; border-left: 1px solid var(--ho-cyan-dim); }
+#flight-handoff .ho-ladder-r { right: 18vw; border-right: 1px solid var(--ho-cyan-dim); }
+#flight-handoff.is-hud .ho-ladder {
+  transform: none;
+}
+
+#flight-handoff .ho-reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30vmin;
+  height: 30vmin;
+  margin: -15vmin 0 0 -15vmin;
+  opacity: 0;
+  transform: scale(1.6);
+  transition: opacity 0.7s 0.1s ease, transform 1.1s 0.1s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+#flight-handoff.is-hud .ho-reticle {
+  opacity: 0.85;
+  transform: none;
+}
+#flight-handoff .ho-reticle svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: none;
+  stroke: var(--ho-cyan);
+  filter: drop-shadow(0 0 4px rgba(126, 232, 255, 0.7));
+}
+#flight-handoff .ho-reticle .r1 { stroke-width: 0.8; stroke-dasharray: 3 9; animation: ho-spin 9s linear infinite; transform-origin: 100px 100px; }
+#flight-handoff .ho-reticle .r2 { stroke-width: 1.4; stroke-dasharray: 60 56; opacity: 0.8; animation: ho-spin 6s linear infinite reverse; transform-origin: 100px 100px; }
+#flight-handoff .ho-reticle .r3 { stroke-width: 0.6; opacity: 0.5; }
+#flight-handoff .ho-reticle .r4 { stroke-width: 1.2; }
+@keyframes ho-spin {
+  to { transform: rotate(360deg); }
+}
+
+#flight-handoff .ho-lines {
+  position: absolute;
+  left: calc(7vw + 22px);
+  bottom: calc(7vh + 22px);
+  font-size: 10.5px;
+  line-height: 1.75;
+  letter-spacing: 0.16em;
+}
+#flight-handoff .ho-lines > div {
+  opacity: 0;
+  transform: translate3d(-12px, 0, 0);
+  transition: opacity 0.4s ease, transform 0.5s ease;
+}
+#flight-handoff.is-hud .ho-lines > div { opacity: 0.9; transform: none; }
+#flight-handoff.is-hud .ho-lines > div:nth-child(2) { transition-delay: 0.18s; }
+#flight-handoff.is-hud .ho-lines > div:nth-child(3) { transition-delay: 0.36s; }
+#flight-handoff.is-hud .ho-lines > div:nth-child(4) { transition-delay: 0.54s; }
+#flight-handoff .ho-lines > .ho-sync,
+#flight-handoff.is-hud .ho-lines > .ho-sync {
+  opacity: 0;
+  color: #fff;
+}
+#flight-handoff.is-hold .ho-lines > .ho-sync {
+  opacity: 1;
+  transform: none;
+  animation: ho-pulse 0.9s ease-in-out infinite;
+}
+@keyframes ho-pulse {
+  50% { opacity: 0.45; }
+}
+
+#flight-handoff .ho-status {
+  position: absolute;
+  top: calc(9vh + 30px);
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: Michroma, 'Eurostile', sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.42em;
+  color: #e8fcff;
+  text-shadow: 0 0 14px rgba(126, 232, 255, 0.6);
+  opacity: 0;
+  transform: translate3d(0, -6px, 0);
+  transition: opacity 0.6s 0.3s ease, transform 0.6s 0.3s ease;
+}
+#flight-handoff.is-hud .ho-status {
+  opacity: 1;
+  transform: none;
+}
+
+/* One bright scan line down the visor as the HUD boots */
+#flight-handoff .ho-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(190, 245, 255, 0.95) 20%, rgba(255, 255, 255, 1) 50%, rgba(190, 245, 255, 0.95) 80%, transparent);
+  box-shadow: 0 0 18px 4px rgba(126, 232, 255, 0.45);
+  opacity: 0;
+  transform: translate3d(0, -4vh, 0);
+}
+#flight-handoff.is-hud .ho-scan {
+  animation: ho-scan 1.15s cubic-bezier(0.45, 0, 0.55, 1) both;
+}
+@keyframes ho-scan {
+  0% { opacity: 0; transform: translate3d(0, -4vh, 0); }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(0, 104vh, 0); }
+}
+
+body.reduced-motion #flight-handoff *,
+body.reduced-motion #flight-layer {
+  animation: none !important;
+  transform: none !important;
+}
+body.reduced-motion #flight-handoff .ho-flare {
+  display: none;
+}

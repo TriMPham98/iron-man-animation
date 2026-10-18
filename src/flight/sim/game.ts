@@ -118,6 +118,14 @@ export class Game {
     // Weapons sight from the pilot's eye; a planted camera isn't where he is
     const eye = this.rig.mode === 'flyby' || this.rig.mode === 'attract' ? this.head : this.rig.camera.position;
     if (this.controls) this.combat.update(dt, this.time, this.controls, aim, eye);
+    // The physics runs on a fixed 120 Hz clock, so a rendered frame lands 0,
+    // 1, 2 or 3 steps on from the last: drawn raw, the suit (and anything
+    // watching it, like the cinematic cameras) judders by whole steps — a
+    // couple of metres at speed. Draw the frame at the render clock instead:
+    // carry the body on by the time the physics still owes it (< 1 step),
+    // then hand the true state back to the physics
+    const owed = this.acc;
+    this.model.pos.addScaledVector(this.model.vel, owed);
     this.driver.update(dt, this.suit, this.model, aim, this.combat.weapons.arms);
     this.suit.update(dt);
     this.suit.boneWorldPoint('head', [0, 1.72, 0.04], this.head);
@@ -130,6 +138,7 @@ export class Game {
     const o = this.driver.outputs;
     this.jets.update(dt, this.suit, { bootL: o.bootL, bootR: o.bootR, palmL: o.palmL, palmR: o.palmR }, this.ground, this.particles, this.model.vel);
     this.particles.update(dt, this.rig.camera);
+    this.model.pos.addScaledVector(this.model.vel, -owed);
   }
 
   /** Take-off, boost and the sound barrier. */

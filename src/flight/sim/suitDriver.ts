@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import type { FlapId, FlightCheckFrame } from '../../animation/flightCheck';
+import { MINI_ROCKETS, type FlapId, type FlightCheckFrame } from '../../animation/flightCheck';
 import type { LimbOffsets } from '../../suit/rigPose';
+import { boneSpec } from '../../suit/rig';
 import type { Suit } from '../../suit/Suit';
 import { FLIGHT_POSTURE, type FlightModel } from './flightModel';
 
@@ -23,7 +24,7 @@ export interface ArmsState {
   flashR: number;
   chargeL: number;
   chargeR: number;
-  /** Shoulder silos open 0–1 and rockets still in their cells (0–6). */
+  /** Shoulder silos open 0–1 and rockets still in their cells (0–{@link MINI_ROCKETS}). */
   silos: number;
   siloArmed: number;
   /** Forearm launchers out 0–1 and their lock pulses. */
@@ -45,7 +46,7 @@ export const IDLE_ARMS = (): ArmsState => ({
   chargeL: 0,
   chargeR: 0,
   silos: 0,
-  siloArmed: 6,
+  siloArmed: MINI_ROCKETS,
   launchers: 0,
   lockL: 0,
   lockR: 0,
@@ -59,8 +60,87 @@ const lerp = THREE.MathUtils.lerp;
 const clamp01 = (x: number) => clamp(x, 0, 1);
 /** Centre of mass in bind space (the rig tilts about the hips). */
 const COM = new THREE.Vector3(0, 1.0, 0);
-/** The modelled arm's outward angle, shoulder to palm (rad). */
-const ARM_SPLAY = 0.3;
+/**
+ * Repulsor shot: the forearm rolls the palm down (pronation, carried on the
+ * upper-arm twist) so the wrist bend that faces the palm down the arm lifts
+ * the fingers skyward — the flat "stop" hand — rather than out to the side.
+ */
+const AIM_TWIST = -Math.PI / 2;
+/** Turn assist: the arm rolled so the palm faces forward (into the hand's sweep). */
+const ASSIST_TWIST = Math.PI / 2;
+const _n = new THREE.Vector3();
+const _p = new THREE.Vector3();
+const _z = new THREE.Vector3();
+const _tgt = new THREE.Vector3();
+const _ax = new THREE.Vector3();
+const _X = new THREE.Vector3(1, 0, 0);
+const _Y = new THREE.Vector3(0, 1, 0);
+const _Z = new THREE.Vector3(0, 0, 1);
+/** Left arm joints (bind): shoulder, elbow, wrist. */
+const ARM_JOINTS = (['upperArm.L', 'forearm.L', 'hand.L'] as const).map((b) => new THREE.Vector3(...boneSpec(b).head));
+
+/** Shoulder angles (abduction, flexion) taking the shoulder-frame vector `v` onto `t`: upper arm Rx(flex)·Rz(abd). */
+function shoulderOnto(v: THREE.Vector3, t: THREE.Vector3): [number, number] {
+  // Rz(abd) takes v's sideways component onto t.x …
+  const rho = Math.max(1e-4, Math.hypot(v.x, v.y));
+  const abd = clamp(Math.asin(clamp(t.x / rho, -1, 1)) - Math.atan2(v.x, -v.y), -0.6, 1.4);
+  _ax.copy(v).applyAxisAngle(_Z, abd);
+  // … and Rx(flex) swings what's left onto t in the sagittal plane
+  let flex = Math.atan2(t.z, t.y) - Math.atan2(_ax.z, _ax.y);
+  flex = Math.atan2(Math.sin(flex), Math.cos(flex));
+  if (flex > 0.6) flex -= Math.PI * 2;
+  return [abd, clamp(flex, -3.25, 0.4)];
+}
+
+/**
+ * Left arm onto the aim `t` (body frame; the right arm is the left
+ * mirrored) through the rig's own channels (rigPose): upper arm
+ * Rx(flex)·Rz(abd)·Ry(twist), forearm Rx(−elbow), hand Rz(wrist). The
+ * shoulder lays the palm on the line out of the shoulder, then the wrist
+ * squares the palm's face to it — a few rounds settle both.
+ */
+function aimArm(at: readonly number[], normal: readonly number[], t: THREE.Vector3, twist: number, elbow: number, wrist: number): [number, number, number] {
+  const [S, E, W] = ARM_JOINTS;
+  let abd = 0;
+  let flex = 0;
+  for (let i = 0; i < 3; i++) {
+    // Shoulder → palm in the shoulder frame
+    _p.set(at[0], at[1], at[2]).sub(W).applyAxisAngle(_Z, wrist).add(W).sub(E).applyAxisAngle(_X, -elbow).add(E).sub(S).applyAxisAngle(_Y, twist);
+    [abd, flex] = shoulderOnto(_p, t);
+    // Palm normal and the wrist's hinge axis in the body frame
+    _n.set(normal[0], normal[1], normal[2]).normalize().applyAxisAngle(_Z, wrist);
+    _z.copy(_Z);
+    for (const q of [_n, _z]) q.applyAxisAngle(_X, -elbow).applyAxisAngle(_Y, twist).applyAxisAngle(_Z, abd).applyAxisAngle(_X, flex);
+    // Turn the palm about the hinge onto the aim
+    const err = Math.atan2(_ax.crossVectors(_n, t).dot(_z), _n.dot(t));
+    wrist = clamp(wrist + err, 0.6, 1.9);
+  }
+  return [abd, flex, wrist];
+}
+
+/**
+ * Advance a damped spring (value, velocity in `s`) toward a goal: natural
+ * frequency `w` (rad/s), damping ratio `z` (<1 swings past and settles).
+ */
+function springStep(x: number, v: number, goal: number, w: number, z: number, dt: number): [number, number] {
+  // Semi-implicit Euler in sub-steps: stable for any frame time
+  const n = Math.min(64, Math.max(1, Math.ceil(dt * w * 4)));
+  const h = dt / n;
+  for (let i = 0; i < n; i++) {
+    v += (w * w * (goal - x) - 2 * z * w * v) * h;
+    x += v * h;
+  }
+  return [x, v];
+}
+/** One spring stored as (x = value, y = velocity). */
+function springTo(s: THREE.Vector2, goal: number, w: number, z: number, dt: number): void {
+  [s.x, s.y] = springStep(s.x, s.y, goal, w, z, dt);
+}
+/** Two springs: values in `x`, velocities in `v`. */
+function spring(x: THREE.Vector2, v: THREE.Vector2, gx: number, gy: number, w: number, z: number, dt: number): void {
+  [x.x, v.x] = springStep(x.x, v.x, gx, w, z, dt);
+  [x.y, v.y] = springStep(x.y, v.y, gy, w, z, dt);
+}
 
 export interface SuitOutputs {
   bootL: number;
@@ -81,7 +161,15 @@ export class SuitDriver {
   private head = new THREE.Vector2();
   private dangle = 0;
   private headRoll = 0;
+  /** Sprung follow-through channels for turns: [value, velocity]. */
+  private readonly headVel = new THREE.Vector2();
+  private readonly lean = new THREE.Vector2();
+  private readonly legSwing = new THREE.Vector2();
+  private readonly armSwing = new THREE.Vector2();
   readonly outputs: SuitOutputs = { bootL: 0, bootR: 0, palmL: 0, palmR: 0 };
+  /** Palm turn-assist per hand, sprung: [value, velocity]. */
+  private readonly palmAssistL = new THREE.Vector2();
+  private readonly palmAssistR = new THREE.Vector2();
 
   update(dt: number, suit: Suit, m: FlightModel, aim: THREE.Vector3, arms: ArmsState): void {
     this.time += dt;
@@ -101,14 +189,33 @@ export class SuitDriver {
     const a = this._aim.copy(aim).applyQuaternion(this._qi.copy(bodyQ).invert());
 
     // ── Head: look where we're going / aiming ─────────────────────────
-    const wantYaw = clamp(Math.atan2(a.x, Math.hypot(a.y, a.z)), -0.75, 0.75);
+    // The head leads every turn: it snaps round onto the new line first (a
+    // quick, slightly underdamped spring — a glance that lands and settles),
+    // and the body follows it round
+    // (an aim behind the chest pins the head round to that side)
+    const wantYaw = clamp(Math.atan2(a.x, a.z < 0 && Math.abs(a.y) < 0.8 ? a.z : Math.hypot(a.y, a.z)), -0.85, 0.85);
     const wantPitch = clamp(-Math.atan2(a.y, Math.max(0.05, a.z)), -1.05, 0.45);
-    this.head.x += (wantYaw - this.head.x) * (1 - Math.exp(-dt / 0.16));
-    this.head.y += (wantPitch - this.head.y) * (1 - Math.exp(-dt / 0.16));
-    // Head counters a little of the bank (horizon reflex)
+    spring(this.head, this.headVel, wantYaw, wantPitch, 13, 0.72, dt);
+    // ── Turns: lean in, legs swing out and follow through ─────────────
+    // Low and slow the suit pivots on its boots: the body banks into the
+    // yaw like a skater, and the dangling legs (a pendulum under the hips)
+    // are flung to the outside, lag the turn-in and swing back past centre
+    // when it stops. Flat out the frame banks for real, so these fade
+    const yawRate = m.omega.y;
+    const hoverish = (1 - 0.7 * prone) * this.dangle * (1 - crouch);
+    const upright = (1 - prone) * this.dangle * (1 - crouch);
+    springTo(this.lean, clamp(-yawRate * 0.1, -0.32, 0.32) * upright, 9, 0.62, dt);
+    springTo(this.legSwing, clamp(-yawRate * 0.07 - m.yawAcc * 0.011, -0.3, 0.3) * hoverish, 5.5, 0.4, dt);
+    // Shoulders lead too: the outside arm swings forward, the inside one back
+    springTo(this.armSwing, clamp(yawRate * 0.06 + m.yawAcc * 0.004, -0.22, 0.22) * hoverish, 10, 0.6, dt);
+    // Boots vector against each other to drive the yaw (toes down on the
+    // outside boot push that side round); eased off the yaw acceleration
+    const yawVector = clamp(m.yawAcc * 0.022 + yawRate * 0.05, -0.3, 0.3) * hoverish;
+    // Head counters a little of the bank and the lean (horizon reflex)
     const up = m.up(this._v);
     const bankNow = Math.atan2(new THREE.Vector3().crossVectors(up, m.forward()).y, up.y);
-    this.headRoll += (clamp(-bankNow * 0.25, -0.3, 0.3) - this.headRoll) * (1 - Math.exp(-dt / 0.3));
+    const headRollGoal = clamp(-bankNow * 0.25 - this.lean.x * 0.35, -0.3, 0.3);
+    this.headRoll += (headRollGoal - this.headRoll) * (1 - Math.exp(-dt / 0.22));
 
     // ── Limbs ─────────────────────────────────────────────────────────
     const sway = (k: number, ph: number) => this.dangle * (1 - prone) * k * Math.sin(t * 1.9 + ph);
@@ -118,8 +225,8 @@ export class SuitDriver {
       // Trailing arms in flight; the low wing's arm reaches out to steer
       armL: lerp(0.1, 0.16, prone) + clamp(-rollRate * 0.18, 0, 0.35) * prone + sway(0.015, 0.4),
       armR: lerp(0.1, 0.16, prone) + clamp(rollRate * 0.18, 0, 0.35) * prone + sway(0.015, 1.4),
-      armFlexL: 0.05 * prone,
-      armFlexR: 0.05 * prone,
+      armFlexL: 0.05 * prone + this.armSwing.x,
+      armFlexR: 0.05 * prone - this.armSwing.x,
       armTwistL: 0,
       armTwistR: 0,
       elbowL: lerp(0.18, 0.08, prone) * this.dangle + sway(0.03, 2),
@@ -127,12 +234,12 @@ export class SuitDriver {
       // Legs: soft knees dangling in a hover, straight and toes pointed in flight
       hipL: (0.08 + sway(0.02, 1.1)) * this.dangle * (1 - prone) + 0.08 * m.airbrake,
       hipR: (0.08 + sway(0.02, 2.3)) * this.dangle * (1 - prone) + 0.08 * m.airbrake,
-      hipOutL: -0.3 * m.trimRoll * 0.2,
-      hipOutR: 0.3 * m.trimRoll * 0.2,
+      hipOutL: -0.3 * m.trimRoll * 0.2 + this.legSwing.x,
+      hipOutR: 0.3 * m.trimRoll * 0.2 - this.legSwing.x,
       kneeL: (lerp(0.16, 0.05, prone) + sway(0.03, 0)) * this.dangle + 0.15 * m.airbrake,
       kneeR: (lerp(0.16, 0.05, prone) + sway(0.03, 0.7)) * this.dangle + 0.15 * m.airbrake,
-      ankleL: lerp(0.14 + 0.25 * m.trimPitch, 0.55, prone) * this.dangle,
-      ankleR: lerp(0.14 + 0.25 * m.trimPitch, 0.55, prone) * this.dangle,
+      ankleL: lerp(0.14 + 0.25 * m.trimPitch, 0.55, prone) * this.dangle - yawVector,
+      ankleR: lerp(0.14 + 0.25 * m.trimPitch, 0.55, prone) * this.dangle + yawVector,
       footRollL: 0.2 * m.trimRoll * this.dangle * (1 - prone),
       footRollR: 0.2 * m.trimRoll * this.dangle * (1 - prone),
     };
@@ -158,6 +265,37 @@ export class SuitDriver {
       wristR = lerp(wristR, 0.2, ub);
     }
 
+    // Palm assist in hover turns: a hand pushing back against the air
+    // swings the suit round it. Braking, the hand on the outside of the turn
+    // (it sweeps forward) reaches out and back with the palm turned flat
+    // into its sweep and fires to arrest the spin; spinning up, the inside
+    // hand does the same, gentler. Sprung in and out, and the repulsor aim
+    // takes the arm over whenever it's raised
+    {
+      const acc = m.yawAcc / 14;
+      // Braking (the push opposes the spin) fires harder than spinning up
+      const brakeShare = clamp01((-Math.sign(acc) * m.omega.y) / 0.6);
+      const gain = lerp(0.6, 2.2, brakeShare);
+      const turnOnly = (1 - prone) * this.dangle * (1 - crouch) * (1 - ub);
+      springTo(this.palmAssistL, clamp01(Math.max(0, acc) * gain) * turnOnly, 16, 0.8, dt);
+      springTo(this.palmAssistR, clamp01(Math.max(0, -acc) * gain) * turnOnly, 16, 0.8, dt);
+      const pa = clamp01(this.palmAssistL.x) * (1 - arms.aimL);
+      const pb = clamp01(this.palmAssistR.x) * (1 - arms.aimR);
+      // Arm out and back, rolled so the palm faces forward; wrist cocked in
+      limbs.armL = lerp(limbs.armL, 0.42, pa);
+      limbs.armR = lerp(limbs.armR, 0.42, pb);
+      limbs.armFlexL = lerp(limbs.armFlexL, 0.3, pa);
+      limbs.armFlexR = lerp(limbs.armFlexR, 0.3, pb);
+      limbs.armTwistL = lerp(limbs.armTwistL, ASSIST_TWIST, pa);
+      limbs.armTwistR = lerp(limbs.armTwistR, ASSIST_TWIST, pb);
+      limbs.elbowL = lerp(limbs.elbowL, 0.18, pa);
+      limbs.elbowR = lerp(limbs.elbowR, 0.18, pb);
+      wristL = lerp(wristL, -0.3, pa);
+      wristR = lerp(wristR, -0.3, pb);
+      fingersL = fingersL.map((f) => lerp(f, 0.05, pa));
+      fingersR = fingersR.map((f) => lerp(f, 0.05, pb));
+    }
+
     // Repulsor aim: the arm punches out onto the aim line, palm flat to it.
     // The elbow folds on the way up and drives straight at the end (a punch,
     // not a stiff swing from the shoulder); each shot kicks the hand up and
@@ -169,34 +307,37 @@ export class SuitDriver {
     ] as const) {
       if (k <= 0.001) continue;
       const s = side === 'L' ? 1 : -1;
-      // Shoulders sit ~19 cm off the centre line: aim from there a little
-      // toward the centre so the shot converges. The modelled arm hangs
-      // ~0.3 rad out from the shoulder to the palm; take that back out so
-      // the palm, not a splayed arm, lands on the aim line
-      const dx = a.x - s * 0.03;
-      const abd = Math.asin(clamp(dx * s, -0.35, 0.95)) - ARM_SPLAY;
-      let flex = Math.atan2(-a.z, -a.y);
-      if (flex > 0.6) flex -= Math.PI * 2;
-      flex = clamp(flex, -3.25, 0.4);
       const ka = k * k * (3 - 2 * k);
       const punch = 4 * ka * (1 - ka);
       const recoil = flash * flash;
       kick = Math.max(kick, recoil);
-      const elbow = 0.1 + 0.75 * punch + 0.32 * recoil;
+      // Rolled, the elbow folds across the chest rather than up: keep the
+      // fold small and let the shoulder carry the recoil
+      const elbow = 0.08 + 0.45 * punch + 0.12 * recoil;
+      // Shoulders sit ~19 cm off the centre line: aim from there a little
+      // toward the centre so the shot converges. The forearm rolls palm-down
+      // on the way up and the wrist bends right back, so the flat hand
+      // stands fingers-up with the palm square to the shot; solved on the
+      // left arm (the right is its mirror image)
+      const tgt = _tgt.set(s * a.x - 0.03, a.y, a.z).normalize();
+      const palm = suit.palms[0] ?? { at: [0.35, 0.96, 0.03], normal: [-0.94, -0.34, -0.04] };
+      const [abd, flex, aimWrist] = aimArm(palm.at, palm.normal, tgt, AIM_TWIST, 0.08 + 0.45 * punch, 1.4);
+      const wrist = aimWrist + 0.1 * recoil;
       // Recoil: the muzzle climbs off the line
       const lift = 0.16 * recoil;
-      const wrist = 1.32 + 0.12 * recoil;
-      // Flat, firm hand: fingers straight and a touch apart, thumb out
-      const hand = [-0.15, -0.05, 0, 0.04, 0.08];
+      // Flat, firm hand: fingers straight and together, a slight natural splay
+      const hand = [-0.1, -0.06, -0.04, -0.02, 0.02];
       if (side === 'L') {
         limbs.armL = lerp(limbs.armL, abd, ka);
         limbs.armFlexL = lerp(limbs.armFlexL, flex, ka) - lift;
+        limbs.armTwistL = lerp(limbs.armTwistL, AIM_TWIST, ka);
         limbs.elbowL = lerp(limbs.elbowL, elbow, ka);
         wristL = lerp(wristL, wrist, ka);
         fingersL = fingersL.map((f, i) => lerp(f, hand[i], ka));
       } else {
         limbs.armR = lerp(limbs.armR, abd, ka);
         limbs.armFlexR = lerp(limbs.armFlexR, flex, ka) - lift;
+        limbs.armTwistR = lerp(limbs.armTwistR, AIM_TWIST, ka);
         limbs.elbowR = lerp(limbs.elbowR, elbow, ka);
         wristR = lerp(wristR, wrist, ka);
         fingersR = fingersR.map((f, i) => lerp(f, hand[i], ka));
@@ -232,7 +373,6 @@ export class SuitDriver {
     const rollL = clamp01(-rollRate * 0.6 - m.trimRoll * 0.5);
     const pitchDn = clamp01(pitchRate * 0.7 + m.trimPitch * 0.4);
     const pitchUp = clamp01(-pitchRate * 0.7 - m.trimPitch * 0.4);
-    const yawRate = m.omega.y;
     const brake = m.airbrake;
     const flaps: Record<FlapId, number> = {
       'shoulder.L': Math.max(0.6 * rollL, 0.5 * pitchUp, 0.85 * brake),
@@ -265,8 +405,11 @@ export class SuitDriver {
     this.outputs.bootL = clamp01(boots * (1 - 0.18 * m.trimRoll));
     this.outputs.bootR = clamp01(boots * (1 + 0.18 * m.trimRoll));
     const palms = m.grounded ? 0 : lerp(0.55, 0.3, fl) * clamp01(thr * 2) + 0.1 * hoverShare * this.dangle;
-    this.outputs.palmL = clamp01(Math.max(palms * (1 - 0.3 * m.trimRoll) * (1 - arms.aimL) * (1 - ub), arms.flashL));
-    this.outputs.palmR = clamp01(Math.max(palms * (1 + 0.3 * m.trimRoll) * (1 - arms.aimR) * (1 - ub), arms.flashR));
+    // Turn assist: the pushing palm's jet rises with the push, never snaps
+    const assistL = 0.85 * clamp01(this.palmAssistL.x) * (1 - arms.aimL);
+    const assistR = 0.85 * clamp01(this.palmAssistR.x) * (1 - arms.aimR);
+    this.outputs.palmL = clamp01(Math.max(palms * (1 - 0.3 * m.trimRoll) * (1 - arms.aimL) * (1 - ub), assistL, arms.flashL));
+    this.outputs.palmR = clamp01(Math.max(palms * (1 + 0.3 * m.trimRoll) * (1 - arms.aimR) * (1 - ub), assistR, arms.flashR));
 
     const frame: FlightCheckFrame = {
       pose: {
@@ -280,7 +423,7 @@ export class SuitDriver {
         wristR,
         lift,
         pitch,
-        roll: 0,
+        roll: this.lean.x,
         driftX: 0,
         driftZ: 0,
         breath: Math.sin(t * 1.7) * (1 - prone) * 0.6,

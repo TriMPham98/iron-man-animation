@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FLARE_POPS, FLARE_PORTS, FLARE_RELOAD, type FlightCheckFrame } from '../animation/flightCheck';
+import { FLARE_POPS, FLARE_PORTS, FLARE_RELOAD, MINI_ROCKETS, type FlightCheckFrame } from '../animation/flightCheck';
 import { boneSpec, type BoneName } from './rig';
 import type { SuitRig } from './rigPose';
 import {
@@ -414,7 +414,8 @@ export class WeaponsFx {
   /**
    * Mini-missile pod in a well under the trap plate, as in the film: the
    * plate hinges back out of the way (it is the only moving armor), and the
-   * pod — a gunmetal launcher block with a 3 × 2 bank of tubes — elevates
+   * pod — a gunmetal launcher block with a 4 × 2 bank of tubes, one per
+   * mini rocket ({@link MINI_ROCKETS}) — elevates
    * about its own back edge so its muzzles aim forward and up. The pivot
    * sits inside the well, so the pod never floats free of the shoulder.
    * Frame: bind axes, origin at the lid's mid height.
@@ -482,8 +483,10 @@ export class WeaponsFx {
     // Front bezel and the tube bank: gold rims, dark bores, warheads seated in them
     const front = fz1;
     pod.add(box(W * 0.94, H * 0.9, 0.003, m.gun, cx, top - H / 2, front + 0.0015));
-    const cols = 3;
+    // The tubes shrink to fit the bank in the pod's face (never the pod
+    // past the lid)
     const rows = 2;
+    const cols = MINI_ROCKETS / rows;
     const pitchX = (W * 0.9) / cols;
     const pitchY = (H * 0.8) / rows;
     const rimR = Math.min(pitchX, pitchY) * 0.42;
@@ -523,7 +526,7 @@ export class WeaponsFx {
     pod.add(box(0.0012, 0.004, 0.006, m.lens, s > 0 ? fx1 + 0.0006 : fx0 - 0.0006, top - H * 0.35, front - 0.006));
     // Arming order: top row first, outboard column before inboard
     const outboard = (i: number) => (s > 0 ? cols - 1 - i : i);
-    const order = [0, 1, 2].flatMap((n) => [outboard(n), cols + outboard(n)]).sort((p, q) => Math.floor(p / cols) - Math.floor(q / cols));
+    const order = Array.from({ length: cols }, (_, n) => n).flatMap((n) => [outboard(n), cols + outboard(n)]).sort((p, q) => Math.floor(p / cols) - Math.floor(q / cols));
     const byArm = order.map((k) => rockets[k]);
     const cellsByArm = order.map((k) => cells[k]);
     const center = new THREE.Vector3(cx, top - H / 2, front);
@@ -725,8 +728,8 @@ export class WeaponsFx {
     if (silos.length) {
       const at = new THREE.Vector3();
       for (const mt of silos) at.add(this._v.copy(mt.center).applyMatrix4(mt.root.matrix));
-      const n = Math.floor(Math.min(6, this.siloArmed));
-      out.push({ id: 'silos', label: `SILOS ${n}/6`, at: at.divideScalar(silos.length), lock: n / 6 });
+      const n = Math.floor(Math.min(MINI_ROCKETS, this.siloArmed));
+      out.push({ id: 'silos', label: `SILOS ${n}/${MINI_ROCKETS}`, at: at.divideScalar(silos.length), lock: n / MINI_ROCKETS });
     }
     for (const mt of this.dispensers) {
       if (!mt.root.visible) continue;

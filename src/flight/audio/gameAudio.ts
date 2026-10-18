@@ -46,6 +46,9 @@ export interface Loop {
   stop(): void;
 }
 
+/** Most simultaneous voices of one file. */
+const MAX_VOICES = 8;
+
 export class GameAudio {
   ctx: AudioContext | null = null;
   private master!: GainNode;
@@ -61,6 +64,10 @@ export class GameAudio {
   /** Muffle for the helmet view / reboot (0–1). */
   private muffleNode!: BiquadFilterNode;
   private unlocking: Promise<void> | null = null;
+  /** Voices of each file still sounding (see {@link MAX_VOICES}). */
+  private readonly voices = new Map<string, number>();
+  /** Crossfaded loop cuts, by file and span. */
+  private readonly loopBuffers = new Map<string, AudioBuffer>();
   private decoded = false;
   private paused = false;
   volume = 0.9;
@@ -203,8 +210,15 @@ export class GameAudio {
     const ctx = this.ctx;
     const buf = this.buffers.get(url);
     if (!ctx || !buf) return null;
+    // A runaway trigger (an event firing every physics step) would stack
+    // hundreds of HRTF voices of one file: a grating comb, a clipped bus and
+    // an audio thread that can't keep up (the whole mix drops out). Cap it.
+    const live = this.voices.get(url) ?? 0;
+    if (live >= MAX_VOICES) return null;
+    this.voices.set(url, live + 1);
     const src = ctx.createBufferSource();
     src.buffer = buf;
+    src.onended = () => this.voices.set(url, Math.max(0, (this.voices.get(url) ?? 1) - 1));
     let rate = o.rate ?? 1;
     if (o.vary) rate *= 1 + (Math.random() * 2 - 1) * o.vary;
     let delay = o.delay ?? 0;
@@ -265,16 +279,44 @@ export class GameAudio {
     return src;
   }
 
-  /** A steered loop over [loopStart, loopEnd] of a file. */
+  /**
+   * [start, end] of a recording cut out as its own buffer whose tail is
+   * crossfaded (equal power) into its head, so it loops with no seam. A raw
+   * loopStart/loopEnd jump lands mid-waveform (and an mp3's ends carry
+   * encoder padding): a broadband click once per lap, loudest on the boots.
+   */
+  private seamless(url: string, buf: AudioBuffer, start: number, end: number): AudioBuffer {
+    const key = `${url}|${start}|${end}`;
+    const hit = this.loopBuffers.get(key);
+    if (hit) return hit;
+    const sr = buf.sampleRate;
+    const i0 = Math.max(0, Math.floor(start * sr));
+    const n = Math.min(buf.length, Math.floor(end * sr)) - i0;
+    const x = Math.min(Math.floor(0.12 * sr), Math.floor(n / 4));
+    const out = new AudioBuffer({ numberOfChannels: buf.numberOfChannels, length: n - x, sampleRate: sr });
+    for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+      const seg = buf.getChannelData(ch).subarray(i0, i0 + n);
+      const o = out.getChannelData(ch);
+      o.set(seg.subarray(0, n - x));
+      // The lap's last x samples fade out over its first x fading in
+      for (let i = 0; i < x; i++) {
+        const k = (i + 0.5) / x;
+        o[i] = seg[i] * Math.sin(k * Math.PI * 0.5) + seg[n - x + i] * Math.cos(k * Math.PI * 0.5);
+      }
+    }
+    this.loopBuffers.set(key, out);
+    return out;
+  }
+
+  /** A steered, seamless loop over [start, end] of a file. */
   loop(url: string, opts: { start?: number; end?: number; spatial?: boolean; ref?: number; ui?: boolean } = {}): Loop | null {
     const ctx = this.ctx;
-    const buf = this.buffers.get(url);
-    if (!ctx || !buf) return null;
+    const file = this.buffers.get(url);
+    if (!ctx || !file) return null;
+    const buf = this.seamless(url, file, opts.start ?? 0, opts.end ?? file.duration);
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.loop = true;
-    src.loopStart = opts.start ?? 0;
-    src.loopEnd = opts.end ?? buf.duration;
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = 20000;
@@ -291,7 +333,7 @@ export class GameAudio {
     } else {
       gain.connect(opts.ui ? this.uiBus : this.sfx);
     }
-    src.start(ctx.currentTime, src.loopStart);
+    src.start(ctx.currentTime);
     const c = ctx;
     return {
       set(g: number, rate = 1, lowpass = 20000) {

@@ -1,5 +1,6 @@
 import './styles.css';
 import * as THREE from 'three';
+import gsap from 'gsap';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createCamera, updateCameraAspect } from './scene/createCamera';
 import { createEnvironment } from './scene/createEnvironment';
@@ -33,6 +34,28 @@ import { createPickHighlight } from './ui/pickHighlight';
 import { prefersReducedMotion } from './ui/viewerMode';
 import { SOUNDS } from './audio/sounds';
 import { simplifierReady } from './utils/simplify';
+import { HERO_END_CAM } from './animation/sequenceClock';
+import { FLIGHT_CHECK_STEPS } from './animation/flightCheck';
+import { createFlightHandoff, type FlightHandoff } from './transition/flightHandoff';
+
+/** Releases every geometry, material and texture under `root`. */
+function disposeTree(root: THREE.Object3D): void {
+  const textures = new Set<THREE.Texture>();
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    m.geometry?.dispose?.();
+    const mats = Array.isArray(m.material) ? m.material : m.material ? [m.material] : [];
+    for (const mat of mats) {
+      for (const v of Object.values(mat as unknown as Record<string, unknown>)) {
+        if ((v as THREE.Texture)?.isTexture) textures.add(v as THREE.Texture);
+      }
+      const uniforms = (mat as THREE.ShaderMaterial).uniforms;
+      if (uniforms) for (const u of Object.values(uniforms)) if ((u?.value as THREE.Texture)?.isTexture) textures.add(u.value as THREE.Texture);
+      mat.dispose();
+    }
+  });
+  for (const t of textures) t.dispose();
+}
 
 /** Lit, opaque surfaces only — glows, holograms and FX cast no shadow. */
 function isLitOpaque(mesh: THREE.Mesh): boolean {
@@ -47,11 +70,19 @@ async function boot(): Promise<void> {
   // Don't leave buttons focused after a tap (Space would re-trigger them).
   installButtonFocusRelease();
   // Cyan holographic reticle (fine-pointer desktops only).
-  installJarvisCursor();
+  const teardownCursor = installJarvisCursor();
 
   const ui = createOverlay();
-
   const reducedMotion = prefersReducedMotion();
+  // The flight sim builds behind the workshop (see src/transition): started
+  // now so its long one-off bakes run under this loader, overlapping the
+  // downloads, and the rest in idle time once the hangar is up.
+  // ?noflight skips it (the FLY link then just navigates).
+  const flightPreload = !new URLSearchParams(location.search).has('noflight');
+  const handoff: FlightHandoff = createFlightHandoff({ reducedMotion });
+  if (flightPreload) void handoff.preload().catch(() => undefined);
+  const flying = () => handoff.isActive();
+
   if (reducedMotion) {
     document.body.classList.add('reduced-motion');
   }
@@ -212,7 +243,8 @@ async function boot(): Promise<void> {
     scrubber,
     camera,
     suit,
-    ui,
+    // Transport hotkeys go quiet once the suit has flown out
+    ui: { ...ui, hasInitiated: () => !flying() && ui.hasInitiated() },
     controls,
     pick,
     session,
@@ -231,6 +263,7 @@ async function boot(): Promise<void> {
 
   let raf = 0;
   let visible = true;
+  let retired = false;
 
   /** Opening dolly into the hangar framing (cancelled once INITIATE runs). */
   const introCam = (() => {
@@ -249,6 +282,7 @@ async function boot(): Promise<void> {
         camera.lookAt(look);
         t = 0;
       },
+      done: () => t < 0,
       update(dt: number) {
         if (t < 0) return;
         // INITIATE / camera ownership take over immediately
@@ -268,6 +302,7 @@ async function boot(): Promise<void> {
 
   document.addEventListener('visibilitychange', () => {
     visible = document.visibilityState === 'visible';
+    if (retired) return;
     if (visible) {
       clock.getDelta();
       loop();
@@ -276,17 +311,24 @@ async function boot(): Promise<void> {
     }
   });
 
+  /** The fly prompt is up (from the hover test until the doff starts). */
+  let flyOffered = false;
+  const FLY_OFFER_AT = (FLIGHT_CHECK_STEPS.find((s) => /HOVER/.test(s.status)) ?? FLIGHT_CHECK_STEPS[FLIGHT_CHECK_STEPS.length - 1]).at;
+
   const loop = () => {
-    if (!visible) return;
+    if (!visible || retired) return;
     raf = requestAnimationFrame(loop);
 
     const delta = clock.getDelta();
-    adaptive.update(delta);
-    introCam.update(delta);
+    const handing = flying();
+    // Resolution holds through the handoff (a resize would stall the shot)
+    if (!handing) adaptive.update(delta);
+    if (!handing) introCam.update(delta);
 
     // Showcase orbit owns the camera on those frames — skip OrbitControls
     // so damping / spherical rebuild cannot fight or dilute the yaw.
-    const showcaseOrbiting = session.update(delta);
+    // (The handoff owns the lens and holds the cycle once it starts.)
+    const showcaseOrbiting = handing ? true : session.update(delta);
 
     // Camera ownership (scrub ↔ orbit):
     // - Path mode while playing: OrbitControls keeps distance/angles so the
@@ -296,7 +338,7 @@ async function boot(): Promise<void> {
     //   pullback poses (visible jerk on ←/→ after systems online).
     // - Free-look (userOwnsCamera): orbit owns target + position.
     // Scrub re-attaches to path; viewport drag detaches (bindInput).
-    if (controls.enabled && !showcaseOrbiting) {
+    if (controls.enabled && !showcaseOrbiting && !handing) {
       const ownsCamera = session.assembly.userOwnsCamera();
       if (ownsCamera) {
         controls.update(delta);
@@ -328,9 +370,104 @@ async function boot(): Promise<void> {
       else ui.setTelemetry(null);
     }
     scrubber.update();
+
+    // The natural end of the suit-up: once the suit is up on its boot jets in
+    // the hover test, offer to take it out (until the doff starts taking it
+    // apart — the loop carries on as ever for anyone who doesn't)
+    if (!handing && !reducedMotion) {
+      const c = session.getCycle();
+      const offer = c.phase === 'flight' && c.t - c.phases.assembly >= FLY_OFFER_AT;
+      if (offer !== flyOffered) {
+        flyOffered = offer;
+        document.body.classList.toggle('fly-offered', offer);
+      }
+    }
     contact.update();
     post.render(delta);
   };
+
+  // ── Flight handoff ───────────────────────────────────────────────
+  /** Workshop gone for good: stop its loop, free its GPU and audio. */
+  const idleTick = () =>
+    new Promise<void>((r) => {
+      if ('requestIdleCallback' in window) window.requestIdleCallback(() => r(), { timeout: 1000 });
+      else setTimeout(r, 30);
+    });
+  const retireWorkshop = () => {
+    if (retired) return;
+    retired = true;
+    cancelAnimationFrame(raf);
+    window.removeEventListener('resize', onResize);
+    gsap.globalTimeline.clear();
+    audioTimeline.engine.stop();
+    teardownCursor();
+    controls.dispose();
+    document.body.classList.add('workshop-retired');
+    void (async () => {
+      // GPU memory back a slice at a time: the GPU process is shared with the
+      // flight sim now on screen, so one big teardown would stall its frames
+      for (const root of [...scene.children]) {
+        await idleTick();
+        disposeTree(root);
+      }
+      await idleTick();
+      scene.environment?.dispose();
+      (scene.background as THREE.Texture | null)?.dispose?.();
+      post.composer?.dispose();
+      suit.dispose();
+      scene.clear();
+      renderer.renderLists.dispose();
+      renderer.dispose();
+      // Last the context itself (its teardown waits on the GPU): when the
+      // pilot takes the stick, or after a few quiet seconds
+      await Promise.race([
+        new Promise((r) => document.addEventListener('pointerlockchange', r, { once: true })),
+        new Promise((r) => setTimeout(r, 8000)),
+      ]);
+      await idleTick();
+      renderer.forceContextLoss();
+      console.info('[handoff] workshop context released');
+    })();
+  };
+  suit.group.updateMatrixWorld(true);
+  const headRest = suit.boneWorldPoint('head', [0, 1.72, 0.04], new THREE.Vector3());
+  handoff.attach({
+    camera,
+    suitRoot: suit.group,
+    headPoint: (out) => suit.boneWorldPoint('head', [0, 1.72, 0.04], out),
+    reducedMotion,
+    freeze: () => {
+      // Hold the cycle where it is: timelines frozen, the lens is the handoff's
+      gsap.globalTimeline.pause();
+      controls.enabled = false;
+      document.body.classList.remove('fly-offered');
+      ui.retire();
+    },
+    setVolume: (v) => audioTimeline.engine.setMasterVolume(v),
+    retire: retireWorkshop,
+    // Long one-off steps only where nobody sees a frame drop: under the boot
+    // loader, at the INITIATE gate once the intro dolly has settled, or in a
+    // background tab
+    isQuiet: () =>
+      !document.body.classList.contains('scene-revealed') ||
+      document.visibilityState === 'hidden' ||
+      (!ui.hasInitiated() && introCam.done()) ||
+      // Held on a frame (Space): nothing moving to stutter
+      (ui.hasInitiated() && !session.getCycle().playing),
+  });
+  handoff.setHeroFraming(
+    new THREE.Vector3(HERO_END_CAM.x, HERO_END_CAM.y, HERO_END_CAM.z),
+    new THREE.Vector3(HERO_END_CAM.lx, HERO_END_CAM.ly, HERO_END_CAM.lz),
+    HERO_END_CAM.fov,
+    headRest,
+  );
+  const flyLink = document.getElementById('fly-link') as HTMLAnchorElement | null;
+  flyLink?.addEventListener('click', (e) => {
+    // New tab / window: let the browser have it
+    if (!flightPreload || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    handoff.begin();
+  });
 
   // Compile every shader and upload every texture now (incl. the ones the
   // fitting / flight check / diagnostic use later) so nothing stalls mid-run

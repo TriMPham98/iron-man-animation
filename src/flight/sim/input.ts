@@ -31,6 +31,12 @@ export interface Controls {
 
 const MOUSE_SENS = 0.0021;
 const PAD_RATE = 2.4;
+/**
+ * Keys are on/off but the pilot isn't: a held key eases up to full over this
+ * long (s) and back down on release, so strafes, rolls and climbs start and
+ * stop like a hand on a stick rather than a switch.
+ */
+const KEY_RAMP = 0.16;
 
 export class Input {
   private readonly keys = new Set<string>();
@@ -40,6 +46,9 @@ export class Input {
   private buttons = 0;
   private wheel = 0;
   private padPrev = new Map<number, boolean>();
+  /** Ramped (linear) key axes; the output is eased from these. */
+  private keyLateral = 0;
+  private keyVertical = 0;
   locked = false;
   /** Invert mouse pitch (flight-sim style). */
   invertY = false;
@@ -123,6 +132,10 @@ export class Input {
     this.wheel = 0;
     this.pressedQueue.clear();
     c.vertical = Math.max(-1, Math.min(1, c.vertical));
+    this.keyLateral = rampTo(this.keyLateral, c.lateral, dt);
+    this.keyVertical = rampTo(this.keyVertical, c.vertical, dt);
+    c.lateral = ease(this.keyLateral);
+    c.vertical = ease(this.keyVertical);
     this.readPad(c, dt);
     return c;
   }
@@ -158,4 +171,15 @@ export class Input {
     c.vertical = Math.max(-1, Math.min(1, c.vertical));
     c.throttle = Math.max(-1, Math.min(1, c.throttle));
   }
+}
+
+/** Step a key axis toward its target at the ramp rate. */
+function rampTo(x: number, goal: number, dt: number): number {
+  const step = Math.min(dt, 0.1) / KEY_RAMP;
+  return x + Math.max(-step, Math.min(step, goal - x));
+}
+/** Smoothstep the ramp (signed): no edge where the push starts or ends. */
+function ease(x: number): number {
+  const a = Math.min(1, Math.abs(x));
+  return Math.sign(x) * a * a * (3 - 2 * a);
 }

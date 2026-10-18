@@ -68,7 +68,7 @@ export interface FlightCheckFrame {
   lockL: number;
   lockR: number;
   /**
-   * Silo arming progress 0–6: rocket i runs out of its cell over
+   * Silo arming progress 0–{@link MINI_ROCKETS}: rocket i runs out of its cell over
    * [i, i + 1] and its cell light goes amber → green when it is out.
    */
   siloArmed: number;
@@ -269,6 +269,11 @@ const W = AT_WEAPONS;
 const LAUNCH_L = at(W, [0.6, 1.3, 5.4, 6.0]);
 const LAUNCH_R = at(W, [1.0, 1.7, 5.5, 6.1]);
 const SILOS = at(W, [1.8, 2.6, 5.1, 5.9]);
+/**
+ * Mini rockets in each trapezius silo's tube bank (4 × 2), and the suit's
+ * load in flight: one cell per rocket, armed in the same order.
+ */
+export const MINI_ROCKETS = 8;
 // Flare dispensers: hip drums push out, spin through a salvo, slide home
 const FLARE_DRUMS = at(W, [2.9, 3.4, 4.9, 5.4]);
 /** Flare ports round each drum's rim. */
@@ -546,7 +551,7 @@ export function evaluateFlightCheck(t: number): FlightCheckFrame {
   const lockR = Math.max(...LOCKS_R.map(lock));
   let siloArmed = 0;
   for (const [a, end, dt] of SILO_ARMING) {
-    if (t >= a && t < end) siloArmed = Math.min(6, (t - a) / dt);
+    if (t >= a && t < end) siloArmed = Math.min(MINI_ROCKETS, (t - a) / dt);
   }
 
   const ignite = t >= IGNITE && t < SPOOL ? (t < IGNITE + 0.18 || (t > IGNITE + 0.32 && t < IGNITE + 0.5) ? 0.5 : 0.15) : 0;
