@@ -104,8 +104,10 @@ export class Director {
       case 'flyby': {
         // Planted ahead and to the side: the suit streaks past it
         const side = new THREE.Vector3().crossVectors(m.vel, UP).normalize();
-        const at = m.pos.clone().addScaledVector(m.vel, 0.9).addScaledVector(side, 22).add(new THREE.Vector3(0, 5, 0));
-        at.y = Math.max(at.y, g.ground.surface(at.x, at.z) + 3);
+        // Ahead and low on the water, looking back up the line: the suit comes
+        // straight at the lens and past it, the boom ring in its wake
+        const at = m.pos.clone().addScaledVector(m.vel, 1.6).addScaledVector(side, 20);
+        at.y = g.ground.surface(at.x, at.z) + 3;
         g.rig.plant(at);
         this.cut('boom');
         break;

@@ -22,9 +22,13 @@ export class World {
   time = 0;
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene) {
+    const t0 = performance.now();
     this.atmosphere = createAtmosphere(renderer, scene);
+    const t1 = performance.now();
     this.field = Heightfield.generate(renderer);
-    this.terrain = new Terrain(this.field, this.atmosphere.uniforms, (x, z) => this.field.baseAt(x, z));
+    const t2 = performance.now();
+    console.info(`[flight] sky ${Math.round(t1 - t0)} ms, heightfield ${Math.round(t2 - t1)} ms`);
+    this.terrain = new Terrain(this.field, this.atmosphere.uniforms, this.field.texels);
     this.ocean = new Ocean(this.field, this.atmosphere.uniforms);
     this.vegetation = new Vegetation(this.field, this.atmosphere.uniforms);
     const house = buildHouse();

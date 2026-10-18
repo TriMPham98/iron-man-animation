@@ -3,7 +3,6 @@ import { Suit } from '../suit/Suit';
 import { createAdaptiveResolution } from '../scene/adaptiveResolution';
 import { GameAudio } from './audio/gameAudio';
 import { Soundscape } from './audio/soundscape';
-import { supportsReversedZ } from './render/depth';
 import { FlightPost, type LensState } from './render/post';
 import { Game } from './sim/game';
 import { Director } from './sim/director';
@@ -38,8 +37,11 @@ async function boot(): Promise<void> {
     antialias: false,
     stencil: false,
     powerPreference: 'high-performance',
-    ...(supportsReversedZ() ? { reverseDepthBuffer: true } : { logarithmicDepthBuffer: true }),
+    // Logarithmic depth: 0.1 m to 150 km without the near ground and the far
+    // ridges fighting (three's reversed-Z path renders black on Chrome/Metal)
+    logarithmicDepthBuffer: true,
   });
+  console.info('[flight] depth', renderer.capabilities.reverseDepthBuffer ? 'reversed-z' : 'logarithmic', (() => { const gl = renderer.getContext(); const d = gl.getExtension('WEBGL_debug_renderer_info'); return d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : ''; })());
   const maxDpr = Math.min(window.devicePixelRatio, 1.5);
   renderer.setPixelRatio(maxDpr);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
@@ -54,11 +56,16 @@ async function boot(): Promise<void> {
   await nextFrame();
   screens.progress(0.12, 'TERRAIN · 32 KM · GROWING RELIEF');
   await nextFrame();
+  const tWorld = performance.now();
   const world = new World(renderer, scene);
+  console.info(`[flight] world built in ${Math.round(performance.now() - tWorld)} ms`);
   screens.progress(0.3, 'LOW SUN · BAKING SHADOWS + SKY');
   const suit = await suitLoad;
+  console.info(`[flight] suit ready at ${Math.round(performance.now())} ms`);
   screens.progress(0.7, 'FLIGHT CONTROL · STABILIZERS · ARSENAL');
+  const tGame = performance.now();
   const game = new Game(world, suit, scene, camera);
+  console.info(`[flight] game built in ${Math.round(performance.now() - tGame)} ms`);
   const post = new FlightPost(renderer, scene, camera);
   const hud = new Hud(document.getElementById('flight-hud') as HTMLCanvasElement);
   const input = new Input(canvas);
@@ -192,7 +199,9 @@ async function boot(): Promise<void> {
   };
   // Settle a few frames under the boot screen (shader compiles, first bakes)
   for (let i = 0; i < 3; i++) {
+    const tf = performance.now();
     frame(1 / 60);
+    console.info(`[flight] settle frame ${i}: ${Math.round(performance.now() - tf)} ms`);
     screens.progress(0.75 + i * 0.07);
     await nextFrame();
   }

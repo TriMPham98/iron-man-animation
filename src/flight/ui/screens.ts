@@ -30,6 +30,8 @@ const CSS = /* css */ `
 #flight-ui .opts label { display: flex; align-items: center; gap: 8px; color: rgba(232,246,255,0.8); cursor: pointer; }
 #flight-ui .opts input[type=range] { accent-color: #7ee8ff; width: 110px; }
 #flight-ui .opts input[type=checkbox] { accent-color: #7ee8ff; }
+#flight-ui .back { position: absolute; top: 22px; left: 26px; font-family: Michroma, sans-serif; font-size: 10px; letter-spacing: 0.32em; color: rgba(126,232,255,0.85); text-decoration: none; padding: 8px 10px; pointer-events: auto; }
+#flight-ui .back:hover { color: #fff; }
 @media (max-width: 720px) { #flight-ui .keys { grid-template-columns: repeat(2, auto); } }
 `;
 
@@ -85,8 +87,8 @@ export class Screens {
     const keys = KEYS.map(([k, v]) => `<div><b>${k}</b>${v}</div>`).join('');
     this.root.innerHTML = `
       <div class="screen boot"><div class="ring"><div class="core"></div></div><div class="lines"></div><div class="bar"><i></i></div></div>
-      <div class="screen title hidden"><h1>MARK III</h1><div class="sub">FLIGHT · MALIBU · GOLDEN HOUR</div><div class="cta">CLICK TO ENGAGE</div><div class="keys">${keys}</div></div>
-      <div class="screen pause hidden"><h2>PAUSED</h2><div class="hint">CLICK TO RESUME</div><div class="keys">${keys}</div>
+      <div class="screen title hidden"><a class="back" href="/" title="Back to the workshop">&#x2190; WORKSHOP</a><h1>MARK III</h1><div class="sub">FLIGHT · MALIBU · GOLDEN HOUR</div><div class="cta">CLICK TO ENGAGE</div><div class="keys">${keys}</div></div>
+      <div class="screen pause hidden"><a class="back" href="/" title="Back to the workshop">&#x2190; WORKSHOP</a><h2>PAUSED</h2><div class="hint">CLICK TO RESUME</div><div class="keys">${keys}</div>
         <div class="opts">
           <label><input type="checkbox" data-k="invertY"> invert pitch</label>
           <label>sensitivity <input type="range" min="0.3" max="2.5" step="0.05" data-k="sensitivity"></label>
@@ -128,7 +130,9 @@ export class Screens {
     this.boot.classList.add('hidden');
     if (skip) return;
     this.title.classList.remove('hidden');
-    const go = () => {
+    const go = (e: Event) => {
+      // The workshop link leaves; anywhere else engages
+      if ((e.target as HTMLElement).closest('a')) return;
       this.title.removeEventListener('click', go);
       this.title.classList.add('hidden');
       onEngage();
@@ -144,7 +148,7 @@ export class Screens {
 
   setPaused(paused: boolean, onResume: () => void): void {
     this.pause.classList.toggle('hidden', !paused);
-    this.pause.onclick = paused ? onResume : null;
+    this.pause.onclick = paused ? (e) => !(e.target as HTMLElement).closest('a') && onResume() : null;
   }
 
   fail(msg: string): void {

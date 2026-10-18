@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ATMOSPHERE_GLSL } from './atmosphere';
-import { TEXEL, WORLD_SIZE } from './config';
+import { HEIGHT_RES, TEXEL, WORLD_SIZE } from './config';
 import { TERRAIN_SAMPLE_GLSL, type Heightfield } from './heightfield';
 
 /**
@@ -176,8 +176,8 @@ export class Terrain {
   constructor(
     private readonly field: Heightfield,
     atmosphere: Record<string, THREE.IUniform>,
-    /** Large-scale relief (m) for the node bounds. */
-    private readonly heights: (x: number, z: number) => number,
+    /** The raw heightfield texels (node bounds). */
+    private readonly texels: Float32Array,
   ) {
     for (let l = 0; l < LEVELS; l++) this.ranges.push(RANGE0 * 2 ** l);
     this.root = this.buildTree();
@@ -252,15 +252,18 @@ export class Terrain {
         node.minY = Math.min(...node.children.map((c) => c.minY));
         node.maxY = Math.max(...node.children.map((c) => c.maxY));
       } else {
-        // Sample the leaf on a coarse grid (texel spacing) for its bounds
+        // Bounds of the texels under the leaf (plus a texel either side for the spline)
         let lo = Infinity;
         let hi = -Infinity;
-        const steps = Math.max(2, Math.ceil(size / TEXEL));
-        for (let j = 0; j <= steps; j++) {
-          for (let i = 0; i <= steps; i++) {
-            const y = this.heights(x + (i / steps) * size, z + (j / steps) * size);
-            lo = Math.min(lo, y);
-            hi = Math.max(hi, y);
+        const n = HEIGHT_RES;
+        const i0 = Math.max(0, Math.floor((x / WORLD_SIZE + 0.5) * n) - 1);
+        const j0 = Math.max(0, Math.floor((z / WORLD_SIZE + 0.5) * n) - 1);
+        const span = Math.ceil(size / TEXEL) + 2;
+        for (let j = j0; j < Math.min(n, j0 + span); j++) {
+          for (let i = i0; i < Math.min(n, i0 + span); i++) {
+            const y = this.texels[j * n + i];
+            if (y < lo) lo = y;
+            if (y > hi) hi = y;
           }
         }
         // Margin for the close-up crags the base relief doesn't carry

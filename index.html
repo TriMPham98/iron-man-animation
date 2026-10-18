@@ -746,5 +746,18 @@
       </section>
     </div>
     <script type="module" src="/src/main.ts"></script>
+    <!-- Into the open-world flight sim with the finished suit -->
+    <a id="fly-link" href="/flight.html" title="Fly the Mark III over the coast">FLY THE SUIT &#x2197;</a>
+    <style>
+      #fly-link {
+        position: fixed; right: 18px; bottom: 18px; z-index: 50;
+        font-family: Michroma, 'Eurostile', sans-serif; font-size: 11px; letter-spacing: 0.32em;
+        color: #e8fcff; text-decoration: none; padding: 11px 16px 11px 20px;
+        border: 1px solid rgba(126, 232, 255, 0.5); background: rgba(6, 16, 26, 0.55);
+        opacity: 0; pointer-events: none; transition: opacity 0.8s ease, border-color 0.2s, box-shadow 0.2s;
+      }
+      body.scene-revealed #fly-link { opacity: 1; pointer-events: auto; }
+      #fly-link:hover, #fly-link:focus-visible { border-color: #7ee8ff; box-shadow: 0 0 22px rgba(126, 232, 255, 0.35); outline: none; }
+    </style>
   </body>
 </html>

@@ -69,7 +69,7 @@ void main() {
   // Santa Monica Mountains meet the sea within a few kilometres
   float hills = (fbm(q / 1300.0, 7) * 0.5 + 0.5) * 170.0 * smoothstep(40.0, 1400.0, d);
   float range = smoothstep(150.0, 5200.0, d) * (0.75 + 0.4 * fbm(vec2(q.x / 7000.0, 5.3), 3));
-  float m = erodedFbm(q / 2600.0 + vec2(11.3, -4.1), 14);
+  float m = erodedFbm(q / 2600.0 + vec2(11.3, -4.1), 11);
   float sharp = ridged(q / 3400.0 + 2.9, 6);
   float mountains = max(0.0, m * 0.75 + 0.3 + sharp * 0.35) * 1250.0 * range;
   // Drainage: winding canyons cut down toward the sea
@@ -119,29 +119,29 @@ void main() {
   // Soft cast shadow: march toward the sun, geometric steps 16 m → 12 km
   float vis = 1.0;
   float t = 14.0;
-  for (int i = 0; i < 72; i++) {
+  for (int i = 0; i < 46; i++) {
     vec2 uv = vUv + sd * t / uWorld;
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) break;
     float ray = h0 + t * tanE + 1.5;
     float hs = H(uv);
     vis = min(vis, clamp(6.0 * (ray - hs) / t + 0.5, 0.0, 1.0));
     if (vis <= 0.0) break;
-    t *= 1.1;
+    t *= 1.155;
   }
   // Ambient occlusion: how much sky the horizon hides, 8 azimuths × 4 radii
   float occ = 0.0;
-  for (int a = 0; a < 8; a++) {
-    float ang = float(a) * 0.785398 + 0.3;
+  for (int a = 0; a < 6; a++) {
+    float ang = float(a) * 1.0472 + 0.3;
     vec2 dir = vec2(cos(ang), sin(ang));
     float hor = 0.0;
-    for (int r = 0; r < 4; r++) {
-      float rad = 22.0 * pow(2.6, float(r));
+    for (int r = 0; r < 3; r++) {
+      float rad = 26.0 * pow(3.4, float(r));
       float dh = max(H(vUv + dir * rad / uWorld), 0.0) - h0;
       hor = max(hor, dh / sqrt(dh * dh + rad * rad));
     }
     occ += hor;
   }
-  float ao = clamp(1.0 - occ / 8.0 * 1.25, 0.0, 1.0);
+  float ao = clamp(1.0 - occ / 6.0 * 1.25, 0.0, 1.0);
   gl_FragColor = vec4(vis, ao, 0.0, 1.0);
 }
 `;
@@ -316,6 +316,11 @@ export class Heightfield {
   readonly detailGradTex: THREE.DataTexture;
   /** Uniforms every terrain-sampling shader shares (same objects). */
   readonly uniforms: Record<string, THREE.IUniform>;
+
+  /** Raw texels (row-major, z rows), for bounds. */
+  get texels(): Float32Array {
+    return this.data;
+  }
 
   private constructor(
     private readonly data: Float32Array,

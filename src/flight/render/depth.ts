@@ -1,22 +1,11 @@
 import * as THREE from 'three';
 
 /**
- * Depth precision across 0.1 m – 150 km. Reversed-Z on a float depth buffer
- * is exact and free where the browser exposes EXT_clip_control; elsewhere
- * the renderer falls back to a logarithmic depth buffer, which three's own
- * materials handle but hand-written shaders must opt into — {@link withLogDepth}
- * patches one in place (a no-op under reversed-Z: the chunks are #ifdef'd).
+ * Depth precision across 0.1 m – 150 km comes from a logarithmic depth
+ * buffer. three's own materials handle it; hand-written shaders opt in
+ * through {@link withLogDepth}, which patches one in place (the chunks are
+ * #ifdef'd, so it's harmless without log depth).
  */
-export function supportsReversedZ(): boolean {
-  try {
-    const gl = document.createElement('canvas').getContext('webgl2');
-    const ok = !!gl?.getExtension('EXT_clip_control');
-    gl?.getExtension('WEBGL_lose_context')?.loseContext();
-    return ok;
-  } catch {
-    return false;
-  }
-}
 
 const VERT_PARS = '#ifdef USE_LOGDEPTHBUF\nvarying float vFragDepth;\nvarying float vIsPerspective;\n#endif\n';
 const VERT_MAIN = '\n#ifdef USE_LOGDEPTHBUF\nvFragDepth = 1.0 + gl_Position.w;\nvIsPerspective = 1.0;\n#endif\n';

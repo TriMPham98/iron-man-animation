@@ -91,8 +91,8 @@ void main() {
   bool ground = hitGround > 0.0 && hitGround < p.y;
   p.y = ground ? hitGround : p.y;
   p.x = max(p.x, 0.0);
-  const int IS = 32;
-  const int JS = 8;
+  const int IS = 16;
+  const int JS = 6;
   float step = (p.y - p.x) / float(IS);
   float t = 0.0;
   vec3 rl = vec3(0.0);
@@ -151,7 +151,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
 
   const skyScene = new THREE.Scene();
   skyScene.add(sky);
-  const cubeRt = new THREE.WebGLCubeRenderTarget(512, {
+  const cubeRt = new THREE.WebGLCubeRenderTarget(256, {
     type: THREE.HalfFloatType,
     generateMipmaps: true,
     minFilter: THREE.LinearMipmapLinearFilter,

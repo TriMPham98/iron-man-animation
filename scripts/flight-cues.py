@@ -39,11 +39,11 @@ def first(kind, text=None):
 # before it and filtered up into it, a riser peaking on the same frame
 HEROES = [
     ('reveal', first('cameraCut', 'reveal'), 'hit/fs-359140-low-metal-hit-2-wav-1+boom/fs-636624-deep-hit-2', 'riser/fs-503801-reverse-fx-3-wav-1'),
-    ('boom', first('cameraCut', 'boom'), F + 'sonic-boom.mp3+' + F + 'explosion-sub.mp3', 'riser/fs-503799-reverse-fx-9-wav-1'),
+    ('boom', first('cameraCut', 'boom'), 'hit/fs-359141-low-metal-hit-1-wav-1+' + F + 'sonic-boom.mp3', 'riser/fs-503799-reverse-fx-9-wav-1'),
     ('kill', first('cameraCut', 'kill'), F + 'explosion-near.mp3+' + F + 'explosion-sub.mp3', 'riser/fs-396161-scary-hits-risers-001-1'),
     ('salvo', first('cameraCut', 'salvo'), F + 'explosion-huge.mp3+' + F + 'explosion-sub.mp3', None),
-    ('unibeam', first('cameraCut', 'unibeam'), F + 'explosion-sub.mp3+' + S + 'repulsor.mp3', F + 'charge.mp3'),
-    ('landing', first('cameraCut', 'landed'), 'hit/fs-359141-low-metal-hit-1-wav-1+' + F + 'deep-boom.mp3', 'riser/fs-275512-reversed-riser-wav-1'),
+    ('unibeam', first('cameraCut', 'unibeam'), F + 'explosion-near.mp3+' + F + 'explosion-sub.mp3', F + 'charge.mp3'),
+    ('landing', first('cameraCut', 'landed'), F + 'hero-thud.mp3+' + F + 'explosion-sub.mp3', 'riser/fs-275512-reversed-riser-wav-1'),
 ]
 hero_frames = []
 for name, e, sound, riser in HEROES:
@@ -86,11 +86,16 @@ for e in log:
     elif k == 'jarvis' and e.get('text') and not near_hero(f) and not busy(f):
         cue(nid('jarvis'), f, F + 'jarvis-blip.mp3', visual='appear')
     elif k == 'repulsorFire':
-        cue(nid('repulsor'), f, S + 'repulsor.mp3', visual='appear', pan=pan)
+        # The palm's whine with the discharge crack on top, as in the sim
+        # (a shot on the frame of a hero hit is inside that hit)
+        if not near_hero(f, 2):
+          cue(nid('repulsor'), f, S + 'repulsor.mp3+' + F + 'repulsor-zap.mp3', visual='appear', pan=pan)
     elif k == 'siloOpen':
         cue('silos', f, S + 'weapon-deploy.mp3', visual='appear')
     elif k == 'lockTick':
-        cue(nid('lock'), f, F + 'lock-tick.mp3', visual='appear')
+        # The first lock lands under the silos opening; the rest tick
+        if (e.get('value') or 0) > 1:
+            cue(nid('lock'), f, F + 'lock-tick.mp3', visual='appear')
     elif k == 'missileLaunch':
         cue(nid('rocket'), f, F + ('rocket-2.mp3' if n.get('rocket', 0) % 2 else 'rocket-1.mp3'), visual='appear', pan=pan)
     elif k == 'enemyMissile':
@@ -101,17 +106,25 @@ for e in log:
         else:
             cue('seeker', f, F + 'sam-launch.mp3', visual='appear', pan=pan)
     elif k == 'flarePop':
-        cue(nid('flare'), f, F + 'flare-pop.mp3', visual='appear', pan=pan)
+        # The drums fire alternately 0.1 s apart: one cue per pair reads, eight smear
+        n['pop'] = n.get('pop', 0) + 1
+        if n['pop'] % 2 == 1:
+            cue(nid('flare'), f, F + 'flare-pop.mp3', visual='appear', pan=pan)
     elif k in ('explosion', 'bigExplosion'):
         dist = e.get('dist') or 0
         # Far-off wrecks hitting the ground stay under the score
-        if near_hero(f) or f - last_expl < 6 or dist > 2500 or (k == 'bigExplosion' and dist > 950):
+        crowded = any(abs(c['frame'] - f) <= 4 for c in cues)
+        if near_hero(f) or crowded or f - last_expl < 6 or dist > 2500 or (k == 'bigExplosion' and dist > 700):
             continue
         last_expl = f
         snd = F + ('explosion-huge.mp3' if k == 'bigExplosion' else 'explosion-near.mp3')
+        # A confirmed kill gets the sub under it
+        if any(x['kind'] == 'kill' and abs(x['frame'] - f) <= 1 for x in log):
+            snd += '+' + F + 'explosion-sub.mp3'
         cue(nid('blast'), f, snd, visual='appear', pan=pan, pitch=-2 if dist > 900 else 0)
     elif k == 'unibeamEnd':
-        cue('beam-off', f, S + 'steam-release.mp3', visual='appear')
+        if not any(abs(c['frame'] - f) <= 4 for c in cues):
+            cue('beam-off', f, S + 'steam-release.mp3', visual='appear')
 
 duration = round(frames / FPS, 3)
 sheet = {
