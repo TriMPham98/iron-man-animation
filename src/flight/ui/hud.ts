@@ -1,9 +1,8 @@
 import * as THREE from 'three';
 import type { Combat } from '../combat/combat';
 import type { FlightModel } from '../sim/flightModel';
-import { CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
+import { BOOST_SPEED, CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
 import type { GroundProbe } from '../sim/flightModel';
-import { SPEED_OF_SOUND } from '../world/config';
 
 /**
  * JARVIS's heads-up display, drawn on a 2D canvas over the frame each
@@ -22,6 +21,8 @@ const AMBER = 'rgba(255, 184, 77, 0.95)';
 const RED = 'rgba(255, 70, 60, 0.95)';
 const MONO = '"JetBrains Mono", ui-monospace, Menlo, monospace';
 const JARVIS = 'Michroma, "Eurostile", sans-serif';
+/** m/s → knots. */
+const KNOTS = 1.943844;
 
 interface Line {
   text: string;
@@ -286,8 +287,9 @@ export class Hud {
     const cy = this.h / 2;
     const lx = this.w / 2 - 300 * s;
     const rx = this.w / 2 + 300 * s;
-    const spd = m.speed;
-    this.tape(g, lx, cy, spd, 20, (v) => (v >= 0 ? `${v}` : ''), -1, s, m.boosting ? 430 : m.speedCmd);
+    // Airspeed in knots, as a flight HUD reads it (Mach 1 ≈ 667 kt)
+    const spd = m.speed * KNOTS;
+    this.tape(g, lx, cy, spd, 50, (v) => (v >= 0 ? `${v}` : ''), -1, s, (m.boosting ? BOOST_SPEED : m.speedCmd) * KNOTS);
     this.tape(g, rx, cy, m.pos.y, 100, (v) => `${v}`, 1, s);
     // Readout boxes
     const box = (x: number, label: string, value: string, align: 1 | -1) => {
@@ -302,9 +304,9 @@ export class Hud {
       this.text(g, value, bx + bw / 2, cy, 14 * s, WHITE, 'center');
       this.text(g, label, bx + bw / 2, cy - 22 * s, 8 * s, CYAN_DIM, 'center', JARVIS);
     };
-    box(lx, 'AIRSPEED', `${Math.round(spd)}`, -1);
+    box(lx, 'AIRSPEED KT', `${Math.round(spd)}`, -1);
     box(rx, 'ALT MSL', `${Math.round(m.pos.y)}`, 1);
-    const mach = spd / SPEED_OF_SOUND;
+    const mach = m.mach;
     this.text(g, `M ${mach.toFixed(2)}`, lx - 42 * s, cy + 26 * s, 11 * s, mach > 0.98 ? AMBER : CYAN, 'center');
     this.text(g, `G ${m.gLoad.toFixed(1)}`, lx - 42 * s, cy + 42 * s, 11 * s, m.gLoad > 8 ? AMBER : CYAN_DIM, 'center');
     const ra = m.pos.y - m.hipHeight() - ground.surface(m.pos.x, m.pos.z);

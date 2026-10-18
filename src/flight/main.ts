@@ -5,6 +5,7 @@ import { GameAudio } from './audio/gameAudio';
 import { Soundscape } from './audio/soundscape';
 import { FlightPost, type LensState } from './render/post';
 import { Game } from './sim/game';
+import { DEFAULT_CAMERA } from './sim/cameraRig';
 import { Director } from './sim/director';
 import { Input, type Controls } from './sim/input';
 import { Hud } from './ui/hud';
@@ -104,7 +105,7 @@ async function boot(): Promise<void> {
   const captureDt: number | null = capture ? 1 / Number(q.get('fps') ?? 30) : null;
   let engaged = q.has('fly') || !!director;
   let paused = false;
-  game.rig.mode = engaged && !director ? 'chase' : 'attract';
+  game.rig.mode = engaged && !director ? DEFAULT_CAMERA : 'attract';
   hud.alpha = engaged ? 1 : 0;
   const hooks = {
     THREE,
@@ -248,7 +249,7 @@ async function boot(): Promise<void> {
     void audio.unlock().then(() => sounds.start());
     input.requestLock();
     engaged = true;
-    game.rig.mode = 'chase';
+    game.rig.mode = DEFAULT_CAMERA;
     game.events.emit('jarvis', { text: 'All systems online. Good evening, sir. The coast is yours.' });
   };
   screens.showTitle(engage, engaged);
@@ -259,10 +260,12 @@ async function boot(): Promise<void> {
     const locked = document.pointerLockElement === canvas;
     if (engaged && !locked && !autopilot && !director) {
       paused = true;
+      audio.setPaused(true);
       screens.setPaused(true, () => input.requestLock());
     } else if (locked) {
       paused = false;
       screens.setPaused(false, () => {});
+      audio.setPaused(false);
       void audio.unlock();
     }
   });

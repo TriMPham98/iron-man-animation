@@ -11,6 +11,8 @@ import type { FlightModel } from './flightModel';
  */
 export type CameraMode = 'chase' | 'shoulder' | 'helmet' | 'flyby' | 'attract';
 export const CAMERA_MODES: CameraMode[] = ['chase', 'shoulder', 'helmet', 'flyby'];
+/** The view a flight starts in: the close one, between chase and helmet. */
+export const DEFAULT_CAMERA: CameraMode = 'shoulder';
 
 const UP = new THREE.Vector3(0, 1, 0);
 

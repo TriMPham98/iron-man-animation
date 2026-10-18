@@ -12,10 +12,12 @@ import type { Particles } from './particles';
  * out from it.
  */
 
-const SOLES: Array<{ bone: BoneName; at: [number, number, number] }> = [
-  { bone: 'foot.L', at: [0.16, 0.0, 0.01] },
-  { bone: 'foot.R', at: [-0.16, 0.0, 0.01] },
+const SOLES: Array<{ bone: BoneName; shin: BoneName; at: [number, number, number] }> = [
+  { bone: 'foot.L', shin: 'shin.L', at: [0.16, 0.0, 0.01] },
+  { bone: 'foot.R', shin: 'shin.R', at: [-0.16, 0.0, 0.01] },
 ];
+/** How much of the boot jet follows the sole (the rest runs down the leg). */
+const SOLE_SHARE = 0.2;
 
 function glowTexture(): THREE.Texture {
   const c = document.createElement('canvas');
@@ -58,8 +60,8 @@ function plumeMaterial(color: number, falloff: number): THREE.ShaderMaterial {
           vec3 p = position;
           float h = clamp(vH, 0.0, 1.0);
           float a = uTime * 7.0 + uSeed;
-          p.x += h * h * 0.03 * (sin(a + vH * 9.0) + 0.5 * sin(a * 1.9 - vH * 17.0));
-          p.z += h * h * 0.03 * (cos(a * 1.3 + vH * 7.0) + 0.5 * sin(a * 2.3 + vH * 13.0));
+          p.x += h * h * 0.008 * (sin(a + vH * 9.0) + 0.5 * sin(a * 1.9 - vH * 17.0));
+          p.z += h * h * 0.008 * (cos(a * 1.3 + vH * 7.0) + 0.5 * sin(a * 2.3 + vH * 13.0));
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           vN = normalize(normalMatrix * normal);
           vV = normalize(-mv.xyz);
@@ -79,7 +81,7 @@ function plumeMaterial(color: number, falloff: number): THREE.ShaderMaterial {
           float along = pow(1.0 - clamp(vH, 0.0, 1.0), ${falloff.toFixed(1)} * (1.5 - uPower));
           float freq = 16.0 + 26.0 * uPower;
           float diamonds = 0.8 + (0.15 + 0.5 * uPower) * pow(0.5 + 0.5 * cos(vH * freq), 6.0) * (1.0 - vH);
-          float race = 0.93 + 0.07 * sin(vH * 34.0 - uTime * 22.0 + uSeed);
+          float race = 0.97 + 0.03 * sin(vH * 34.0 - uTime * 14.0 + uSeed);
           float edge = pow(abs(dot(vN, vV)), 0.8);
           vec3 col = mix(uColor * vec3(0.45, 0.65, 1.0), mix(uColor, vec3(1.0), 0.6), uPower) * 3.0;
           gl_FragColor = vec4(col * diamonds * race, along * edge * uOpacity);
@@ -161,11 +163,16 @@ export class Jets {
   update(dt: number, suit: Suit, state: JetState, ground: GroundQuery, particles: Particles, suitVel: THREE.Vector3): void {
     this.time += dt;
     const t = this.time;
-    // Boots: out of the soles along the foot's down axis
+    // Boots: out of the soles, down the line of the leg — the thrust axis
+    // the flight model pushes along. Pointed toes in flight would otherwise
+    // tip the sole normal (and the jet) up behind the suit
     SOLES.forEach((s, i) => {
       const j = this.boots[i];
       suit.boneWorldPoint(s.bone, s.at, j.pos);
-      suit.boneWorldDir(s.bone, [0, -1, 0], j.dir);
+      suit.boneWorldDir(s.bone, [0, -1, 0], j.dir).multiplyScalar(SOLE_SHARE);
+      j.dir.add(suit.boneWorldDir(s.shin, [0, -1, 0], this._d).multiplyScalar(1 - SOLE_SHARE)).normalize();
+      // Start just off the plating so the sole never cuts into the flame
+      j.pos.addScaledVector(j.dir, 0.02);
     });
     suit.palms.forEach((p, i) => {
       const j = this.palms[i];
@@ -175,22 +182,27 @@ export class Jets {
     });
     const powers = [state.bootL, state.bootR];
     const palmPowers = [state.palmL, state.palmR];
+    // One light, on the boot jets only and clear of the soles: averaged in
+    // with the palms it hopped about the suit with every repulsor shot and
+    // sat right on the back plate, blowing it out in flashes
     let lightSum = 0;
     const lightPos = this._v.set(0, 0, 0);
     this.boots.forEach((j, i) => {
       const k = powers[i];
       this.drawJet(j, k, 0.6 + 1.6 * Math.pow(k, 1.3), 0.85 + 0.75 * k, t, i);
       lightSum += k;
-      lightPos.addScaledVector(j.pos, k);
+      lightPos.addScaledVector(j.pos, k).addScaledVector(j.dir, 0.8 * k);
     });
     this.palms.forEach((j, i) => {
       const k = palmPowers[i];
       this.drawJet(j, k, 0.18 + 0.6 * Math.pow(k, 1.3), 0.7 + 0.4 * k, t, i + 7);
-      lightSum += k * 0.4;
-      lightPos.addScaledVector(j.pos, k * 0.4);
     });
-    this.light.intensity = lightSum > 0.01 ? lightSum * 60 * (0.96 + 0.04 * Math.sin(t * 31)) : 0;
-    if (lightSum > 0.01) this.light.position.copy(lightPos.divideScalar(lightSum));
+    // It's there to wash the ground at take-off: up high it only scorched
+    // the boot plates white
+    if (lightSum > 0.01) lightPos.divideScalar(lightSum);
+    const low = lightSum > 0.01 ? 1 - THREE.MathUtils.smoothstep(lightPos.y - Math.max(0, ground.surface(lightPos.x, lightPos.z)), 4, 25) : 0;
+    this.light.intensity = lightSum * 60 * low;
+    if (low > 0) this.light.position.copy(lightPos);
 
     // Where the boot jets reach the ground or the sea: wash and blow-out
     this.puff += dt;
@@ -215,7 +227,7 @@ export class Jets {
       w.visible = true;
       w.position.copy(hit);
       w.scale.setScalar(0.6 + 2.2 * (1 - near) + 0.6 * k);
-      w.material.opacity = 0.9 * k * near * near * (0.9 + 0.1 * Math.sin(t * 40 + i));
+      w.material.opacity = 0.9 * k * near * near;
       if (!doPuff) return;
       const n = Math.round(1 + 3 * near * k);
       for (let p = 0; p < n; p++) {
@@ -233,7 +245,7 @@ export class Jets {
     j.sheath.visible = j.core.visible = j.glow.visible = on;
     if (!on) return;
     this._q.setFromUnitVectors(this.DOWN, j.dir);
-    const fl = 0.97 + 0.03 * Math.sin(t * 5.3 + seed) * Math.sin(t * 3.1 + seed * 1.7);
+    const fl = 0.985 + 0.015 * Math.sin(t * 5.3 + seed) * Math.sin(t * 3.1 + seed * 1.7);
     for (const [m, w, l, op] of [
       [j.sheath, width, len, 0.85],
       [j.core, width * 0.9, len * 0.7, 1.15],
@@ -246,7 +258,8 @@ export class Jets {
       u.uOpacity.value = (0.35 + 0.65 * k) * k * fl * op;
       u.uTime.value = t;
     }
-    j.glow.position.copy(j.pos);
+    // The glow sits clear of the armour: half-buried, camera shake made it blink
+    j.glow.position.copy(j.pos).addScaledVector(j.dir, 0.05);
     j.glow.scale.setScalar(0.14 + 0.3 * k);
     j.glow.material.opacity = Math.min(1, k * 1.4);
   }

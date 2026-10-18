@@ -169,7 +169,7 @@ export class PlayerWeapons {
     }
     this.holdL = Math.max(0, this.holdL - dt);
     this.holdR = Math.max(0, this.holdR - dt);
-    const rate = (on: boolean, cur: number) => cur + ((on ? 1 : 0) - cur) * (1 - Math.exp(-dt / (on ? 0.045 : 0.22)));
+    const rate = (on: boolean, cur: number) => cur + ((on ? 1 : 0) - cur) * (1 - Math.exp(-dt / (on ? 0.06 : 0.22)));
     A.aimL = rate(this.holdL > 0, A.aimL);
     A.aimR = rate(this.holdR > 0, A.aimR);
     A.flashL = Math.max(0, A.flashL - dt * 6);

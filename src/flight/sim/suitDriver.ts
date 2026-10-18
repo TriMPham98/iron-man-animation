@@ -59,6 +59,8 @@ const lerp = THREE.MathUtils.lerp;
 const clamp01 = (x: number) => clamp(x, 0, 1);
 /** Centre of mass in bind space (the rig tilts about the hips). */
 const COM = new THREE.Vector3(0, 1.0, 0);
+/** The modelled arm's outward angle, shoulder to palm (rad). */
+const ARM_SPLAY = 0.3;
 
 export interface SuitOutputs {
   bootL: number;
@@ -156,33 +158,48 @@ export class SuitDriver {
       wristR = lerp(wristR, 0.2, ub);
     }
 
-    // Repulsor aim: the arm swings onto the aim line, palm flat to it
-    for (const [side, k] of [
-      ['L', arms.aimL],
-      ['R', arms.aimR],
+    // Repulsor aim: the arm punches out onto the aim line, palm flat to it.
+    // The elbow folds on the way up and drives straight at the end (a punch,
+    // not a stiff swing from the shoulder); each shot kicks the hand up and
+    // back off a soft elbow and rocks the chest
+    let kick = 0;
+    for (const [side, k, flash] of [
+      ['L', arms.aimL, arms.flashL],
+      ['R', arms.aimR, arms.flashR],
     ] as const) {
       if (k <= 0.001) continue;
       const s = side === 'L' ? 1 : -1;
       // Shoulders sit ~19 cm off the centre line: aim from there a little
-      // toward the centre so the shot converges
+      // toward the centre so the shot converges. The modelled arm hangs
+      // ~0.3 rad out from the shoulder to the palm; take that back out so
+      // the palm, not a splayed arm, lands on the aim line
       const dx = a.x - s * 0.03;
-      const abd = Math.asin(clamp(dx * s, -0.35, 0.95));
+      const abd = Math.asin(clamp(dx * s, -0.35, 0.95)) - ARM_SPLAY;
       let flex = Math.atan2(-a.z, -a.y);
       if (flex > 0.6) flex -= Math.PI * 2;
       flex = clamp(flex, -3.25, 0.4);
       const ka = k * k * (3 - 2 * k);
+      const punch = 4 * ka * (1 - ka);
+      const recoil = flash * flash;
+      kick = Math.max(kick, recoil);
+      const elbow = 0.1 + 0.75 * punch + 0.32 * recoil;
+      // Recoil: the muzzle climbs off the line
+      const lift = 0.16 * recoil;
+      const wrist = 1.32 + 0.12 * recoil;
+      // Flat, firm hand: fingers straight and a touch apart, thumb out
+      const hand = [-0.15, -0.05, 0, 0.04, 0.08];
       if (side === 'L') {
         limbs.armL = lerp(limbs.armL, abd, ka);
-        limbs.armFlexL = lerp(limbs.armFlexL, flex, ka);
-        limbs.elbowL = lerp(limbs.elbowL, 0.04, ka);
-        wristL = lerp(wristL, 1.38, ka);
-        fingersL = fingersL.map((f) => lerp(f, -0.3, ka));
+        limbs.armFlexL = lerp(limbs.armFlexL, flex, ka) - lift;
+        limbs.elbowL = lerp(limbs.elbowL, elbow, ka);
+        wristL = lerp(wristL, wrist, ka);
+        fingersL = fingersL.map((f, i) => lerp(f, hand[i], ka));
       } else {
         limbs.armR = lerp(limbs.armR, abd, ka);
-        limbs.armFlexR = lerp(limbs.armFlexR, flex, ka);
-        limbs.elbowR = lerp(limbs.elbowR, 0.04, ka);
-        wristR = lerp(wristR, 1.38, ka);
-        fingersR = fingersR.map((f) => lerp(f, -0.3, ka));
+        limbs.armFlexR = lerp(limbs.armFlexR, flex, ka) - lift;
+        limbs.elbowR = lerp(limbs.elbowR, elbow, ka);
+        wristR = lerp(wristR, wrist, ka);
+        fingersR = fingersR.map((f, i) => lerp(f, hand[i], ka));
       }
     }
 
@@ -254,7 +271,7 @@ export class SuitDriver {
     const frame: FlightCheckFrame = {
       pose: {
         stance: 0,
-        chestRecoil: -0.4 * ub,
+        chestRecoil: -0.4 * ub + 0.35 * kick,
         headPitch: this.head.y,
         headYaw: this.head.x,
         headRoll: this.headRoll,

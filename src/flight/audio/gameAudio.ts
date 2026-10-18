@@ -60,7 +60,19 @@ export class GameAudio {
   private readonly _u = new THREE.Vector3();
   /** Muffle for the helmet view / reboot (0–1). */
   private muffleNode!: BiquadFilterNode;
+  private unlocking: Promise<void> | null = null;
+  private decoded = false;
+  private paused = false;
   volume = 0.9;
+
+  constructor() {
+    // Any gesture wakes a context the browser suspended (autoplay policy,
+    // a context first made outside a gesture, an interrupted session)
+    const wake = () => {
+      if (this.ctx && !this.paused && this.ctx.state !== 'running') void this.ctx.resume();
+    };
+    for (const ev of ['pointerdown', 'keydown', 'touchend']) window.addEventListener(ev, wake, true);
+  }
 
   setVolume(v: number): void {
     this.volume = v;
@@ -85,11 +97,21 @@ export class GameAudio {
   }
 
   /** Create the context inside a user gesture, then decode everything. */
-  async unlock(): Promise<void> {
-    if (this.ctx) {
-      if (this.ctx.state !== 'running') await this.ctx.resume();
-      return;
-    }
+  unlock(): Promise<void> {
+    if (this.ctx && !this.paused && this.ctx.state !== 'running') void this.ctx.resume();
+    this.unlocking ??= this.create();
+    return this.unlocking;
+  }
+
+  /** Pause stops every sound where it is; resuming picks them up again. */
+  setPaused(paused: boolean): void {
+    this.paused = paused;
+    if (!this.ctx) return;
+    if (paused) void this.ctx.suspend();
+    else void this.ctx.resume();
+  }
+
+  private async create(): Promise<void> {
     const ctx = new AudioContext({ latencyHint: 'interactive' });
     this.ctx = ctx;
     this.master = ctx.createGain();
@@ -137,10 +159,12 @@ export class GameAudio {
         }
       }),
     );
+    this.decoded = true;
   }
 
+  /** Every file decoded: loops started before this would come up silent. */
   get ready(): boolean {
-    return !!this.ctx && this.buffers.size > 0;
+    return !!this.ctx && this.decoded;
   }
 
   /** Camera = ears. */
