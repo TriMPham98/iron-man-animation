@@ -40,6 +40,8 @@ export interface WorkshopEnvironment {
   setHatchDoors: (open: number) => void;
   /** Screens, rack LEDs, holo table. */
   update: (dt: number) => void;
+  /** Was the wall TV (the live scan feed's only viewer) drawn since the last call? */
+  takeFeedSeen: () => boolean;
   dispose: () => void;
 }
 
@@ -583,6 +585,8 @@ export function createWorkshopEnvironment(
     new THREE.MeshStandardMaterial({
       map: keep(platformDecal()),
       transparent: true,
+      // Bare texels skip lighting entirely (they would blend in nothing)
+      alphaTest: 1 / 255,
       metalness: 0.75,
       roughness: 0.4,
       polygonOffset: true,
@@ -665,7 +669,8 @@ export function createWorkshopEnvironment(
   // ── Ring aperture: one wide annular pit round the platform ────────
   // The floor arms stand in it, the parts stands telescope through it, and
   // the aperture's iris blades close over it once the whole cell has stowed.
-  group.add(aperturePit(steel, keep));
+  const ringPit = aperturePit(steel, keep);
+  group.add(ringPit.group);
   // Lit edges either side of the opening: on the deck inside, on top of
   // the outer bezel
   for (const [a0, a1, y] of [
@@ -902,6 +907,12 @@ export function createWorkshopEnvironment(
   );
   wallScreen.position.set(0, 2.55, -ROOM_RADIUS * Math.cos(Math.PI / 8) + 0.2);
   group.add(wallScreen);
+  // The scan feed only needs re-rendering while this screen is on camera
+  let feedSeen = true;
+  wallScreen.userData.dynamic = true;
+  wallScreen.onBeforeRender = () => {
+    feedSeen = true;
+  };
   const frame = new THREE.Mesh(keep(new THREE.BoxGeometry(2.95, 1.55, 0.08)), darkSteel);
   frame.position.copy(wallScreen.position).add(new THREE.Vector3(0, 0, -0.05));
   group.add(frame);
@@ -1017,6 +1028,8 @@ export function createWorkshopEnvironment(
       new THREE.MeshStandardMaterial({
         map: keep(floorDecal()),
         transparent: true,
+        // Most of the sheet is bare floor: skip lighting where it would blend in nothing
+        alphaTest: 1 / 255,
         depthWrite: false,
         roughness: 0.7,
         metalness: 0.1,
@@ -1070,7 +1083,11 @@ export function createWorkshopEnvironment(
   return {
     group,
     liftPlates,
-    setAperture: (open) => aperture.set(open),
+    setAperture: (open) => {
+      aperture.set(open);
+      // Shut iris: nothing under the deck can be seen
+      ringPit.below.visible = open > 0;
+    },
     setHatchDoors,
     update: (dt) => {
       clock += dt;
@@ -1078,6 +1095,11 @@ export function createWorkshopEnvironment(
       holo.rotation.y = clock * 0.6;
       holo.rotation.x = Math.sin(clock * 0.4) * 0.25;
       holoLight.intensity = 2.0 + Math.sin(clock * 5.3) * 0.25;
+    },
+    takeFeedSeen: () => {
+      const seen = feedSeen;
+      feedSeen = false;
+      return seen;
     },
     dispose: () => disposables.forEach((d) => d.dispose()),
   };

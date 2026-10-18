@@ -14,7 +14,11 @@ export function createRenderer(
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: true,
+    // The scene is drawn into the composer's own targets; the canvas only
+    // receives the full-screen output quad, so a multisampled backbuffer
+    // would be resolved every frame for nothing
+    antialias: false,
+    stencil: false,
     alpha: false,
     powerPreference: 'high-performance',
   });

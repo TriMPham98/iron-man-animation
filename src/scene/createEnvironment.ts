@@ -43,6 +43,8 @@ export function createEnvironment(
     metalness: 0.72,
     roughness: 0.62,
     transparent: true,
+    // Hatch / ring cut-outs and the dissolved rim skip lighting entirely
+    alphaTest: 1 / 255,
     opacity: 1,
     depthWrite: true,
   });

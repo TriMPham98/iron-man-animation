@@ -61,6 +61,12 @@ export interface FlightPose extends SuitPose {
 export interface LimbOffsets {
   armL?: number;
   armR?: number;
+  /** Shoulder flexion (rad): − swings the arm forward (−π/2 = pointing ahead, −π overhead). */
+  armFlexL?: number;
+  armFlexR?: number;
+  /** Upper-arm twist about its own length (rad). */
+  armTwistL?: number;
+  armTwistR?: number;
   elbowL?: number;
   elbowR?: number;
   hipL?: number;
@@ -206,14 +212,15 @@ export function applyPose(rig: SuitRig, pose: FlightPose): void {
     ['L', 1],
     ['R', -1],
   ] as const) {
-    const o = (k: 'arm' | 'elbow' | 'hip' | 'hipOut' | 'knee' | 'ankle' | 'footRoll') =>
+    const o = (k: 'arm' | 'armFlex' | 'armTwist' | 'elbow' | 'hip' | 'hipOut' | 'knee' | 'ankle' | 'footRoll') =>
       lb[`${k}${side}` as keyof LimbOffsets] ?? 0;
     setAxisAngles(
       b[`upperArm.${side}`],
       // Shoulders ride the breath a touch
       [_Z, s * (STANCE_ARM_RAISE * st + BREATH_SHOULDER * (pose.breath ?? 0) + o('arm'))],
-      [_X, -STANCE_ARM_FORWARD * st],
+      [_X, -STANCE_ARM_FORWARD * st + o('armFlex')],
     );
+    if (o('armTwist')) b[`upperArm.${side}`].quaternion.multiply(_qa.setFromAxisAngle(_Y, s * o('armTwist')));
     setAxisAngles(b[`forearm.${side}`], [_X, -STANCE_ELBOW * st - o('elbow')]);
     const wrist = side === 'L' ? pose.wristL : pose.wristR;
     setAxisAngles(b[`hand.${side}`], [

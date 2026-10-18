@@ -196,7 +196,7 @@ async function boot(): Promise<void> {
 
   // Dev-only handle for poking the scene from the console / test drivers
   if (import.meta.env.DEV) {
-    (window as unknown as { __suit: unknown }).__suit = { suit, camera, lookTarget, controls, session, workshop, scene, renderer };
+    (window as unknown as { __suit: unknown }).__suit = { suit, camera, lookTarget, controls, session, workshop, scene, renderer, post, contact, lights };
   }
 
   // One scrub bar across assembly → flight check → disassembly

@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
@@ -8,6 +9,13 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        // Open-world flight sim (the finished suit, flown)
+        flight: resolve(__dirname, 'flight.html'),
+      },
+    },
   },
   test: {
     environment: 'node',

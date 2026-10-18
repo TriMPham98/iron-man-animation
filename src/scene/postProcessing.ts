@@ -90,6 +90,23 @@ export function createPostProcessing(
 
   const outputPass = new OutputPass();
   composer.addPass(outputPass);
+  // Fold the bloom's additive blend into the output pass: the bloom pass
+  // would otherwise spend a full-resolution pass adding its (low-res) glow
+  // onto the HDR frame right before the output pass reads that frame again.
+  // Same sum (rgb · a, as the blend's SRC_ALPHA/ONE), one fewer full pass.
+  // A hidden material makes three skip the draw.
+  const folded = outputPass.material.fragmentShader
+    .replace('uniform sampler2D tDiffuse;', 'uniform sampler2D tDiffuse;\nuniform sampler2D tBloom;')
+    .replace(
+      'gl_FragColor = texture2D( tDiffuse, vUv );',
+      'gl_FragColor = texture2D( tDiffuse, vUv );\n\t\t\tvec4 bloomTexel = texture2D( tBloom, vUv );\n\t\t\tgl_FragColor.rgb += bloomTexel.rgb * bloomTexel.a;',
+    );
+  // (Kept as a separate blend if a three upgrade ever changes the shader text)
+  if (folded.includes('bloomTexel')) {
+    (outputPass.uniforms as Record<string, THREE.IUniform>).tBloom = { value: bloom.renderTargetsHorizontal[0].texture };
+    outputPass.material.fragmentShader = folded;
+    bloom.blendMaterial.visible = false;
+  }
 
   // Restore exposure used by OutputPass via renderer state it reads
   renderer.toneMapping = previousToneMapping;

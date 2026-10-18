@@ -11,7 +11,7 @@ import {
   SUIT_GROUND_CLEARANCE,
   type GlowMaterial,
 } from './loadSuitModel';
-import { boneSpec } from './rig';
+import { boneSpec, type BoneName } from './rig';
 import { applyPose, BIND_POSE, bindRig, type SuitPose, type SuitRig } from './rigPose';
 import { FloorHatches, RigOverlay, SuitParticles } from './suitEffects';
 import {
@@ -75,6 +75,8 @@ export class Suit {
   /** Back faces of each moving flap (it swings away from the cavity). */
   private flapBacks = new Map<Flap, THREE.SkinnedMesh>();
   private flightFx!: FlightFx;
+  /** Palm repulsor centres + normals, measured off the gauntlets (bind space). */
+  palms: PalmEmitter[] = [];
   private weapons!: WeaponsFx;
   private readonly reactorFx = new ReactorPowerDown();
   private flightActive = false;
@@ -188,7 +190,8 @@ export class Suit {
     suit.model.add(suit.hatches.group);
     suit.particles = new SuitParticles();
     suit.model.add(suit.particles.group);
-    suit.flightFx = new FlightFx(measurePalms(suit.pieces));
+    suit.palms = measurePalms(suit.pieces);
+    suit.flightFx = new FlightFx(suit.palms);
     suit.model.add(suit.flightFx.group);
     suit.weapons = new WeaponsFx(suit.flaps);
     suit.model.add(suit.weapons.group);
@@ -288,9 +291,31 @@ export class Suit {
     return geo.boundingBox;
   }
 
+  /**
+   * Carries the whole rig through the world (flight sim): a world transform
+   * applied on top of the pose's own root placement. Skinned meshes, flaps,
+   * weapons and FX all follow the bones, so the suit flies as one.
+   */
+  private carrier: THREE.Matrix4 | null = null;
+  private readonly _carrier = new THREE.Matrix4();
+
+  /** Fly the rig: a world matrix for the suit's model frame (null = stand in place). */
+  setCarrier(world: THREE.Matrix4 | null): void {
+    if (!world) {
+      this.carrier = null;
+      return;
+    }
+    this.carrier = this._carrier.multiplyMatrices(this.modelInv, world);
+  }
+
   /** Pose the skeleton and refresh bone world matrices. */
   setPose(pose: SuitPose): void {
     applyPose(this.rig, pose);
+    if (this.carrier) {
+      const r = this.rig.root;
+      this._hm.compose(r.position, r.quaternion, r.scale).premultiply(this.carrier);
+      this._hm.decompose(r.position, r.quaternion, r.scale);
+    }
     this.rig.root.updateWorldMatrix(true, true);
   }
 
@@ -315,6 +340,24 @@ export class Suit {
     this._v.copy(world).applyMatrix4(this.modelInv);
     const dir = dirWorld ? this._dir.copy(dirWorld).normalize() : undefined;
     this.particles.burst(kind, this._v, count, dir);
+  }
+
+  /** A bind-space point carried by a bone, in world space (current pose). */
+  boneWorldPoint(bone: BoneName, at: readonly [number, number, number], out: THREE.Vector3): THREE.Vector3 {
+    const h = boneSpec(bone).head;
+    return out.set(at[0] - h[0], at[1] - h[1], at[2] - h[2]).applyMatrix4(this.rig.bones[bone].matrixWorld);
+  }
+
+  /** A bind-space direction carried by a bone, in world space (unit). */
+  boneWorldDir(bone: BoneName, dir: readonly [number, number, number], out: THREE.Vector3): THREE.Vector3 {
+    return out.set(dir[0], dir[1], dir[2]).transformDirection(this.rig.bones[bone].matrixWorld);
+  }
+
+  /** Every mesh of the suit (shadow / layer setup). */
+  forEachMesh(fn: (m: THREE.Mesh) => void): void {
+    this.group.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) fn(o as THREE.Mesh);
+    });
   }
 
   /** World position of a part's centre as currently placed. */

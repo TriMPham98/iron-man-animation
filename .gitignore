@@ -3,3 +3,8 @@ dist
 .DS_Store
 *.local
 .vite
+sound-layer/
+audio/kit/
+audio/candidates/
+audio/*.png
+capture/

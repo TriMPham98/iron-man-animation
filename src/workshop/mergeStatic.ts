@@ -14,16 +14,21 @@ import { NOISE_FUNCS, noiseTexture, type Weathering } from './robotMaterials';
  * left alone.
  */
 
-let uber: THREE.MeshPhysicalMaterial | null = null;
+const ubers = new Map<boolean, THREE.MeshPhysicalMaterial>();
 
-/** Shared material that reads its finish from vertex attributes. */
-export function uberMaterial(): THREE.MeshPhysicalMaterial {
-  if (uber) return uber;
+/**
+ * Shared material that reads its finish from vertex attributes. Clear-coated
+ * finishes get their own variant: the coat is a second specular lobe per
+ * light, and surfaces without one would pay it for a zero contribution.
+ */
+export function uberMaterial(coated: boolean): THREE.MeshPhysicalMaterial {
+  const cached = ubers.get(coated);
+  if (cached) return cached;
   const m = new THREE.MeshPhysicalMaterial({
     vertexColors: true,
     metalness: 1,
     roughness: 1,
-    clearcoat: 1,
+    clearcoat: coated ? 1 : 0,
     clearcoatRoughness: 0.3,
   });
   m.onBeforeCompile = (shader) => {
@@ -74,8 +79,8 @@ export function uberMaterial(): THREE.MeshPhysicalMaterial {
         '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vColor.rgb * vPBR.w;',
       );
   };
-  m.customProgramCacheKey = () => 'robot-uber';
-  uber = m;
+  m.customProgramCacheKey = () => (coated ? 'robot-uber' : 'robot-uber-matte');
+  ubers.set(coated, m);
   return m;
 }
 
@@ -89,6 +94,10 @@ function bakeable(mat: THREE.Material): mat is THREE.MeshStandardMaterial {
   return true;
 }
 
+function coatOf(mat: THREE.MeshStandardMaterial): number {
+  return (mat as THREE.MeshPhysicalMaterial).isMeshPhysicalMaterial ? (mat as THREE.MeshPhysicalMaterial).clearcoat : 0;
+}
+
 /** Geometry with the finish of `mat` baked in as attributes. */
 function bake(geo: THREE.BufferGeometry, mat: THREE.MeshStandardMaterial): THREE.BufferGeometry {
   const n = geo.getAttribute('position').count;
@@ -98,7 +107,7 @@ function bake(geo: THREE.BufferGeometry, mat: THREE.MeshStandardMaterial): THREE
   const glow = mat.emissive.r + mat.emissive.g + mat.emissive.b > 0 ? mat.emissiveIntensity : 0;
   // Emissive finishes carry their glow colour in the vertex colour
   const c = glow > 0 ? mat.emissive : mat.color;
-  const cc = (mat as THREE.MeshPhysicalMaterial).isMeshPhysicalMaterial ? (mat as THREE.MeshPhysicalMaterial).clearcoat : 0;
+  const cc = coatOf(mat);
   const w = (mat.userData.wear as Weathering | undefined) ?? { grime: 0, scratch: 0, chip: 0, scale: 0 };
   for (let i = 0; i < n; i++) {
     col.set([c.r, c.g, c.b], i * 3);
@@ -139,20 +148,21 @@ export function mergeStaticChildren(parent: THREE.Object3D): void {
     byMat.set(mesh.material, list);
   }
 
-  // One draw for every plain-finish child
-  if (baked.length >= 2) {
-    const geos = baked.map((m) => bake(prepared(m, ['position', 'normal']), m.material as THREE.MeshStandardMaterial));
+  // One draw for every plain-finish child (coated and bare finishes apart)
+  for (const coated of [false, true]) {
+    const group = baked.filter((m) => coatOf(m.material as THREE.MeshStandardMaterial) > 0 === coated);
+    if (group.length < 2) continue;
+    const geos = group.map((m) => bake(prepared(m, ['position', 'normal']), m.material as THREE.MeshStandardMaterial));
     const merged = mergeGeometries(geos, false);
     geos.forEach((g) => g.dispose());
-    if (merged) {
-      for (const m of baked) {
-        parent.remove(m);
-        m.geometry.dispose();
-      }
-      const out = new THREE.Mesh(merged, uberMaterial());
-      out.name = `${parent.name || 'node'}-uber`;
-      parent.add(out);
+    if (!merged) continue;
+    for (const m of group) {
+      parent.remove(m);
+      m.geometry.dispose();
     }
+    const out = new THREE.Mesh(merged, uberMaterial(coated));
+    out.name = `${parent.name || 'node'}-uber${coated ? '' : '-matte'}`;
+    parent.add(out);
   }
 
   for (const [mat, meshes] of byMat) {

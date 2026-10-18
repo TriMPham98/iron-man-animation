@@ -90,8 +90,11 @@ export class SuitScanView {
     this.camera.lookAt(0, this.height * 0.5, 0);
   }
 
-  /** Advance the turntable + scan; re-render at most `hz` times a second. */
-  update(dt: number, renderer: THREE.WebGLRenderer, hz = 12): void {
+  /**
+   * Advance the turntable + scan; re-render at most `hz` times a second,
+   * and only while the screen showing it is on camera (`onScreen`).
+   */
+  update(dt: number, renderer: THREE.WebGLRenderer, onScreen = true, hz = 12): void {
     this.time += dt;
     this.rig.rotation.y = this.time * 0.45;
     // Head → feet sweep, 3.2 s per pass with a short hold at the feet
@@ -105,7 +108,7 @@ export class SuitScanView {
     // Throttled by time and by frame count so slow GPUs never pay every frame
     this.sinceRender += dt;
     this.frames++;
-    if (this.sinceRender < 1 / hz || this.frames < 3) return;
+    if (!onScreen || this.sinceRender < 1 / hz || this.frames < 3) return;
     this.sinceRender = 0;
     this.frames = 0;
     const prev = renderer.getRenderTarget();

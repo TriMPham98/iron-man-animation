@@ -793,7 +793,7 @@ export class Workshop {
   update(dt: number, renderer?: THREE.WebGLRenderer): void {
     this.env.update(dt);
     this.detail.update(dt);
-    if (renderer) this.scanView.update(dt, renderer);
+    if (renderer) this.scanView.update(dt, renderer, this.env.takeFeedSeen());
   }
 
   /** Every arm deployed at home. */

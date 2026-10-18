@@ -118,10 +118,19 @@ function floorTexture(): THREE.CanvasTexture {
  * (the blade track, then lens-barrel rings, as in a camera barrel), panelled
  * walls with ribs and lights that fall away into the dark, and a grated
  * floor. All static: Workshop merges it into a handful of draws.
+ *
+ * Everything under the deck sits in `below`, so it can be skipped while the
+ * iris is shut over it; only the bezel stays on the deck.
  */
-export function aperturePit(trim: THREE.Material, keep: <T extends { dispose: () => void }>(x: T) => T): THREE.Group {
+export function aperturePit(
+  trim: THREE.Material,
+  keep: <T extends { dispose: () => void }>(x: T) => T,
+): { group: THREE.Group; below: THREE.Group } {
   const group = new THREE.Group();
   group.name = 'aperture-pit';
+  const below = new THREE.Group();
+  below.name = 'aperture-pit-below';
+  group.add(below);
 
   // Throat profiles (r, y). Lathe normals face out when the profile runs
   // upwards, so the outer throat (seen from inside) runs downwards.
@@ -167,7 +176,7 @@ export function aperturePit(trim: THREE.Material, keep: <T extends { dispose: ()
     [bezel, 160],
   ] as const) {
     const geo = keep(new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), n));
-    group.add(new THREE.Mesh(geo, trim));
+    (pts === bezel ? group : below).add(new THREE.Mesh(geo, trim));
   }
 
   // Walls: the bay texture repeats once per blade (outer) / per 16th (inner)
@@ -192,7 +201,7 @@ export function aperturePit(trim: THREE.Material, keep: <T extends { dispose: ()
     const h = PIT_DEPTH - THROAT;
     const m = new THREE.Mesh(keep(new THREE.CylinderGeometry(r, r, h, bays * 4, 1, true)), mat);
     m.position.y = -THROAT - h / 2;
-    group.add(m);
+    below.add(m);
   };
   wall(APERTURE_OUTER, 24, THREE.BackSide);
   wall(APERTURE_INNER, 12, THREE.FrontSide);
@@ -210,7 +219,7 @@ export function aperturePit(trim: THREE.Material, keep: <T extends { dispose: ()
       const rr = r + (sgn * s) / 2;
       rib.position.set(Math.cos(a) * rr, -THROAT - ribH / 2, Math.sin(a) * rr);
       rib.rotation.y = -a + Math.PI / 2;
-      group.add(rib);
+      below.add(rib);
     }
   }
 
@@ -221,6 +230,6 @@ export function aperturePit(trim: THREE.Material, keep: <T extends { dispose: ()
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = -PIT_DEPTH;
-  group.add(floor);
-  return group;
+  below.add(floor);
+  return { group, below };
 }
