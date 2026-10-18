@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GRAVITY, SPEED_OF_SOUND } from '../world/config';
+import { BACK_SPEED, Gait, RUN_SPEED, STRAFE_RUN, STRAFE_SPEED, WALK_SPEED } from './walkCycle';
 
 /**
  * Flight dynamics of the suit. A point mass with a body attitude: the boots
@@ -18,6 +19,13 @@ import { GRAVITY, SPEED_OF_SOUND } from '../world/config';
  * The two blend through the transition, so pushing forward from a hover
  * leans the suit over into flight, and pulling the throttle back flares it
  * upright into a hover again.
+ *
+ * On the ground the suit walks: the same keys mean something else there.
+ * W/S walk forward and back and A/D sidestep (relative to where the pilot
+ * looks; the body turns to the look on stepping feet), Shift jogs, and the
+ * climb command (Space) is the only way up — a jump-jet hop into a hover,
+ * after which every key has its flight meaning again. Coming down slow and
+ * upright onto ground sets the boots down and it walks again.
  */
 
 export interface FlightInput {
@@ -68,6 +76,12 @@ const CLIMB_SPEED = 16;
 /** Time to build to the full yaw rate (s), and the ease on the yaw acceleration (s). */
 const YAW_RAMP = 0.22;
 const YAW_EASE = 0.05;
+/** Walking: tallest step the suit takes in its stride, the drop it steps down (m). */
+export const STEP_UP = 0.8;
+export const STEP_DOWN = 1.0;
+/** Seconds after leaving the ground before it can settle again / the throttle counts. */
+const HOP_GUARD = 0.35;
+const HOP_THROTTLE = 0.5;
 /** Above this, the air is too thin and the suit starts icing (m). */
 export const ICING_ALT = 9000;
 export const CEILING = 11500;
@@ -89,7 +103,7 @@ export interface GroundProbe {
   normal(x: number, z: number, out: THREE.Vector3): THREE.Vector3;
 }
 
-export type ContactKind = 'none' | 'landed' | 'touchdown' | 'heroLanding' | 'impact' | 'splash';
+export type ContactKind = 'none' | 'landed' | 'touchdown' | 'heroLanding' | 'impact' | 'splash' | 'footstep';
 
 export class FlightModel {
   readonly pos = new THREE.Vector3();
@@ -128,6 +142,14 @@ export class FlightModel {
   icing = 0;
   /** Suit power 0–1 (0 = rebooting: no thrust, the suit falls). */
   power = 1;
+  /** The legs: gait, planted boots and footfalls while on the ground. */
+  readonly gait = new Gait();
+  /** Seconds since the boots left the ground. */
+  airT = 0;
+  /** Standing still, the body only turns to the look once it's well round (then all the way). */
+  private walkTurn = false;
+  /** Shift held through a take-off doesn't light the boost until it's pressed again. */
+  private boostLatch = false;
 
   private readonly _f = new THREE.Vector3();
   private readonly _u = new THREE.Vector3();
@@ -140,7 +162,7 @@ export class FlightModel {
   private readonly _q2 = new THREE.Quaternion();
   private readonly _prevVel = new THREE.Vector3();
 
-  constructor(private readonly ground: GroundProbe) {}
+  constructor(readonly ground: GroundProbe) {}
 
   /** Stand on the ground at a point, facing a heading (rad, 0 = +Z). */
   placeOnGround(x: number, z: number, heading: number): void {
@@ -155,6 +177,14 @@ export class FlightModel {
     this.speedCmd = 0;
     this.thrust = 0;
     this.grounded = true;
+    this.crouch = 0;
+    this.gait.attach(this.pos, heading, this.ground);
+  }
+
+  /** Heading of the body (rad, 0 = +Z). */
+  get heading(): number {
+    const f = this.forward(this._f);
+    return Math.atan2(f.x, f.z);
   }
 
   /** Height of the centre of mass over the lowest point of the body. */
@@ -194,6 +224,25 @@ export class FlightModel {
   step(dt: number, input: FlightInput): void {
     this.contact = 'none';
     this.crouch = Math.max(0, this.crouch - dt);
+    // On the ground the suit walks; only the climb command takes it up
+    if (this.grounded) {
+      const takeoff = input.vertical > 0.05 && this.crouch <= 0 && this.power > 0.5;
+      if (!takeoff) {
+        this.stepWalk(dt, input);
+        this.syncGait(dt);
+        return;
+      }
+      // Jump-jet hop: the boots light already spooled to hold the weight and
+      // kick it clear of the deck, so it never sits on the threshold
+      this.grounded = false;
+      this.airT = 0;
+      this.vel.y = Math.max(this.vel.y, 3.2);
+      this.thrust = Math.max(this.thrust, GRAVITY * 1.05);
+      this.boostLatch = input.boost;
+      this.speedCmd = 0;
+    }
+    this.airT += dt;
+    if (!input.boost) this.boostLatch = false;
     this._prevVel.copy(this.vel);
     const speed = this.vel.length();
     const f = this.forward(this._f);
@@ -201,10 +250,11 @@ export class FlightModel {
     const l = this._l.crossVectors(u, f); // left
 
     // ── Throttle / regime ────────────────────────────────────────────
-    this.boosting = input.boost && !this.grounded && this.power > 0.5;
+    this.boosting = input.boost && !this.boostLatch && !this.grounded && this.power > 0.5;
     if (input.brake || input.stance) {
       this.speedCmd = Math.max(0, this.speedCmd - 220 * dt);
-    } else {
+    } else if (this.airT > HOP_THROTTLE) {
+      // (a W held through the hop waits for it to clear the deck)
       this.speedCmd = clamp(this.speedCmd + input.throttle * 85 * dt, 0, CRUISE_MAX);
     }
     // In a hover, forward stick alone carries you into flight once you're quick
@@ -302,14 +352,8 @@ export class FlightModel {
       .addScaledVector(fwdFlat, (input.forward + this.speedCmd / 30) * HOVER_SPEED)
       .addScaledVector(leftFlat, -input.lateral * HOVER_SPEED * 0.8);
     vWant.y = input.vertical * CLIMB_SPEED;
-    // Off the deck: any command to move hops the suit up first
-    const moving = this.speedCmd > 0.5 || Math.abs(input.lateral) > 0.1 || Math.abs(input.forward) > 0.1;
-    if (this.grounded && (moving || input.vertical > 0.05)) {
-      this.grounded = false;
-      vWant.y = Math.max(vWant.y, 6);
-    } else if (this.grounded) {
-      vWant.set(0, -1, 0);
-    }
+    // Just off the deck: keep climbing clear whatever the stick says
+    if (this.airT < HOP_GUARD) vWant.y = Math.max(vWant.y, 4);
     // Height first, then what thrust is left goes to the horizontal (a real
     // VTOL computer never trades altitude for a stop)
     const hoverMax = THRUST_MAX * 1.1 * ceilingK;
@@ -382,6 +426,144 @@ export class FlightModel {
     this.gLoad += (felt.length() / GRAVITY - this.gLoad) * approach(dt, 0.2);
 
     this.collide(dt, input);
+    this.syncGait(dt);
+  }
+
+  /** Keep the legs' contacts in step with the ground state. */
+  private syncGait(dt: number): void {
+    const g = this.gait;
+    if (this.grounded && !g.attached) g.attach(this.pos, this.heading, this.ground);
+    else if (!this.grounded && g.attached) g.detach(this.pos, this.bodyQuaternion(this._q));
+    if (!this.grounded) g.step(dt, this.pos, this.heading, this.vel, this.omega.y, this.crouch, this.ground);
+  }
+
+  /**
+   * On foot: turn to the look on stepping feet, walk / sidestep / jog
+   * relative to it, step up kerbs and down ledges, stop at walls.
+   */
+  private stepWalk(dt: number, input: FlightInput): void {
+    this._prevVel.copy(this.vel);
+    const ground = this.ground;
+    const stuck = this.crouch > 0 || this.power < 0.5;
+    // Intent: W/S (or the stick) forward, A/D sideways, Shift jogs
+    let fwdIn = Math.abs(input.throttle) >= Math.abs(input.forward) ? input.throttle : input.forward;
+    let latIn = input.lateral;
+    if (stuck) fwdIn = latIn = 0;
+    fwdIn = clamp(fwdIn, -1, 1);
+    latIn = clamp(latIn, -1, 1);
+    const moving = Math.hypot(fwdIn, latIn) > 0.08;
+    const run = input.boost && !input.stance;
+
+    // ── Heading: the body follows the look ──────────────────────────
+    const aim = this._a.copy(input.aim);
+    const aimHeading = Math.hypot(aim.x, aim.z) > 1e-3 ? Math.atan2(aim.x, aim.z) : this.heading;
+    const heading = this.heading;
+    const yawErrRaw = Math.atan2(Math.sin(aimHeading - heading), Math.cos(aimHeading - heading));
+    if (moving || Math.abs(yawErrRaw) > 0.7) this.walkTurn = true;
+    else if (Math.abs(yawErrRaw) < 0.03 && Math.abs(this.omega.y) < 0.2) this.walkTurn = false;
+    const yawErr = this.walkTurn && !stuck ? yawErrRaw : 0;
+    // The same eased S-curve as the air, at a walker's rates
+    const maxYaw = run ? 2.6 : 2.1;
+    const yawAccMax = maxYaw / 0.3;
+    const yawErrAbs = Math.abs(yawErr);
+    const wantYaw = Math.sign(yawErr) * Math.min(maxYaw, yawErrAbs * 5, Math.sqrt(2 * yawAccMax * 0.75 * yawErrAbs));
+    const yawAccGoal = clamp((wantYaw - this.omega.y) / 0.07, -yawAccMax, yawAccMax);
+    this.yawAcc += (yawAccGoal - this.yawAcc) * approach(dt, YAW_EASE);
+    this.omega.y += this.yawAcc * dt;
+    this.omega.x *= 1 - approach(dt, 0.1);
+    this.omega.z *= 1 - approach(dt, 0.1);
+    const h = heading + this.omega.y * dt;
+    // Upright on the boots (eases out of any landing lean)
+    this._q.setFromAxisAngle(UP, h);
+    this.q.slerp(this._q, approach(dt, 0.08));
+    this.q.premultiply(this._q2.setFromAxisAngle(UP, h - this.heading)).normalize();
+
+    // ── Velocity: heavy — it leans into a start and plants to stop ──
+    const fwd = this._f.set(Math.sin(aimHeading), 0, Math.cos(aimHeading));
+    const left = this._l.set(Math.cos(aimHeading), 0, -Math.sin(aimHeading));
+    const vF = fwdIn >= 0 ? (run ? RUN_SPEED : WALK_SPEED) : BACK_SPEED * (run ? 1.4 : 1);
+    const vS = run ? STRAFE_RUN : STRAFE_SPEED;
+    const want = this._v.set(0, 0, 0).addScaledVector(fwd, fwdIn * vF).addScaledVector(left, -latIn * vS);
+    // Diagonals no faster than straight
+    const wl = Math.hypot(want.x, want.z);
+    const cap = Math.max(Math.abs(fwdIn * vF), Math.abs(latIn * vS));
+    if (wl > cap && wl > 1e-6) want.multiplyScalar(cap / wl);
+    const speeding = Math.hypot(want.x, want.z) > Math.hypot(this.vel.x, this.vel.z);
+    const k = approach(dt, speeding ? 0.32 : 0.2);
+    this.vel.x += (want.x - this.vel.x) * k;
+    this.vel.z += (want.z - this.vel.z) * k;
+    this.vel.y = 0;
+
+    // ── Ground: step up / down, walls stop it ────────────────────────
+    const here = ground.surface(this.pos.x, this.pos.z);
+    const blocked = (x: number, z: number) => {
+      // Probe a body radius ahead along the move
+      const dx = x - this.pos.x;
+      const dz = z - this.pos.z;
+      const d = Math.hypot(dx, dz);
+      const px = d > 1e-6 ? x + (dx / d) * 0.32 : x;
+      const pz = d > 1e-6 ? z + (dz / d) * 0.32 : z;
+      for (const [qx, qz] of [
+        [x, z],
+        [px, pz],
+      ]) {
+        if (ground.isWater(qx, qz)) return true;
+        if (ground.surface(qx, qz) - here > STEP_UP) return true;
+      }
+      return false;
+    };
+    let nx = this.pos.x + this.vel.x * dt;
+    let nz = this.pos.z + this.vel.z * dt;
+    if (blocked(nx, nz)) {
+      // Slide along the wall if one axis is free
+      if (!blocked(nx, this.pos.z)) {
+        nz = this.pos.z;
+        this.vel.z = 0;
+      } else if (!blocked(this.pos.x, nz)) {
+        nx = this.pos.x;
+        this.vel.x = 0;
+      } else {
+        nx = this.pos.x;
+        nz = this.pos.z;
+        this.vel.x = this.vel.z = 0;
+      }
+    }
+    this.pos.x = nx;
+    this.pos.z = nz;
+    const there = ground.surface(nx, nz);
+    const hip = this.hipHeight();
+    if (here - there > STEP_DOWN && this.pos.y - hip - there > STEP_DOWN) {
+      // Walked off an edge: the boots catch it in a hover
+      this.grounded = false;
+      this.airT = HOP_GUARD;
+      this.walkTurn = false;
+    } else {
+      // Ride the ground, easing over steps
+      this.pos.y += (there + hip - this.pos.y) * approach(dt, 0.07);
+    }
+
+    // ── Flight state at rest ─────────────────────────────────────────
+    this.speedCmd = 0;
+    this.flightness = 0;
+    this.boosting = false;
+    this.thrust *= 1 - approach(dt, 0.12);
+    this.throttle = clamp(this.thrust / THRUST_BOOST, 0, 1);
+    this.airbrake *= 1 - approach(dt, 0.15);
+    this.trimRoll *= 1 - approach(dt, 0.2);
+    this.trimPitch *= 1 - approach(dt, 0.2);
+    this.gLoad += (1 - this.gLoad) * approach(dt, 0.2);
+    const pw = 2.15 / 0.45;
+    this.postureVel += (pw * pw * (0 - this.posture) - 2 * 0.85 * pw * this.postureVel) * dt;
+    this.posture += this.postureVel * dt;
+
+    // ── Legs ─────────────────────────────────────────────────────────
+    if (this.grounded) {
+      const strike = this.gait.step(dt, this.pos, this.heading, this.vel, this.omega.y, this.crouch, ground);
+      if (strike > 0) {
+        this.contact = 'footstep';
+        this.impactSpeed = strike;
+      }
+    }
   }
 
   private collide(dt: number, input: FlightInput): void {
@@ -416,7 +598,12 @@ export class FlightModel {
     // lifts off (> 0.5) — if this called it idle (< 1) it would set the suit
     // straight back down, zero speedCmd and land again on every physics step
     // (a 'landed' event at 120 Hz: the grating touchdown machine-gun)
-    const idle = input.throttle <= 0 && input.vertical <= 0.05 && this.speedCmd <= 0.5 && Math.abs(input.lateral) < 0.1 && Math.abs(input.forward) < 0.1;
+    // On foot the throttle and the side keys walk, so they don't hold it up:
+    // anything slow and upright that isn't climbing sets down and walks.
+    // Take-off is the climb command alone and settling needs it released
+    // (plus a beat clear of the deck), so the two can never trade places on
+    // alternate steps
+    const idle = input.vertical <= 0.05 && this.airT > HOP_GUARD;
     if (gentle && idle) {
       // Settled on the deck: boots down, weight on the legs
       if (!this.grounded) {
@@ -424,7 +611,10 @@ export class FlightModel {
         this.impactSpeed = into;
       }
       this.grounded = true;
-      this.vel.set(0, 0, 0);
+      // Keep the way it was drifting as the first steps (no faster than a jog)
+      this.vel.y = 0;
+      const hv = Math.hypot(this.vel.x, this.vel.z);
+      if (hv > RUN_SPEED) this.vel.multiplyScalar(RUN_SPEED / hv);
       this.flightness = 0;
       this.speedCmd = 0;
       return;

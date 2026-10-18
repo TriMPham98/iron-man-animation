@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { withLogDepth } from '../render/depth';
+import { RENDER_ORDER, sortFocus } from '../render/transparency';
 import type { Suit } from '../../suit/Suit';
 import type { BoneName } from '../../suit/rig';
 import type { Particles } from './particles';
@@ -136,6 +137,9 @@ export class Jets {
       const glow = new THREE.Sprite(
         new THREE.SpriteMaterial({ map: tex, color: 0xcfefff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }),
       );
+      // After the clouds beyond the suit, before any between it and the eye
+      sheath.renderOrder = core.renderOrder = RENDER_ORDER.plume;
+      glow.renderOrder = RENDER_ORDER.plumeGlow;
       for (const m of [sheath, core, glow]) {
         m.visible = false;
         m.frustumCulled = false;
@@ -152,7 +156,7 @@ export class Jets {
         new THREE.MeshBasicMaterial({ map: tex, color: 0x8fcfff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 }),
       );
       w.visible = false;
-      w.renderOrder = 4;
+      w.renderOrder = RENDER_ORDER.wash;
       this.washes.push(w);
       this.group.add(w);
     }
@@ -186,6 +190,9 @@ export class Jets {
     jr.dir.addScaledVector(side, mean - BOOT_SPLAY - jr.dir.dot(side)).normalize();
     // Start just off the plating so the sole never cuts into the flame
     for (const j of this.boots) j.pos.addScaledVector(j.dir, 0.02);
+    // The clouds split their draw at this distance (see render/transparency)
+    sortFocus.point.copy(this.boots[0].pos).add(this.boots[1].pos).multiplyScalar(0.5);
+    sortFocus.valid = true;
     suit.palms.forEach((p, i) => {
       const j = this.palms[i];
       suit.boneWorldPoint(p.bone, p.at, j.pos);

@@ -223,6 +223,16 @@ export class Combat {
     this.streaks.end();
   }
 
+  /**
+   * Once the suit is posed for the frame: the player's shots leave their
+   * hardware (muzzles where the suit is now, not a frame behind) and the
+   * streaks are closed for drawing.
+   */
+  afterPose(): void {
+    this.weapons.afterPose();
+    this.streaks.end();
+  }
+
   private readonly counted = new Set<number>();
 
   /** Enemy seekers on the suit right now. */

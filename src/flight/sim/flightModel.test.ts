@@ -35,18 +35,131 @@ describe('FlightModel', () => {
     expect(m.pos.y).toBeGreaterThan(10);
   });
 
-  it('moves off on the throttle alone from a standstill without re-landing every step', () => {
+  it('walks on W from a standstill: stays on its boots, steps, never lifts off', () => {
+    const m = new FlightModel(flat());
+    m.placeOnGround(0, 0, 0);
+    const kinds = new Set<string>();
+    let steps = 0;
+    run(m, 4, (i) => {
+      i.throttle = 1;
+      if (m.contact === 'footstep') steps++;
+      else if (m.contact !== 'none') kinds.add(m.contact);
+    });
+    expect(kinds.size).toBe(0);
+    expect(m.grounded).toBe(true);
+    expect(m.speedCmd).toBe(0);
+    expect(m.thrust).toBeLessThan(0.01);
+    expect(m.pos.z).toBeGreaterThan(4);
+    expect(m.speed).toBeGreaterThan(1.2);
+    expect(m.speed).toBeLessThan(2);
+    // A footfall per step at a heavy walking cadence
+    expect(steps).toBeGreaterThan(6);
+    expect(steps).toBeLessThan(14);
+  });
+
+  it('jogs with Shift, backs up on S and sidesteps on A/D relative to the look', () => {
+    const go = (set: (i: ReturnType<typeof EMPTY_INPUT>) => void) => {
+      const m = new FlightModel(flat());
+      m.placeOnGround(0, 0, 0);
+      run(m, 3, (i) => set(i));
+      expect(m.grounded).toBe(true);
+      return m;
+    };
+    const jog = go((i) => {
+      i.throttle = 1;
+      i.boost = true;
+    });
+    expect(jog.speed).toBeGreaterThan(3);
+    expect(jog.boosting).toBe(false);
+    const back = go((i) => (i.throttle = -1));
+    expect(back.pos.z).toBeLessThan(-1.5);
+    // D: strafe to the suit's right (−X when facing +Z), still facing ahead
+    const side = go((i) => (i.lateral = 1));
+    expect(side.pos.x).toBeLessThan(-1.5);
+    expect(Math.abs(side.heading)).toBeLessThan(0.05);
+  });
+
+  it('turns in place to the look on stepping feet', () => {
+    const m = new FlightModel(flat());
+    m.placeOnGround(0, 0, 0);
+    let steps = 0;
+    run(m, 2.5, (i) => {
+      i.aim.set(1, 0, 0);
+      if (m.contact === 'footstep') steps++;
+    });
+    expect(Math.abs(m.heading - Math.PI / 2)).toBeLessThan(0.05);
+    expect(m.grounded).toBe(true);
+    expect(Math.hypot(m.pos.x, m.pos.z)).toBeLessThan(0.3);
+    expect(steps).toBeGreaterThan(1);
+    // …and a small look round doesn't swivel the body
+    const before = m.heading;
+    run(m, 1, (i) => i.aim.set(1, 0, 0.4).normalize());
+    expect(Math.abs(m.heading - before)).toBeLessThan(0.01);
+  });
+
+  it('stops at a wall but steps up a kerb', () => {
+    const wall: GroundProbe = { ...flat(), surface: (_x, z) => (z > 3 ? 3 : z > 1.5 ? 0.4 : 0) };
+    const m = new FlightModel(wall);
+    m.placeOnGround(0, 0, 0);
+    run(m, 6, (i) => (i.throttle = 1));
+    expect(m.grounded).toBe(true);
+    expect(m.pos.z).toBeGreaterThan(1.6);
+    expect(m.pos.z).toBeLessThan(3);
+    expect(m.pos.y).toBeCloseTo(1.4, 1);
+  });
+
+  it('takes off on Space from a walk, then W is the throttle again — no re-landing', () => {
+    const m = new FlightModel(flat());
+    m.placeOnGround(0, 0, 0);
+    let landings = 0;
+    let takeoffs = 0;
+    let was = true;
+    run(m, 5, (i, t) => {
+      i.throttle = 1;
+      i.boost = true; // jogging, Shift held through the hop
+      i.vertical = t > 1 && t < 1.8 ? 1 : 0;
+      if (was && !m.grounded) takeoffs++;
+      if (['landed', 'touchdown', 'heroLanding', 'impact'].includes(m.contact)) landings++;
+      was = m.grounded;
+      // Shift held from the ground doesn't fire the boost
+      if (t < 4) expect(m.boosting).toBe(false);
+    });
+    expect(takeoffs).toBe(1);
+    expect(landings).toBe(0);
+    expect(m.grounded).toBe(false);
+    expect(m.speedCmd).toBeGreaterThan(100);
+    expect(m.pos.y).toBeGreaterThan(3);
+  });
+
+  it('a tap of Space hops and settles back once, never flapping', () => {
+    const m = new FlightModel(flat());
+    m.placeOnGround(0, 0, 0);
+    let flips = 0;
+    let was = true;
+    run(m, 6, (i, t) => {
+      i.vertical = t > 0.5 && t < 0.62 ? 1 : 0;
+      if (m.grounded !== was) flips++;
+      was = m.grounded;
+    });
+    expect(flips).toBeLessThanOrEqual(2);
+  });
+
+  it('lands from a hover and walks again', () => {
     const m = new FlightModel(flat());
     m.placeOnGround(0, 0, 0);
     let contacts = 0;
-    run(m, 3, (i) => {
-      i.throttle = 1;
-      if (m.contact !== 'none') contacts++;
+    run(m, 12, (i, t) => {
+      i.vertical = t < 1 ? 1 : t < 7 ? -0.35 : 0;
+      // Drifting forward in the hover on the way down, then W once down: a walk
+      i.forward = t > 3 && t < 7 ? 0.15 : 0;
+      i.throttle = t > 9 ? 1 : 0;
+      if (m.contact !== 'none' && m.contact !== 'footstep') contacts++;
     });
-    expect(contacts).toBeLessThan(3);
-    expect(m.grounded).toBe(false);
-    expect(m.speedCmd).toBeGreaterThan(100);
-    expect(m.speed).toBeGreaterThan(10);
+    expect(contacts).toBe(1);
+    expect(m.grounded).toBe(true);
+    expect(m.flightness).toBe(0);
+    expect(m.speed).toBeGreaterThan(0.1);
+    expect(m.speed).toBeLessThan(2);
   });
 
   it('leans over into flight on the throttle and holds the commanded speed', () => {

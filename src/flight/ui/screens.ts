@@ -1,75 +1,87 @@
+import './screens.css';
+
 /**
  * Boot, title and pause screens over the sim: JARVIS-styled, quiet, and out
  * of the way the moment the suit is flying.
+ *
+ * The pause menu is a holographic panel: resume / restart / camera, the
+ * controls reference (ground and flight), audio levels (master, effects,
+ * JARVIS's voice) and a graphics preset. Mouse, keyboard (arrows, Enter,
+ * Esc) and gamepad (D-pad / left stick, A, B, Start) all drive it; every
+ * setting persists in localStorage. Styles: ./screens.css.
  */
 
-const CSS = /* css */ `
-#flight-ui { position: fixed; inset: 0; z-index: 5; pointer-events: none; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; color: #e8f6ff; }
-#flight-ui .screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.9s ease; }
-#flight-ui .screen.hidden { opacity: 0; pointer-events: none !important; }
-#flight-ui .boot { background: #050a12; pointer-events: auto; }
-#flight-ui .boot .ring { width: 92px; height: 92px; border-radius: 50%; border: 1px solid rgba(126,232,255,0.25); position: relative; margin-bottom: 28px; box-shadow: 0 0 40px rgba(126,232,255,0.15) inset; }
-#flight-ui .boot .ring::after { content: ''; position: absolute; inset: 10px; border-radius: 50%; border: 2px solid transparent; border-top-color: #7ee8ff; animation: fspin 1.1s linear infinite; }
-#flight-ui .boot .core { position: absolute; inset: 34px; border-radius: 50%; background: radial-gradient(circle, #e8fcff 0%, #7ee8ff 45%, rgba(126,232,255,0) 75%); filter: blur(0.5px); }
-@keyframes fspin { to { transform: rotate(360deg); } }
-#flight-ui .boot .lines { font-size: 11px; letter-spacing: 0.12em; color: rgba(126,232,255,0.75); min-height: 7.5em; text-align: left; width: min(26rem, 86vw); line-height: 1.5; }
-#flight-ui .boot .bar { width: min(26rem, 86vw); height: 2px; background: rgba(126,232,255,0.15); margin-top: 14px; }
-#flight-ui .boot .bar i { display: block; height: 100%; width: 0; background: #7ee8ff; box-shadow: 0 0 10px #7ee8ff; transition: width 0.3s ease; }
-#flight-ui .title { pointer-events: auto; cursor: pointer; background: linear-gradient(90deg, rgba(3,8,14,0.62) 0%, rgba(3,8,14,0.2) 42%, rgba(3,8,14,0) 60%); justify-content: center; align-items: flex-start; padding-left: 7vw; }
-#flight-ui .title h1 { font-family: Michroma, sans-serif; font-weight: 400; font-size: clamp(30px, 4.6vw, 66px); letter-spacing: 0.3em; margin: 0; color: #fff; text-shadow: 0 0 30px rgba(126,232,255,0.35); }
-#flight-ui .title .sub { font-family: Michroma, sans-serif; font-size: clamp(9px, 1vw, 12px); letter-spacing: 0.5em; color: rgba(126,232,255,0.85); margin: 12px 0 34px 0.2em; }
-#flight-ui .title .cta { font-family: Michroma, sans-serif; font-size: 12px; letter-spacing: 0.4em; padding: 14px 30px 14px 34px; border: 1px solid rgba(126,232,255,0.55); color: #e8fcff; background: rgba(6,16,26,0.35); animation: fpulse 2.4s ease-in-out infinite; }
-@keyframes fpulse { 50% { box-shadow: 0 0 26px rgba(126,232,255,0.35); border-color: rgba(126,232,255,0.95); } }
-#flight-ui .keys { display: grid; grid-template-columns: repeat(2, auto); gap: 6px 26px; margin-top: 34px; font-size: 10.5px; letter-spacing: 0.06em; color: rgba(232,246,255,0.72); }
-#flight-ui .keys b { color: #7ee8ff; font-weight: 600; margin-right: 8px; }
-#flight-ui .pause .keys { grid-template-columns: repeat(4, auto); }
-#flight-ui .pause { pointer-events: auto; cursor: pointer; background: rgba(3,8,14,0.62); backdrop-filter: blur(3px); }
-#flight-ui .pause h2 { font-family: Michroma, sans-serif; font-weight: 400; letter-spacing: 0.4em; font-size: 20px; margin: 0 0 8px; }
-#flight-ui .pause .hint { font-size: 11px; color: rgba(126,232,255,0.8); letter-spacing: 0.2em; }
-#flight-ui .opts { display: flex; gap: 22px; margin-top: 26px; font-size: 11px; pointer-events: auto; }
-#flight-ui .opts label { display: flex; align-items: center; gap: 8px; color: rgba(232,246,255,0.8); cursor: pointer; }
-#flight-ui .opts input[type=range] { accent-color: #7ee8ff; width: 110px; }
-#flight-ui .opts input[type=checkbox] { accent-color: #7ee8ff; }
-#flight-ui .back { position: absolute; top: 22px; left: 26px; font-family: Michroma, sans-serif; font-size: 10px; letter-spacing: 0.32em; color: rgba(126,232,255,0.85); text-decoration: none; padding: 8px 10px; pointer-events: auto; }
-#flight-ui .back:hover { color: #fff; }
-@media (max-width: 720px) { #flight-ui .keys { grid-template-columns: repeat(2, auto); } }
-/* Flown in from the workshop: the world stays the picture, the controls come up beside it */
-#flight-ui .title.handoff { background: linear-gradient(90deg, rgba(3,8,14,0.5) 0%, rgba(3,8,14,0.12) 38%, rgba(3,8,14,0) 55%); transition: opacity 1.4s ease; }
-#flight-ui .title.handoff h1 { font-size: clamp(22px, 3.2vw, 44px); }
-#flight-ui .title.handoff .keys { opacity: 0.85; }
-#flight-ui .title.handoff > * { animation: fhandin 1.1s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-#flight-ui .title.handoff > :nth-child(2) { animation-delay: 0.08s; }
-#flight-ui .title.handoff > :nth-child(3) { animation-delay: 0.16s; }
-#flight-ui .title.handoff > :nth-child(4) { animation-delay: 0.26s; }
-#flight-ui .title.handoff > :nth-child(5) { animation-delay: 0.36s; }
-@keyframes fhandin { from { opacity: 0; transform: translateX(-14px); } }
-@media (prefers-reduced-motion: reduce) { #flight-ui .title.handoff > * { animation: none; } }
-`;
+type Row = [key: string, action: string];
 
-const KEYS: Array<[string, string]> = [
-  ['MOUSE', 'aim / steer'],
-  ['W / S', 'throttle'],
-  ['A / D', 'roll · strafe'],
-  ['SPACE / C', 'climb · descend'],
-  ['SHIFT', 'boost'],
-  ['X', 'air brake · hover'],
-  ['LMB', 'repulsors'],
-  ['RMB', 'paint · fire rockets'],
-  ['Q', 'unibeam'],
-  ['F', 'flares'],
-  ['G', 'forearm launchers'],
-  ['V', 'camera'],
-  ['N', 'call a wave'],
-  ['R', 'reset to the house'],
-  ['WHEEL', 'camera distance'],
-  ['ESC', 'pause'],
-];
+/**
+ * The controls reference. GROUND = on foot (the movement keys walk; Space
+ * takes off and they fly), FLIGHT = in the air, ANY TIME = both.
+ */
+export const CONTROLS: { ground: Row[]; flight: Row[]; always: Row[] } = {
+  ground: [
+    ['MOUSE', 'look · turn'],
+    ['W A S D', 'walk'],
+    ['SHIFT', 'run'],
+    ['SPACE', 'take off'],
+  ],
+  flight: [
+    ['MOUSE', 'aim / steer'],
+    ['W / S', 'throttle'],
+    ['A / D', 'roll · strafe'],
+    ['SPACE', 'climb'],
+    ['C', 'descend · land'],
+    ['SHIFT', 'boost'],
+    ['X', 'air brake · hover'],
+    ['LMB', 'repulsors'],
+    ['RMB', 'paint · fire rockets'],
+    ['Q', 'unibeam'],
+    ['F', 'flares'],
+    ['G', 'forearm launchers'],
+  ],
+  always: [
+    ['V', 'camera'],
+    ['WHEEL', 'camera distance'],
+    ['R', 'reset to the house'],
+    ['N', 'call a wave'],
+    ['ESC', 'pause'],
+  ],
+};
+
+export type Quality = 'low' | 'medium' | 'high' | 'ultra';
+export const QUALITY: Record<Quality, { label: string; note: string }> = {
+  low: { label: 'LOW', note: '0.7× res · no shadows' },
+  medium: { label: 'MEDIUM', note: '1.0× res' },
+  high: { label: 'HIGH', note: '1.25× res' },
+  ultra: { label: 'ULTRA', note: 'native' },
+};
 
 export interface Settings {
   invertY: boolean;
   sensitivity: number;
+  /** Master volume (0–1). */
   volume: number;
+  /** Effects volume (0–1). */
+  sfx: number;
+  /** JARVIS's voice volume (0–1). */
+  voice: number;
+  quality: Quality;
 }
+
+const DEFAULTS: Settings = { invertY: false, sensitivity: 1, volume: 0.9, sfx: 1, voice: 1, quality: 'ultra' };
+const STORE = 'mk3-flight-settings';
+
+/** What the pause menu's buttons do (wired by the app: src/flight/ui/flightSettings.ts). */
+export interface PauseActions {
+  restart?: () => void;
+  /** Next camera; returns its name. */
+  cycleCamera?: () => string;
+  cameraName?: () => string;
+  /** Resume without pointer lock (a pad or a key that can't take the lock). */
+  forceResume?: () => void;
+}
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&${{ '&': 'amp', '<': 'lt', '>': 'gt', '"': 'quot' }[c]};`);
+const rows = (r: Row[]) => r.map(([k, v]) => `<kbd>${esc(k)}</kbd><span>${esc(v)}</span>`).join('');
 
 export class Screens {
   private readonly root: HTMLElement;
@@ -79,36 +91,117 @@ export class Screens {
   private readonly lines: HTMLElement;
   private readonly bar: HTMLElement;
   private log: string[] = [];
+  private readonly listeners: Array<(s: Settings) => void> = [];
+  private onResume: () => void = () => {};
+  private padRaf = 0;
+  private padPrev: boolean[] = [];
+  private padRepeat = 0;
+  private padAxisHeld = 0;
+  private lastFocus: HTMLElement | null = null;
   settings: Settings;
+  /** The app's settings hook (kept for the app; others use {@link addSettingsListener}). */
   onSettings: (s: Settings) => void = () => {};
+  actions: PauseActions = {};
 
   /**
    * @param root The UI layer (defaults to #flight-ui).
    * @param opts.embedded Flown into from the workshop: no boot screen.
    */
   constructor(root?: HTMLElement, opts: { embedded?: boolean } = {}) {
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    document.head.appendChild(style);
     this.root = root ?? document.getElementById('flight-ui')!;
     const saved = (() => {
       try {
-        return JSON.parse(localStorage.getItem('mk3-flight-settings') ?? 'null') as Settings | null;
+        return JSON.parse(localStorage.getItem(STORE) ?? 'null') as Partial<Settings> | null;
       } catch {
         return null;
       }
     })();
-    this.settings = { invertY: false, sensitivity: 1, volume: 0.9, ...(saved ?? {}) };
-    const keys = KEYS.map(([k, v]) => `<div><b>${k}</b>${v}</div>`).join('');
+    this.settings = { ...DEFAULTS, ...(saved ?? {}) };
+    if (!(this.settings.quality in QUALITY)) this.settings.quality = DEFAULTS.quality;
+    const keyCell = ([k, v]: Row) => `<div><b>${esc(k)}</b>${esc(v)}</div>`;
+    const titleKeys =
+      `<div class="kh">GROUND</div>${CONTROLS.ground.map(keyCell).join('')}` +
+      `<div class="kh">FLIGHT</div>${CONTROLS.flight.slice(1).map(keyCell).join('')}` +
+      `<div class="kh">ANY TIME</div>${CONTROLS.always.map(keyCell).join('')}`;
+    const pct = (k: 'volume' | 'sfx' | 'voice', label: string, id: string) => `
+      <div class="fp-field"><label for="${id}">${label}</label>
+        <input class="fp-range" id="${id}" type="range" min="0" max="1" step="0.05" data-k="${k}">
+        <output for="${id}"></output></div>`;
     this.root.innerHTML = `
       <div class="screen boot"><div class="ring"><div class="core"></div></div><div class="lines"></div><div class="bar"><i></i></div></div>
-      <div class="screen title hidden"><a class="back" href="/" title="Back to the workshop">&#x2190; WORKSHOP</a><h1>MARK III</h1><div class="sub">FLIGHT · MALIBU · GOLDEN HOUR</div><div class="cta">CLICK TO ENGAGE</div><div class="keys">${keys}</div></div>
-      <div class="screen pause hidden"><a class="back" href="/" title="Back to the workshop">&#x2190; WORKSHOP</a><h2>PAUSED</h2><div class="hint">CLICK TO RESUME</div><div class="keys">${keys}</div>
-        <div class="opts">
-          <label><input type="checkbox" data-k="invertY"> invert pitch</label>
-          <label>sensitivity <input type="range" min="0.3" max="2.5" step="0.05" data-k="sensitivity"></label>
-          <label>volume <input type="range" min="0" max="1" step="0.02" data-k="volume"></label>
-        </div></div>`;
+      <div class="screen title hidden"><a class="back" href="/" title="Back to the workshop">&#x2190; WORKSHOP</a><h1>MARK III</h1><div class="sub">FLIGHT · MALIBU · GOLDEN HOUR</div><div class="cta">CLICK TO ENGAGE</div><div class="keys">${titleKeys}</div></div>
+      <div class="screen pause hidden" role="dialog" aria-modal="true" aria-labelledby="fp-title">
+        <div class="fp-scrim" data-act="resume" title="Resume"></div>
+        <div class="fp-panel">
+          <i class="fp-sweep"></i><i class="fp-sweep2"></i>
+          <i class="fp-corner tl"></i><i class="fp-corner tr"></i><i class="fp-corner bl"></i><i class="fp-corner br"></i>
+          <header class="fp-head">
+            <div class="fp-reactor" aria-hidden="true"></div>
+            <div>
+              <div class="fp-eyebrow">J.A.R.V.I.S. · FLIGHT SYSTEMS</div>
+              <h2 id="fp-title">PAUSED</h2>
+              <div class="fp-status"><span class="dot"></span>SIM HELD · MK III · <span data-cam-name></span> CAM</div>
+            </div>
+          </header>
+          <div class="fp-body">
+            <nav class="fp-nav" aria-label="Pause menu">
+              <button class="fp-btn primary" data-act="resume">RESUME <kbd>ESC</kbd></button>
+              <button class="fp-btn" data-act="restart">RESTART <small>at the house</small></button>
+              <button class="fp-btn" data-act="camera">CAMERA <span class="val" data-cam-name></span></button>
+              <div class="fp-sep"></div>
+              <button class="fp-btn" data-tab="controls" role="tab" aria-selected="true" aria-controls="fp-controls">CONTROLS</button>
+              <button class="fp-btn" data-tab="audio" role="tab" aria-selected="false" aria-controls="fp-audio">AUDIO</button>
+              <button class="fp-btn" data-tab="graphics" role="tab" aria-selected="false" aria-controls="fp-graphics">GRAPHICS</button>
+              <div class="fp-sep"></div>
+              <a class="fp-btn exit" href="/" data-act="workshop">&#x2190; BACK TO WORKSHOP</a>
+            </nav>
+            <div class="fp-panes">
+              <section class="fp-pane on" id="fp-controls" role="tabpanel" data-pane="controls">
+                <div class="fp-h">AIM</div>
+                <div class="fp-field"><label for="fp-sens">SENSITIVITY</label>
+                  <input class="fp-range" id="fp-sens" type="range" min="0.3" max="2.5" step="0.05" data-k="sensitivity"><output for="fp-sens"></output></div>
+                <div class="fp-field toggle"><span class="lbl" id="fp-inv-l">INVERT PITCH</span>
+                  <button class="fp-switch" role="switch" aria-labelledby="fp-inv-l" data-k="invertY"></button></div>
+                <div class="fp-ref" style="margin-top:16px">
+                  <section><div class="fp-h">GROUND</div><div class="fp-rows" data-rows="ground">${rows(CONTROLS.ground)}</div></section>
+                  <section><div class="fp-h">FLIGHT</div><div class="fp-rows" data-rows="flight">${rows(CONTROLS.flight)}</div></section>
+                  <section class="wide"><div class="fp-h">ANY TIME</div><div class="fp-rows" data-rows="always">${rows(CONTROLS.always)}</div></section>
+                  <section class="wide"><div class="fp-h">GAMEPAD</div><div class="fp-rows">${rows([
+                    ['R STICK', 'aim'],
+                    ['L STICK', 'move · strafe · roll'],
+                    ['RT / LT', 'throttle · brake'],
+                    ['A / X', 'climb · descend'],
+                    ['RB / LB', 'repulsors · rockets'],
+                    ['Y / B', 'unibeam · flares'],
+                    ['L3 / R3', 'boost · camera'],
+                    ['START', 'pause'],
+                  ])}</div></section>
+                </div>
+              </section>
+              <section class="fp-pane" id="fp-audio" role="tabpanel" data-pane="audio">
+                <div class="fp-h">LEVELS</div>
+                ${pct('volume', 'MASTER', 'fp-vol')}
+                ${pct('sfx', 'EFFECTS', 'fp-sfx')}
+                ${pct('voice', 'J.A.R.V.I.S.', 'fp-voice')}
+                <p class="fp-note">Effects duck under JARVIS while he speaks.</p>
+              </section>
+              <section class="fp-pane" id="fp-graphics" role="tabpanel" data-pane="graphics">
+                <div class="fp-h">QUALITY PRESET</div>
+                <p class="fp-note">Resolution scale on top of the automatic frame-rate guard.</p>
+                <div class="fp-seg" role="radiogroup" aria-label="Graphics quality">
+                  ${(Object.keys(QUALITY) as Quality[])
+                    .map((q) => `<button role="radio" data-q="${q}" aria-checked="false">${QUALITY[q].label}<small>${QUALITY[q].note}</small></button>`)
+                    .join('')}
+                </div>
+              </section>
+            </div>
+          </div>
+          <footer class="fp-foot">
+            <span class="kb"><b>&#x2191;&#x2193;</b>navigate</span><span class="kb"><b>&#x2190;&#x2192;</b>adjust</span><span class="kb"><b>ENTER</b>select</span><span class="kb"><b>ESC</b>resume</span>
+            <span class="pad"><b>D-PAD</b>navigate · adjust</span><span class="pad"><b>A</b>select</span><span class="pad"><b>B</b>back</span><span class="pad"><b>START</b>resume</span>
+          </footer>
+        </div>
+      </div>`;
     this.boot = this.root.querySelector('.boot')!;
     this.title = this.root.querySelector('.title')!;
     this.pause = this.root.querySelector('.pause')!;
@@ -118,23 +211,249 @@ export class Screens {
       this.boot.style.transition = 'none';
       this.boot.classList.add('hidden');
     }
-    for (const input of this.root.querySelectorAll<HTMLInputElement>('.opts input')) {
-      const k = input.dataset.k as keyof Settings;
-      if (input.type === 'checkbox') input.checked = this.settings[k] as boolean;
-      else input.value = String(this.settings[k]);
-      input.addEventListener('click', (e) => e.stopPropagation());
-      input.addEventListener('input', () => {
-        (this.settings as unknown as Record<string, unknown>)[k] = input.type === 'checkbox' ? input.checked : Number(input.value);
-        try {
-          localStorage.setItem('mk3-flight-settings', JSON.stringify(this.settings));
-        } catch {
-          /* private mode */
-        }
-        this.onSettings(this.settings);
-      });
-    }
-    for (const label of this.root.querySelectorAll('.opts label')) label.addEventListener('click', (e) => e.stopPropagation());
+    this.bindPause();
+    this.syncInputs();
   }
+
+  /** Called with the settings whenever one changes (and not at once). */
+  addSettingsListener(fn: (s: Settings) => void): void {
+    this.listeners.push(fn);
+  }
+
+  private save(): void {
+    try {
+      localStorage.setItem(STORE, JSON.stringify(this.settings));
+    } catch {
+      /* private mode */
+    }
+    this.onSettings(this.settings);
+    for (const fn of this.listeners) fn(this.settings);
+  }
+
+  private set<K extends keyof Settings>(k: K, v: Settings[K]): void {
+    this.settings[k] = v;
+    this.syncInputs();
+    this.save();
+  }
+
+  /** Every control shows the current settings. */
+  private syncInputs(): void {
+    const s = this.settings;
+    for (const input of this.pause.querySelectorAll<HTMLInputElement>('input.fp-range')) {
+      const k = input.dataset.k as 'volume' | 'sfx' | 'voice' | 'sensitivity';
+      input.value = String(s[k]);
+      const p = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min));
+      input.style.setProperty('--v', `${(p * 100).toFixed(1)}%`);
+      const out = input.parentElement!.querySelector('output')!;
+      out.textContent = k === 'sensitivity' ? `${s[k].toFixed(2)}×` : `${Math.round(s[k] * 100)}%`;
+      input.setAttribute('aria-valuetext', out.textContent);
+    }
+    this.pause.querySelector('.fp-switch')!.setAttribute('aria-checked', String(s.invertY));
+    for (const b of this.pause.querySelectorAll<HTMLElement>('[data-q]')) {
+      const on = b.dataset.q === s.quality;
+      b.setAttribute('aria-checked', String(on));
+      b.tabIndex = on ? 0 : -1;
+    }
+  }
+
+  private bindPause(): void {
+    const p = this.pause;
+    for (const input of p.querySelectorAll<HTMLInputElement>('input.fp-range')) {
+      input.addEventListener('input', () => this.set(input.dataset.k as 'volume', Number(input.value)));
+    }
+    p.querySelector('.fp-switch')!.addEventListener('click', () => this.set('invertY', !this.settings.invertY));
+    for (const b of p.querySelectorAll<HTMLElement>('[data-q]')) b.addEventListener('click', () => this.set('quality', b.dataset.q as Quality));
+    for (const b of p.querySelectorAll<HTMLElement>('[data-tab]')) {
+      b.addEventListener('click', () => this.showTab(b.dataset.tab!));
+      b.addEventListener('focus', () => this.showTab(b.dataset.tab!));
+    }
+    p.addEventListener('click', (e) => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
+      if (!el) return;
+      const act = el.dataset.act;
+      if (act === 'resume') this.resume();
+      else if (act === 'restart') {
+        this.actions.restart?.();
+        this.resume();
+      } else if (act === 'camera') {
+        this.actions.cycleCamera?.();
+        this.showCamera();
+      }
+      // 'workshop' is a plain link
+    });
+    // On the window: focus may be anywhere (the canvas, the body) when it opens
+    window.addEventListener('keydown', (e) => {
+      if (this.paused) this.onKey(e);
+    });
+    p.addEventListener('pointermove', () => p.classList.remove('gamepad'));
+  }
+
+  private showTab(tab: string): void {
+    for (const b of this.pause.querySelectorAll<HTMLElement>('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+    for (const s of this.pause.querySelectorAll<HTMLElement>('[data-pane]')) s.classList.toggle('on', s.dataset.pane === tab);
+  }
+
+  private showCamera(): void {
+    const name = (this.actions.cameraName?.() ?? '').toUpperCase();
+    for (const el of this.pause.querySelectorAll('[data-cam-name]')) el.textContent = name;
+  }
+
+  private resume(): void {
+    if (!this.paused) return;
+    this.onResume();
+    // Pointer lock can be refused (no gesture: a pad, Esc, Chrome's re-lock
+    // cooldown): resume anyway — a click on the view takes the mouse again
+    setTimeout(() => {
+      if (this.paused) this.actions.forceResume?.();
+    }, 300);
+  }
+
+  // ── Navigation ──────────────────────────────────────────────────────────
+
+  private navItems(): HTMLElement[] {
+    return [...this.pause.querySelectorAll<HTMLElement>('.fp-nav .fp-btn')];
+  }
+
+  /** The focusable controls of the open pane, in order (a radio group is one stop). */
+  private paneItems(): HTMLElement[] {
+    const pane = this.pause.querySelector<HTMLElement>('.fp-pane.on');
+    if (!pane) return [];
+    return [...pane.querySelectorAll<HTMLElement>('input.fp-range, .fp-switch, [data-q][aria-checked="true"]')];
+  }
+
+  private focus(el: HTMLElement | undefined, pad = false): void {
+    if (!el) return;
+    for (const x of this.pause.querySelectorAll('.pad-focus')) x.classList.remove('pad-focus');
+    if (pad) el.classList.add('pad-focus');
+    el.focus();
+    el.scrollIntoView({ block: 'nearest' });
+    this.lastFocus = el;
+  }
+
+  /** Moves focus up/down within the current column (the menu, or the open pane). */
+  private move(dir: 1 | -1, pad = false): void {
+    const active = document.activeElement as HTMLElement | null;
+    const cur = active && this.pause.contains(active) ? active : this.lastFocus;
+    const inPane = !!cur?.closest('.fp-panes');
+    const list = inPane ? this.paneItems() : this.navItems();
+    const i = cur ? list.indexOf(cur) : -1;
+    this.focus(list[i < 0 ? 0 : (i + dir + list.length) % list.length], pad);
+  }
+
+  /** Left/right: adjust the focused control, or cross between the menu and the pane. */
+  private adjust(dir: 1 | -1, pad = false): boolean {
+    const cur = document.activeElement as HTMLElement | null;
+    if (!cur || !this.pause.contains(cur)) return false;
+    if (cur instanceof HTMLInputElement && cur.type === 'range') {
+      const step = Number(cur.step) || 0.05;
+      const v = Math.min(Number(cur.max), Math.max(Number(cur.min), Number(cur.value) + dir * step));
+      this.set(cur.dataset.k as 'volume', +(Math.round(v / step) * step).toFixed(3));
+      return true;
+    }
+    if (cur.dataset.q) {
+      const qs = Object.keys(QUALITY) as Quality[];
+      const i = qs.indexOf(cur.dataset.q as Quality);
+      if (dir < 0 && i === 0) return this.toNav(pad);
+      const next = qs[Math.min(qs.length - 1, Math.max(0, i + dir))];
+      this.set('quality', next);
+      this.focus(this.pause.querySelector<HTMLElement>(`[data-q="${next}"]`)!, pad);
+      return true;
+    }
+    if (cur.classList.contains('fp-switch')) {
+      if (dir < 0 && !this.settings.invertY) return this.toNav(pad);
+      this.set('invertY', dir > 0);
+      return true;
+    }
+    if (cur.dataset.act === 'camera') {
+      this.actions.cycleCamera?.();
+      this.showCamera();
+      return true;
+    }
+    if (cur.dataset.tab && dir > 0) {
+      this.focus(this.paneItems()[0], pad);
+      return true;
+    }
+    return false;
+  }
+
+  private toNav(pad: boolean): boolean {
+    const tab = this.pause.querySelector<HTMLElement>('[data-tab][aria-selected="true"]');
+    this.focus(tab ?? this.navItems()[0], pad);
+    return true;
+  }
+
+  /** B / Esc / Backspace: out of a pane first, then resume. */
+  private back(pad = false): void {
+    if ((document.activeElement as HTMLElement | null)?.closest('.fp-panes')) this.toNav(pad);
+    else this.resume();
+  }
+
+  private onKey(e: KeyboardEvent): void {
+    this.pause.classList.remove('gamepad');
+    for (const x of this.pause.querySelectorAll('.pad-focus')) x.classList.remove('pad-focus');
+    const k = e.key;
+    let handled = true;
+    if (k === 'ArrowDown') this.move(1);
+    else if (k === 'ArrowUp') this.move(-1);
+    else if (k === 'ArrowRight') handled = this.adjust(1);
+    else if (k === 'ArrowLeft') handled = this.adjust(-1);
+    else if (k === 'Escape' || k === 'Backspace') this.back();
+    else if (k === 'Enter' || k === ' ') {
+      const el = document.activeElement as HTMLElement | null;
+      if (el && this.pause.contains(el) && !(el instanceof HTMLInputElement)) el.click();
+      else handled = false;
+    } else handled = false;
+    if (handled) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }
+
+  /** Gamepad, while the menu is open: D-pad / left stick, A, B, Start. */
+  private pollPad = (): void => {
+    this.padRaf = requestAnimationFrame(this.pollPad);
+    const pad = [...(navigator.getGamepads?.() ?? [])].find((g) => g && g.connected);
+    if (!pad) return;
+    const down = (i: number) => (pad.buttons[i]?.value ?? 0) > 0.5;
+    const edge = (i: number) => {
+      const now = down(i);
+      const was = this.padPrev[i] ?? true; // held from before the menu opened: wait for a release
+      this.padPrev[i] = now;
+      return now && !was;
+    };
+    // Stick as a D-pad, with key-repeat
+    const ay = pad.axes[1] ?? 0;
+    const ax = pad.axes[0] ?? 0;
+    const dirs: Array<[boolean, () => void]> = [
+      [down(12) || ay < -0.6, () => this.move(-1, true)],
+      [down(13) || ay > 0.6, () => this.move(1, true)],
+      [down(14) || ax < -0.6, () => void this.adjust(-1, true)],
+      [down(15) || ax > 0.6, () => void this.adjust(1, true)],
+    ];
+    const held = dirs.findIndex(([on]) => on);
+    const now = performance.now();
+    if (held >= 0) {
+      if (this.padAxisHeld !== held + 1 || now > this.padRepeat) {
+        this.padRepeat = now + (this.padAxisHeld === held + 1 ? 110 : 380);
+        this.padAxisHeld = held + 1;
+        this.pause.classList.add('gamepad');
+        if (!this.pause.contains(document.activeElement)) this.focus(this.navItems()[0], true);
+        else dirs[held][1]();
+      }
+    } else {
+      this.padAxisHeld = 0;
+    }
+    if (edge(0)) {
+      this.pause.classList.add('gamepad');
+      const el = document.activeElement as HTMLElement | null;
+      if (el && this.pause.contains(el)) el.click();
+      else this.focus(this.navItems()[0], true);
+    }
+    if (edge(1)) this.back(true);
+    if (edge(9)) this.resume();
+  };
+
+  // ── Boot / title ────────────────────────────────────────────────────────
 
   progress(p: number, line?: string): void {
     this.bar.style.width = `${Math.round(p * 100)}%`;
@@ -170,9 +489,33 @@ export class Screens {
     this.title.classList.add('hidden');
   }
 
+  /** Whether the pause menu is up. */
+  get paused(): boolean {
+    return !this.pause.classList.contains('hidden');
+  }
+
   setPaused(paused: boolean, onResume: () => void): void {
+    const was = this.paused;
+    this.onResume = onResume;
     this.pause.classList.toggle('hidden', !paused);
-    this.pause.onclick = paused ? (e) => !(e.target as HTMLElement).closest('a') && onResume() : null;
+    cancelAnimationFrame(this.padRaf);
+    if (paused) {
+      this.showCamera();
+      this.syncInputs();
+      if (!was) {
+        this.padPrev = [];
+        this.padAxisHeld = 0;
+        this.pause.classList.toggle(
+          'gamepad',
+          [...(navigator.getGamepads?.() ?? [])].some((g) => g && g.connected),
+        );
+        // Focus lands on Resume (drawn as focused only for keys / pad)
+        requestAnimationFrame(() => this.focus(this.navItems()[0], this.pause.classList.contains('gamepad')));
+      }
+      this.padRaf = requestAnimationFrame(this.pollPad);
+    } else if (this.pause.contains(document.activeElement)) {
+      (document.activeElement as HTMLElement).blur();
+    }
   }
 
   fail(msg: string): void {

@@ -29,7 +29,7 @@ export class World {
     const t2 = performance.now();
     console.info(`[flight] sky ${Math.round(t1 - t0)} ms, heightfield ${Math.round(t2 - t1)} ms`);
     this.terrain = new Terrain(this.field, this.atmosphere.uniforms, this.field.texels);
-    this.ocean = new Ocean(this.field, this.atmosphere.uniforms);
+    this.ocean = new Ocean(this.field, this.atmosphere.uniforms, renderer);
     this.vegetation = new Vegetation(this.field, this.atmosphere.uniforms);
     const house = buildHouse(this.field);
     hazeAll(house, this.atmosphere.uniforms);
@@ -42,7 +42,7 @@ export class World {
   update(dt: number, camera: THREE.PerspectiveCamera): void {
     this.time += dt;
     this.terrain.update(camera, this.time);
-    this.ocean.update(camera.position, this.time);
+    this.ocean.update(camera, this.time);
     this.vegetation.update(camera, this.time);
     this.inCloud = this.clouds.update(dt, camera);
   }

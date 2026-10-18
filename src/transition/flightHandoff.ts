@@ -195,7 +195,16 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
     const e = B.camEase > 0 ? sine(time / B.camEase) : 1;
     const heroPos = tmp.copy(heroRel).applyAxisAngle(UP, yawW).add(rootW);
     const heroLook = tmp2.copy(heroLookRel).applyAxisAngle(UP, yawW).add(rootW);
-    cam.position.lerpVectors(camFrom, heroPos, e);
+    // Round the suit, not through it (the click can come from behind it,
+    // mid showcase turn): radius / azimuth / elevation about the chest
+    const pv = new THREE.Vector3().copy(rootW);
+    pv.y -= 0.55;
+    const sa = new THREE.Spherical().setFromVector3(new THREE.Vector3().copy(camFrom).sub(pv));
+    const sb = new THREE.Spherical().setFromVector3(new THREE.Vector3().copy(heroPos).sub(pv));
+    const dth = Math.atan2(Math.sin(sb.theta - sa.theta), Math.cos(sb.theta - sa.theta));
+    cam.position
+      .setFromSpherical(new THREE.Spherical(THREE.MathUtils.lerp(sa.radius, sb.radius, e), THREE.MathUtils.lerp(sa.phi, sb.phi, e), sa.theta + dth * e))
+      .add(pv);
     const look = new THREE.Vector3().lerpVectors(lookFrom, heroLook, e);
     // Drift in along the view
     const dir = look.clone().sub(cam.position).normalize();
@@ -333,7 +342,11 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
     }
     if (t >= B.hud) overlay.classList.add('is-hud');
     if (t >= B.flare && !rm) {
-      if (!overlay.classList.contains('is-flare')) stats.mark('flare');
+      if (!overlay.classList.contains('is-flare')) {
+        stats.mark('flare');
+        // The bay letting go: a library hiss under the light
+        app?.cue('steamRelease', 0.55);
+      }
       overlay.classList.add('is-flare');
       urgent = true;
     }

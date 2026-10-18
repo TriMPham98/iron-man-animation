@@ -4981,6 +4981,19 @@ body.fly-offered #fly-link::before {
 #flight-handoff.is-hold .ho-flare {
   opacity: 1;
 }
+/* Still syncing (flown before the sim had finished building): the light
+   holds full and the frozen frame behind it all but disappears */
+#flight-handoff::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 238, 214, 0.82);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+#flight-handoff.is-hold::before {
+  opacity: 1;
+}
 #flight-handoff.is-open .ho-flare {
   opacity: 0;
   transform: translate3d(0, 8%, 0) scale(1.18);

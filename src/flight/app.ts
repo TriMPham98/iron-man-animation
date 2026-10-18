@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Suit } from '../suit/Suit';
 import { createAdaptiveResolution } from '../scene/adaptiveResolution';
 import { GameAudio } from './audio/gameAudio';
-import { Soundscape } from './audio/soundscape';
+import { SFX, Soundscape } from './audio/soundscape';
 import { FlightPost, type LensState } from './render/post';
 import { Game } from './sim/game';
 import { DEFAULT_CAMERA } from './sim/cameraRig';
@@ -10,6 +10,8 @@ import { Director } from './sim/director';
 import { Input, type Controls } from './sim/input';
 import { Hud } from './ui/hud';
 import type { Screens } from './ui/screens';
+import { bindFlightSettings } from './ui/flightSettings';
+import type { JarvisVoice } from './audio/voice/jarvisVoice';
 import { SUN_DIR } from './world/config';
 import { World } from './world/world';
 
@@ -55,6 +57,8 @@ export class FlightApp {
   game!: Game;
   post!: FlightPost;
   hud!: Hud;
+  /** JARVIS, spoken (src/flight/audio/voice). */
+  voice!: JarvisVoice;
   /**
    * Keyboard / mouse / pad. Created only once the sim is shown: its window
    * listeners swallow Space / Tab / F / G / Q, which the workshop still needs
@@ -162,6 +166,7 @@ export class FlightApp {
     });
     screens.onSettings = () => this.applySettings();
     this.applySettings();
+    this.voice = bindFlightSettings(this);
 
     const q = this.query;
     this.lens = {
@@ -393,6 +398,11 @@ export class FlightApp {
       }
     });
     loop();
+  }
+
+  /** A non-spatial one-shot from the sim's (library) sound set. */
+  cue(name: keyof typeof SFX, gain = 1): void {
+    this.audio.play(SFX[name], { ui: true, gain });
   }
 
   /** Volume the pilot set, times the handoff's fade. */

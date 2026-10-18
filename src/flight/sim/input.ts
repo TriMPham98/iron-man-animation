@@ -1,9 +1,12 @@
 /**
  * Keyboard + mouse (pointer lock) + gamepad, read as one control state.
  *
- * Mouse aims (the suit steers toward where you look); W/S set the throttle,
- * A/D roll in flight and strafe in a hover, Space/C climb and descend,
- * Shift boosts, X flares to a hover. LMB repulsors, RMB missile lock
+ * The same keys mean two things (the flight model reads them by mode):
+ * on foot, W/S walk forward and back and A/D sidestep relative to the
+ * look, Shift runs and Space takes off; in the air, mouse aims (the suit
+ * steers toward where you look), W/S set the throttle, A/D roll in flight
+ * and strafe in a hover, Space/C climb and descend, Shift boosts, X flares
+ * to a hover. LMB repulsors, RMB missile lock
  * (release to fire), Q unibeam, F flares, G forearm launchers.
  * On a pad: right stick aims, left stick strafes / rolls (and moves in a
  * hover), triggers are throttle and brake, A/X climb/descend, L3 boost,

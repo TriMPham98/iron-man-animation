@@ -1,0 +1,107 @@
+import * as THREE from 'three';
+import { describe, expect, it } from 'vitest';
+import type { LimbOffsets } from '../../suit/rigPose';
+import { EMPTY_INPUT, FlightModel, type GroundProbe } from './flightModel';
+import { COM, legFK, legIK } from './walkCycle';
+
+const flat: GroundProbe = {
+  surface: () => 0,
+  isWater: () => false,
+  normal: (_x, _z, out: THREE.Vector3) => out.set(0, 1, 0),
+};
+
+const zeroLimbs = (): Required<LimbOffsets> => ({
+  armL: 0, armR: 0, armFlexL: 0, armFlexR: 0, armTwistL: 0, armTwistR: 0, elbowL: 0, elbowR: 0,
+  hipL: 0, hipR: 0, hipOutL: 0, hipOutR: 0, kneeL: 0, kneeR: 0, ankleL: 0, ankleR: 0, footRollL: 0, footRollR: 0,
+});
+
+/** World ankle of a leg as the rig would draw it (applyPose's root + leg chain). */
+function ankleWorld(m: FlightModel, limbs: Required<LimbOffsets>, root: { lift: number; pitch: number; roll: number; yaw: number }, side: 1 | -1) {
+  const L = side === 1;
+  const a = legFK(side, { hip: L ? limbs.hipL : limbs.hipR, hipOut: L ? limbs.hipOutL : limbs.hipOutR, knee: L ? limbs.kneeL : limbs.kneeR });
+  const r = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), root.pitch).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), root.roll));
+  r.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), root.yaw));
+  const c = COM.clone().applyQuaternion(r);
+  a.applyQuaternion(r).add(new THREE.Vector3(COM.x - c.x, root.lift + COM.y - c.y, COM.z - c.z));
+  return a.sub(COM).applyQuaternion(m.bodyQuaternion()).add(m.pos);
+}
+
+describe('walk cycle', () => {
+  it('solves the leg onto a target and back (IK ∘ FK)', () => {
+    for (const side of [1, -1] as const) {
+      for (const want of [
+        { hip: 0.3, hipOut: 0.05, knee: 0.4 },
+        { hip: -0.35, hipOut: -0.03, knee: 0.15 },
+        { hip: 0.8, hipOut: 0.15, knee: 1.1 },
+      ]) {
+        const target = legFK(side, want);
+        const got = legFK(side, legIK(side, target));
+        expect(got.distanceTo(target)).toBeLessThan(0.002);
+      }
+    }
+  });
+
+  it('keeps planted boots planted: no foot slide walking, jogging, strafing and turning', () => {
+    const m = new FlightModel(flat);
+    m.placeOnGround(0, 0, 0);
+    const input = EMPTY_INPUT();
+    const dt = 1 / 120;
+    const planted: Array<THREE.Vector3 | null> = [null, null];
+    let worst = 0;
+    let stances = 0;
+    let lowest = Infinity;
+    for (let t = 0; t < 14; t += dt) {
+      input.throttle = t < 4 ? 1 : t < 6 ? 0 : t < 9 ? 1 : 0;
+      input.boost = t > 6 && t < 9;
+      input.lateral = t > 10 && t < 12 ? 1 : 0;
+      const turn = t > 4.5 && t < 6 ? 2 : t > 12.5 ? -1.5 : 0;
+      input.aim.set(Math.sin(turn), 0, Math.cos(turn));
+      m.step(dt, input);
+      const limbs = zeroLimbs();
+      const root = m.gait.pose(m.pos, m.bodyQuaternion(), limbs, { lift: 0, pitch: 0, roll: 0, yaw: t > 12 ? 0.3 * Math.sin(t * 3) : 0 });
+      if (m.gait.weight < 0.999) continue;
+      m.gait.feet.forEach((f, i) => {
+        const w = ankleWorld(m, limbs, root, f.side);
+        lowest = Math.min(lowest, w.y);
+        if (f.swinging || f.heel > 1e-3) {
+          planted[i] = null;
+          return;
+        }
+        if (!planted[i]) {
+          planted[i] = w.clone();
+          stances++;
+        } else {
+          worst = Math.max(worst, Math.hypot(w.x - planted[i]!.x, w.z - planted[i]!.z), Math.abs(w.y - planted[i]!.y));
+        }
+      });
+    }
+    expect(stances).toBeGreaterThan(20);
+    expect(worst).toBeLessThan(0.006); // m
+    // Never through the deck (ankle stays over the sole)
+    expect(lowest).toBeGreaterThan(0.09);
+  });
+
+  it('matches the stride to the speed', () => {
+    const lengths: number[] = [];
+    for (const boost of [false, true]) {
+      const m = new FlightModel(flat);
+      m.placeOnGround(0, 0, 0);
+      const input = EMPTY_INPUT();
+      input.throttle = 1;
+      input.boost = boost;
+      let s0 = 0;
+      let z0 = 0;
+      for (let t = 0; t < 6; t += 1 / 120) {
+        m.step(1 / 120, input);
+        if (t > 2 && !s0) {
+          s0 = m.gait.strikes;
+          z0 = m.pos.z;
+        }
+      }
+      lengths.push((m.pos.z - z0) / (m.gait.strikes - s0));
+    }
+    expect(lengths[0]).toBeGreaterThan(0.5);
+    expect(lengths[0]).toBeLessThan(0.75);
+    expect(lengths[1]).toBeGreaterThan(lengths[0] * 1.3);
+  });
+});

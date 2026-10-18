@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MINI_ROCKETS, type FlapId, type FlightCheckFrame } from '../../animation/flightCheck';
-import type { LimbOffsets } from '../../suit/rigPose';
-import { boneSpec } from '../../suit/rig';
+import { applyPose, createRig, type FlightPose, type LimbOffsets, type SuitRig } from '../../suit/rigPose';
+import { boneSpec, type BoneName } from '../../suit/rig';
 import type { Suit } from '../../suit/Suit';
 import { FLIGHT_POSTURE, type FlightModel } from './flightModel';
 
@@ -19,6 +19,12 @@ export interface ArmsState {
   /** 0–1: how far each arm is raised onto the aim line (repulsor shot). */
   aimL: number;
   aimR: number;
+  /**
+   * Which hand the body prefers for the next shot (written by the suit
+   * driver): +1 left, −1 right, 0 either. A target well off to one side —
+   * over the shoulder, behind — is shot with the hand on that side.
+   */
+  aimSide: number;
   /** Palm discharge flash / charge 0–1. */
   flashL: number;
   flashR: number;
@@ -41,6 +47,7 @@ export interface ArmsState {
 export const IDLE_ARMS = (): ArmsState => ({
   aimL: 0,
   aimR: 0,
+  aimSide: 0,
   flashL: 0,
   flashR: 0,
   chargeL: 0,
@@ -58,6 +65,10 @@ export const IDLE_ARMS = (): ArmsState => ({
 const clamp = THREE.MathUtils.clamp;
 const lerp = THREE.MathUtils.lerp;
 const clamp01 = (x: number) => clamp(x, 0, 1);
+const smooth01 = (x: number) => {
+  const k = clamp01(x);
+  return k * k * (3 - 2 * k);
+};
 /** Centre of mass in bind space (the rig tilts about the hips). */
 const COM = new THREE.Vector3(0, 1.0, 0);
 /**
@@ -68,6 +79,9 @@ const COM = new THREE.Vector3(0, 1.0, 0);
 const AIM_TWIST = -Math.PI / 2;
 /** Turn assist: the arm rolled so the palm faces forward (into the hand's sweep). */
 const ASSIST_TWIST = Math.PI / 2;
+/** Hover yaw limits from the flight model (rad/s, rad/s²): turn channels are normalised by them. */
+const HOVER_YAW_RATE = 3.2;
+const HOVER_YAW_ACC = HOVER_YAW_RATE / 0.22;
 const _n = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _z = new THREE.Vector3();
@@ -76,20 +90,54 @@ const _ax = new THREE.Vector3();
 const _X = new THREE.Vector3(1, 0, 0);
 const _Y = new THREE.Vector3(0, 1, 0);
 const _Z = new THREE.Vector3(0, 0, 1);
+const _qa = new THREE.Quaternion();
+const _qb = new THREE.Quaternion();
+const _e = new THREE.Euler();
 /** Left arm joints (bind): shoulder, elbow, wrist. */
 const ARM_JOINTS = (['upperArm.L', 'forearm.L', 'hand.L'] as const).map((b) => new THREE.Vector3(...boneSpec(b).head));
 
 /** Shoulder angles (abduction, flexion) taking the shoulder-frame vector `v` onto `t`: upper arm Rx(flex)·Rz(abd). */
-function shoulderOnto(v: THREE.Vector3, t: THREE.Vector3): [number, number] {
+export function shoulderOnto(v: THREE.Vector3, t: THREE.Vector3): [number, number] {
   // Rz(abd) takes v's sideways component onto t.x …
   const rho = Math.max(1e-4, Math.hypot(v.x, v.y));
-  const abd = clamp(Math.asin(clamp(t.x / rho, -1, 1)) - Math.atan2(v.x, -v.y), -0.6, 1.4);
+  const abd = clamp(Math.asin(clamp(t.x / rho, -1, 1)) - Math.atan2(v.x, -v.y), -0.6, 1.5);
   _ax.copy(v).applyAxisAngle(_Z, abd);
   // … and Rx(flex) swings what's left onto t in the sagittal plane
   let flex = Math.atan2(t.z, t.y) - Math.atan2(_ax.z, _ax.y);
   flex = Math.atan2(Math.sin(flex), Math.cos(flex));
-  if (flex > 0.6) flex -= Math.PI * 2;
-  return [abd, clamp(flex, -3.25, 0.4)];
+  // The arm never goes over the top to reach behind (that path sweeps the
+  // forearm through the helmet): a shoulder swings back only so far, a
+  // little further once the arm is out to the side
+  const back = 0.45 + 1.2 * Math.sin(clamp(abd, 0, 1.5)) ** 2;
+  if (flex > back) flex = back;
+  return [abd, clamp(flex, -3.0, back)];
+}
+
+/**
+ * The left arm's comfortable reach, as a direction in the chest frame (X
+ * left, Y up, Z forward): a little across the chest, out to the side and
+ * round behind the shoulder, never across the face or over the helmet. A
+ * target outside it is clamped to the nearest reachable line (the body
+ * twists toward it first, so the residual is small).
+ */
+export function clampReach(t: THREE.Vector3): THREE.Vector3 {
+  const ACROSS = -0.45;
+  const BEHIND = 2.05;
+  let phi = Math.atan2(t.x, t.z);
+  let theta = Math.asin(clamp(t.y, -1, 1));
+  if (phi < ACROSS || phi > BEHIND) {
+    // Outside the arc: go to whichever end is nearer round the circle
+    const toAcross = phi < ACROSS ? ACROSS - phi : ACROSS + Math.PI * 2 - phi;
+    const toBehind = phi > BEHIND ? phi - BEHIND : phi + Math.PI * 2 - BEHIND;
+    phi = toAcross < toBehind ? ACROSS : BEHIND;
+  }
+  // Raised across the chest or back past the shoulder the arm stays below
+  // the helmet; out front and to the side it may go near overhead
+  const up = phi < 0 ? lerp(1.2, 0.8, -phi / -ACROSS) : phi > 1.35 ? lerp(1.2, 0.72, (phi - 1.35) / (BEHIND - 1.35)) : 1.2;
+  const down = phi > 1.35 ? lerp(-1.3, -1.0, (phi - 1.35) / (BEHIND - 1.35)) : -1.3;
+  theta = clamp(theta, down, up);
+  const c = Math.cos(theta);
+  return t.set(c * Math.sin(phi), Math.sin(theta), c * Math.cos(phi));
 }
 
 /**
@@ -99,7 +147,7 @@ function shoulderOnto(v: THREE.Vector3, t: THREE.Vector3): [number, number] {
  * shoulder lays the palm on the line out of the shoulder, then the wrist
  * squares the palm's face to it — a few rounds settle both.
  */
-function aimArm(at: readonly number[], normal: readonly number[], t: THREE.Vector3, twist: number, elbow: number, wrist: number): [number, number, number] {
+export function aimArm(at: readonly number[], normal: readonly number[], t: THREE.Vector3, twist: number, elbow: number, wrist: number): [number, number, number] {
   const [S, E, W] = ARM_JOINTS;
   let abd = 0;
   let flex = 0;
@@ -142,6 +190,69 @@ function spring(x: THREE.Vector2, v: THREE.Vector2, gx: number, gy: number, w: n
   [x.y, v.y] = springStep(x.y, v.y, gy, w, z, dt);
 }
 
+/** Chest frame ← body frame for the torso channels (as rigPose lays them on the spine and chest). */
+function torsoQuaternion(out: THREE.Quaternion, yaw: number, pitch: number, roll: number, twist: number, bend: number, side: number): THREE.Quaternion {
+  out.setFromAxisAngle(_Y, yaw).multiply(_qa.setFromAxisAngle(_X, pitch)).multiply(_qa.setFromAxisAngle(_Z, roll));
+  for (const k of [0.45, 0.55]) out.multiply(_qb.setFromEuler(_e.set(k * bend, k * twist, k * side, 'YXZ')));
+  return out;
+}
+
+/** Arm / hand / leg channels the pose springs carry, in order. */
+const LIMB_KEYS = [
+  'armL',
+  'armR',
+  'armFlexL',
+  'armFlexR',
+  'armTwistL',
+  'armTwistR',
+  'elbowL',
+  'elbowR',
+  'hipL',
+  'hipR',
+  'hipOutL',
+  'hipOutR',
+  'kneeL',
+  'kneeR',
+  'ankleL',
+  'ankleR',
+  'footRollL',
+  'footRollR',
+] as const satisfies readonly (keyof LimbOffsets)[];
+const ARM_CHANNELS = 8;
+/** Bank layout: limbs, then wrists L/R, then 5 + 5 fingers. */
+const N_SPRINGS = LIMB_KEYS.length + 2 + 10;
+
+// ── Hero landing ─────────────────────────────────────────────────────
+/** Timeline (s from touchdown): slam into the three-point, hold, rise. */
+const LAND_IN = 0.16;
+const LAND_LOOK_UP = 0.8;
+const LAND_RISE = 1.3;
+const LAND_UP = 2.15;
+/** Forward lean of the whole body (rad) and the torso channels in the three-point. */
+const LAND_LEAN = 0.4;
+const LAND_TORSO = { twist: -0.2, bend: 0.7, side: 0.22 };
+/** Bind-space contact points: kneecap (right knee goes down), sole heel / toe, fist. */
+const KNEE_R: Array<[BoneName, [number, number, number]]> = [
+  ['shin.R', [-0.14, 0.5, 0.075]],
+  ['shin.R', [-0.142, 0.44, 0.07]],
+];
+const SOLE = (s: 'L' | 'R'): Array<[BoneName, [number, number, number]]> => {
+  const x = s === 'L' ? 1 : -1;
+  return [
+    [`foot.${s}`, [x * 0.155, 0.005, -0.09]],
+    [`foot.${s}`, [x * 0.165, 0.005, 0.17]],
+  ];
+};
+const TOE_R: Array<[BoneName, [number, number, number]]> = [['foot.R', [-0.165, 0.01, 0.17]]];
+/** Knuckles of the curled right hand: the middle joints of the fingers, armour outside them. */
+const FIST_R: Array<[BoneName, [number, number, number]]> = (['index', 'middle', 'ring', 'pinky'] as const).map((f) => {
+  const h = boneSpec(`${f}2.R` as BoneName).head;
+  return [`${f}2.R` as BoneName, [h[0], h[1], h[2]]];
+});
+/** Armour thickness outside the measured joints (m). */
+const KNUCKLE_PAD = 0.022;
+const KNEE_PAD = 0.0;
+
 export interface SuitOutputs {
   bootL: number;
   bootR: number;
@@ -149,11 +260,18 @@ export interface SuitOutputs {
   palmR: number;
 }
 
+/** One frame of hero-landing contact, for the sim's impact FX (world space). */
+export interface FistStrike {
+  at: THREE.Vector3;
+  speed: number;
+}
+
 export class SuitDriver {
   private time = 0;
   private readonly carrier = new THREE.Matrix4();
   private readonly _q = new THREE.Quaternion();
   private readonly _qi = new THREE.Quaternion();
+  private readonly _qt = new THREE.Quaternion();
   private readonly _v = new THREE.Vector3();
   private readonly _aim = new THREE.Vector3();
   private readonly _t = new THREE.Matrix4();
@@ -166,10 +284,39 @@ export class SuitDriver {
   private readonly lean = new THREE.Vector2();
   private readonly legSwing = new THREE.Vector2();
   private readonly armSwing = new THREE.Vector2();
+  /** Full-body turn: shoulders over the hips, hips under them, the knees, arms and legs. */
+  private readonly twist = new THREE.Vector2();
+  private readonly hipYaw = new THREE.Vector2();
+  private readonly bend = new THREE.Vector2();
+  private readonly tuck = new THREE.Vector2();
+  private readonly armOut = new THREE.Vector2();
+  private readonly spread = new THREE.Vector2();
   readonly outputs: SuitOutputs = { bootL: 0, bootR: 0, palmL: 0, palmR: 0 };
   /** Palm turn-assist per hand, sprung: [value, velocity]. */
   private readonly palmAssistL = new THREE.Vector2();
   private readonly palmAssistR = new THREE.Vector2();
+  /** Aim line in the body frame, smoothed, and the side it last sat on (for targets dead astern). */
+  private readonly aimBody = new THREE.Vector3(0, 0, 1);
+  private aimSign = 1;
+  /** Every arm, hand and leg channel rides a spring: [values, velocities]. */
+  private readonly sx = new Float64Array(N_SPRINGS);
+  private readonly sv = new Float64Array(N_SPRINGS);
+  private primed = false;
+  /** Hero landing: time since touchdown (−1 = none), its weight, and the solved pose. */
+  private landT = -1;
+  private landW = 0;
+  private landAbort = false;
+  private prevCrouch = 0;
+  private struck = false;
+  private landImpact = 0;
+  private landPose: { limbs: Required<LimbOffsets>; wristL: number; wristR: number; fingersL: number[]; fingersR: number[] } | null = null;
+  private landBend = LAND_TORSO.bend;
+  /** Set on the frame the fist hits the ground; the sim clears it after the FX. */
+  strike: FistStrike | null = null;
+  /** Scratch skeleton for contact solving (model space, no carrier). */
+  private readonly fk: SuitRig = createRig();
+  /** Last frame's pose (debug / tests). */
+  lastPose: FlightPose | null = null;
 
   update(dt: number, suit: Suit, m: FlightModel, aim: THREE.Vector3, arms: ArmsState): void {
     this.time += dt;
@@ -178,36 +325,73 @@ export class SuitDriver {
     const prone = Math.sin(m.posture) / Math.sin(FLIGHT_POSTURE);
     const air = m.grounded ? 0 : 1;
     this.dangle += (air - this.dangle) * (1 - Math.exp(-dt / 0.35));
-    const crouch = m.crouch > 0 ? Math.sin(Math.min(1, m.crouch / 1.4) * Math.PI * 0.5) : 0;
+    this.updateLanding(dt, m);
+    const crouch = this.landW;
 
     // Carrier: world ← body orientation about the centre of mass
     const bodyQ = m.bodyQuaternion(this._q);
     this.carrier.compose(m.pos, bodyQ, this._v.set(1, 1, 1)).multiply(this._t.makeTranslation(-COM.x, -COM.y, -COM.z));
     suit.setCarrier(this.carrier);
 
-    // Aim in the body frame (X left, Y head, Z chest)
-    const a = this._aim.copy(aim).applyQuaternion(this._qi.copy(bodyQ).invert());
+    // Aim in the body frame (X left, Y head, Z chest), eased so a fast
+    // rotation of the suit sweeps the arms round rather than snapping them
+    const a = this._aim.copy(aim).applyQuaternion(this._qi.copy(bodyQ).invert()).normalize();
+    this.aimBody.lerp(a, 1 - Math.exp(-dt / 0.05)).normalize();
+    const ab = this.aimBody;
+    // Bearing of the aim off the chest; dead astern it stays on the side
+    // it came round on (no flip-flopping between the shoulders)
+    let psi = Math.atan2(ab.x, ab.z);
+    if (Math.abs(psi) < 2.7) this.aimSign = Math.sign(psi) || 1;
+    else if (Math.sign(psi) !== this.aimSign) psi += Math.PI * 2 * this.aimSign;
+    const elev = Math.asin(clamp(ab.y, -1, 1));
+    arms.aimSide = Math.abs(psi) > 0.6 ? Math.sign(psi) : 0;
+    const aimK = smooth01(Math.max(arms.aimL, arms.aimR)) * (1 - crouch);
+
+    // ── Turns: the whole body ─────────────────────────────────────────
+    // Low and slow the suit pivots on its boots, and the body throws itself
+    // into the turn: the head snaps round first, the shoulders lead over
+    // the hips (which wind the other way: anticipation), the knees bend
+    // and the legs swing out and tuck, the arms go out for balance. When
+    // the turn brakes the hips plant, the shoulders carry on past, the legs
+    // spread and the palms push against the spin; then it all swings back
+    // and settles. Flat out the frame banks for real, so these fade
+    const yawRate = m.omega.y;
+    const hoverish = (1 - 0.7 * prone) * this.dangle * (1 - crouch);
+    const upright = (1 - prone) * this.dangle * (1 - crouch);
+    const wN = clamp(yawRate / HOVER_YAW_RATE, -1.2, 1.2);
+    const aN = clamp(m.yawAcc / HOVER_YAW_ACC, -1.2, 1.2);
+    // 0 spinning up … 1 braking (the acceleration opposes the spin)
+    const brakeK = clamp01((-aN * wN) / 0.12);
+    const brakeAmt = brakeK * Math.abs(aN);
+    springTo(this.lean, clamp(-yawRate * 0.12, -0.42, 0.42) * upright, 9, 0.55, dt);
+    springTo(this.legSwing, clamp(-yawRate * 0.1 - m.yawAcc * 0.016, -0.45, 0.45) * hoverish, 5.5, 0.38, dt);
+    // Shoulders lead too: the outside arm swings forward, the inside one back
+    springTo(this.armSwing, clamp(yawRate * 0.09 + m.yawAcc * 0.006, -0.45, 0.45) * hoverish, 9, 0.5, dt);
+    const turnTwist = (0.36 * wN + aN * lerp(0.2, -0.42, brakeK)) * hoverish;
+    const turnHips = (-0.2 * wN - aN * lerp(0.14, -0.1, brakeK)) * hoverish;
+    // Aiming: the hips and shoulders turn the body toward the shot (and
+    // lean back for a high one, over for a low one) so the arm only
+    // finishes the line
+    const aimTwist = clamp(psi * 0.5, -0.66, 0.66);
+    const aimHips = clamp(psi * 0.3, -0.4, 0.4);
+    const aimBend = elev > 0.85 ? -Math.min(0.28, (elev - 0.85) * 0.6) : elev < -0.7 ? Math.min(0.3, (-0.7 - elev) * 0.5) : 0;
+    springTo(this.twist, clamp(lerp(turnTwist, aimTwist, aimK), -0.8, 0.8), 8, 0.45, dt);
+    springTo(this.hipYaw, clamp(lerp(turnHips, aimHips, aimK), -0.5, 0.5), 6, 0.42, dt);
+    springTo(this.tuck, clamp01(0.55 * Math.abs(aN) + 0.35 * Math.abs(wN)) * hoverish * (1 - aimK), 9, 0.55, dt);
+    springTo(this.armOut, clamp01(0.4 * Math.abs(wN) + 0.75 * brakeAmt) * hoverish, 8, 0.5, dt);
+    springTo(this.spread, clamp01(1.1 * brakeAmt) * hoverish, 7, 0.45, dt);
+    springTo(this.bend, lerp(0.22 * this.tuck.x, aimBend, aimK), 8, 0.6, dt);
 
     // ── Head: look where we're going / aiming ─────────────────────────
     // The head leads every turn: it snaps round onto the new line first (a
     // quick, slightly underdamped spring — a glance that lands and settles),
-    // and the body follows it round
+    // and the body follows it round. Its yaw rides on the twisted chest
     // (an aim behind the chest pins the head round to that side)
-    const wantYaw = clamp(Math.atan2(a.x, a.z < 0 && Math.abs(a.y) < 0.8 ? a.z : Math.hypot(a.y, a.z)), -0.85, 0.85);
-    const wantPitch = clamp(-Math.atan2(a.y, Math.max(0.05, a.z)), -1.05, 0.45);
+    const bodyYaw = this.hipYaw.x + this.twist.x;
+    const aimYaw = Math.atan2(a.x, a.z < 0 && Math.abs(a.y) < 0.8 ? a.z : Math.hypot(a.y, a.z));
+    const wantYaw = clamp(aimYaw - bodyYaw, -0.85, 0.85);
+    const wantPitch = clamp(-Math.atan2(a.y, Math.max(0.05, a.z)) - this.bend.x * 0.6, -1.05, 0.45);
     spring(this.head, this.headVel, wantYaw, wantPitch, 13, 0.72, dt);
-    // ── Turns: lean in, legs swing out and follow through ─────────────
-    // Low and slow the suit pivots on its boots: the body banks into the
-    // yaw like a skater, and the dangling legs (a pendulum under the hips)
-    // are flung to the outside, lag the turn-in and swing back past centre
-    // when it stops. Flat out the frame banks for real, so these fade
-    const yawRate = m.omega.y;
-    const hoverish = (1 - 0.7 * prone) * this.dangle * (1 - crouch);
-    const upright = (1 - prone) * this.dangle * (1 - crouch);
-    springTo(this.lean, clamp(-yawRate * 0.1, -0.32, 0.32) * upright, 9, 0.62, dt);
-    springTo(this.legSwing, clamp(-yawRate * 0.07 - m.yawAcc * 0.011, -0.3, 0.3) * hoverish, 5.5, 0.4, dt);
-    // Shoulders lead too: the outside arm swings forward, the inside one back
-    springTo(this.armSwing, clamp(yawRate * 0.06 + m.yawAcc * 0.004, -0.22, 0.22) * hoverish, 10, 0.6, dt);
     // Boots vector against each other to drive the yaw (toes down on the
     // outside boot push that side round); eased off the yaw acceleration
     const yawVector = clamp(m.yawAcc * 0.022 + yawRate * 0.05, -0.3, 0.3) * hoverish;
@@ -221,25 +405,30 @@ export class SuitDriver {
     const sway = (k: number, ph: number) => this.dangle * (1 - prone) * k * Math.sin(t * 1.9 + ph);
     const rollRate = m.omega.z;
     const pitchRate = m.omega.x;
+    const tuck = this.tuck.x;
+    const armOut = this.armOut.x;
+    const spread = this.spread.x;
+    // The inside leg (the side the suit turns to) tucks up more, the outside one reaches out
+    const inside = clamp(wN * 2.5, -1, 1);
     const limbs: Required<LimbOffsets> = {
       // Trailing arms in flight; the low wing's arm reaches out to steer
-      armL: lerp(0.1, 0.16, prone) + clamp(-rollRate * 0.18, 0, 0.35) * prone + sway(0.015, 0.4),
-      armR: lerp(0.1, 0.16, prone) + clamp(rollRate * 0.18, 0, 0.35) * prone + sway(0.015, 1.4),
-      armFlexL: 0.05 * prone + this.armSwing.x,
-      armFlexR: 0.05 * prone - this.armSwing.x,
+      armL: lerp(0.1, 0.16, prone) + clamp(-rollRate * 0.18, 0, 0.35) * prone + sway(0.015, 0.4) + 0.8 * armOut,
+      armR: lerp(0.1, 0.16, prone) + clamp(rollRate * 0.18, 0, 0.35) * prone + sway(0.015, 1.4) + 0.8 * armOut,
+      armFlexL: 0.05 * prone + this.armSwing.x - 0.15 * armOut,
+      armFlexR: 0.05 * prone - this.armSwing.x - 0.15 * armOut,
       armTwistL: 0,
       armTwistR: 0,
-      elbowL: lerp(0.18, 0.08, prone) * this.dangle + sway(0.03, 2),
-      elbowR: lerp(0.18, 0.08, prone) * this.dangle + sway(0.03, 3),
+      elbowL: lerp(0.18, 0.08, prone) * this.dangle + sway(0.03, 2) + 0.4 * armOut,
+      elbowR: lerp(0.18, 0.08, prone) * this.dangle + sway(0.03, 3) + 0.4 * armOut,
       // Legs: soft knees dangling in a hover, straight and toes pointed in flight
-      hipL: (0.08 + sway(0.02, 1.1)) * this.dangle * (1 - prone) + 0.08 * m.airbrake,
-      hipR: (0.08 + sway(0.02, 2.3)) * this.dangle * (1 - prone) + 0.08 * m.airbrake,
-      hipOutL: -0.3 * m.trimRoll * 0.2 + this.legSwing.x,
-      hipOutR: 0.3 * m.trimRoll * 0.2 - this.legSwing.x,
-      kneeL: (lerp(0.16, 0.05, prone) + sway(0.03, 0)) * this.dangle + 0.15 * m.airbrake,
-      kneeR: (lerp(0.16, 0.05, prone) + sway(0.03, 0.7)) * this.dangle + 0.15 * m.airbrake,
-      ankleL: lerp(0.14 + 0.25 * m.trimPitch, 0.55, prone) * this.dangle - yawVector,
-      ankleR: lerp(0.14 + 0.25 * m.trimPitch, 0.55, prone) * this.dangle + yawVector,
+      hipL: (0.08 + sway(0.02, 1.1)) * this.dangle * (1 - prone) + 0.08 * m.airbrake + 0.6 * tuck * (1 + 0.45 * inside),
+      hipR: (0.08 + sway(0.02, 2.3)) * this.dangle * (1 - prone) + 0.08 * m.airbrake + 0.6 * tuck * (1 - 0.45 * inside),
+      hipOutL: -0.3 * m.trimRoll * 0.2 + this.legSwing.x + 0.32 * spread + 0.1 * tuck * Math.max(0, -inside),
+      hipOutR: 0.3 * m.trimRoll * 0.2 - this.legSwing.x + 0.32 * spread + 0.1 * tuck * Math.max(0, inside),
+      kneeL: (lerp(0.16, 0.05, prone) + sway(0.03, 0)) * this.dangle + 0.15 * m.airbrake + 1.05 * tuck * (1 + 0.4 * inside) + 0.3 * spread,
+      kneeR: (lerp(0.16, 0.05, prone) + sway(0.03, 0.7)) * this.dangle + 0.15 * m.airbrake + 1.05 * tuck * (1 - 0.4 * inside) + 0.3 * spread,
+      ankleL: lerp(0.14 + 0.25 * m.trimPitch, 0.55, prone) * this.dangle - yawVector + 0.3 * tuck,
+      ankleR: lerp(0.14 + 0.25 * m.trimPitch, 0.55, prone) * this.dangle + yawVector + 0.3 * tuck,
       footRollL: 0.2 * m.trimRoll * this.dangle * (1 - prone),
       footRollR: 0.2 * m.trimRoll * this.dangle * (1 - prone),
     };
@@ -249,6 +438,27 @@ export class SuitDriver {
     let wristR = 1.45 * palmsDown;
     let fingersL: number[] = [0.08, 0.12, 0.15, 0.18, 0.2].map((r) => lerp(r, -0.25, palmsDown));
     let fingersR = fingersL.slice();
+
+    // Coming in hot for a hero landing: knees come up and the right fist
+    // cocks back for the punch into the ground
+    const pre = this.preLanding(m);
+    if (pre > 0) {
+      limbs.hipL = lerp(limbs.hipL, 0.95, pre);
+      limbs.kneeL = lerp(limbs.kneeL, 1.25, pre);
+      limbs.hipR = lerp(limbs.hipR, 0.45, pre);
+      limbs.kneeR = lerp(limbs.kneeR, 1.0, pre);
+      limbs.hipOutL = lerp(limbs.hipOutL, 0.2, pre);
+      limbs.hipOutR = lerp(limbs.hipOutR, 0.15, pre);
+      limbs.armR = lerp(limbs.armR, 1.0, pre);
+      limbs.armFlexR = lerp(limbs.armFlexR, 0.2, pre);
+      limbs.elbowR = lerp(limbs.elbowR, 1.8, pre);
+      limbs.armL = lerp(limbs.armL, 0.9, pre);
+      limbs.armFlexL = lerp(limbs.armFlexL, 0.4, pre);
+      limbs.elbowL = lerp(limbs.elbowL, 0.3, pre);
+      wristR = lerp(wristR, 0, pre);
+      wristL = lerp(wristL, 0.6, pre);
+      fingersR = fingersR.map((f, i) => lerp(f, i === 0 ? 0.7 : 1, pre));
+    }
 
     // Unibeam stance: arms swept back and out, chest thrown forward
     const ub = arms.unibeam;
@@ -282,8 +492,8 @@ export class SuitDriver {
       const pa = clamp01(this.palmAssistL.x) * (1 - arms.aimL);
       const pb = clamp01(this.palmAssistR.x) * (1 - arms.aimR);
       // Arm out and back, rolled so the palm faces forward; wrist cocked in
-      limbs.armL = lerp(limbs.armL, 0.42, pa);
-      limbs.armR = lerp(limbs.armR, 0.42, pb);
+      limbs.armL = lerp(limbs.armL, 0.42 + 0.3 * armOut, pa);
+      limbs.armR = lerp(limbs.armR, 0.42 + 0.3 * armOut, pb);
       limbs.armFlexL = lerp(limbs.armFlexL, 0.3, pa);
       limbs.armFlexR = lerp(limbs.armFlexR, 0.3, pb);
       limbs.armTwistL = lerp(limbs.armTwistL, ASSIST_TWIST, pa);
@@ -296,76 +506,160 @@ export class SuitDriver {
       fingersR = fingersR.map((f) => lerp(f, 0.05, pb));
     }
 
+    // Body (whole-suit) attitude this frame, before the landing takes over
+    let pitch = 0;
+    let roll = this.lean.x;
+    let yaw = this.hipYaw.x;
+    let spineYaw = this.twist.x;
+    let spineBend = this.bend.x;
+    let spineSide = 0;
+    let lift = -0.06 * tuck * hoverish;
+
     // Repulsor aim: the arm punches out onto the aim line, palm flat to it.
-    // The elbow folds on the way up and drives straight at the end (a punch,
-    // not a stiff swing from the shoulder); each shot kicks the hand up and
-    // back off a soft elbow and rocks the chest
-    let kick = 0;
-    for (const [side, k, flash] of [
-      ['L', arms.aimL, arms.flashL],
-      ['R', arms.aimR, arms.flashR],
+    // The body has already turned toward the shot (hips, then shoulders);
+    // the arm solves in the twisted chest's frame and never leaves its
+    // comfortable reach — an aim beyond it is fired from the nearest line
+    // the arm can make (the bolt still flies true from the palm). The
+    // elbow folds on the way up and drives straight at the end (a punch,
+    // not a stiff swing from the shoulder)
+    const chestQ = torsoQuaternion(this._qt, yaw, pitch, roll, spineYaw, spineBend, spineSide).invert();
+    for (const [side, k] of [
+      ['L', arms.aimL],
+      ['R', arms.aimR],
     ] as const) {
       if (k <= 0.001) continue;
       const s = side === 'L' ? 1 : -1;
       const ka = k * k * (3 - 2 * k);
       const punch = 4 * ka * (1 - ka);
-      const recoil = flash * flash;
-      kick = Math.max(kick, recoil);
       // Rolled, the elbow folds across the chest rather than up: keep the
       // fold small and let the shoulder carry the recoil
-      const elbow = 0.08 + 0.45 * punch + 0.12 * recoil;
+      const elbow = 0.08 + 0.45 * punch;
       // Shoulders sit ~19 cm off the centre line: aim from there a little
       // toward the centre so the shot converges. The forearm rolls palm-down
       // on the way up and the wrist bends right back, so the flat hand
       // stands fingers-up with the palm square to the shot; solved on the
       // left arm (the right is its mirror image)
-      const tgt = _tgt.set(s * a.x - 0.03, a.y, a.z).normalize();
+      const tc = _tgt.copy(ab).applyQuaternion(chestQ);
+      const tgt = clampReach(tc.set(s * tc.x - 0.03, tc.y, tc.z).normalize());
       const palm = suit.palms[0] ?? { at: [0.35, 0.96, 0.03], normal: [-0.94, -0.34, -0.04] };
-      const [abd, flex, aimWrist] = aimArm(palm.at, palm.normal, tgt, AIM_TWIST, 0.08 + 0.45 * punch, 1.4);
-      const wrist = aimWrist + 0.1 * recoil;
-      // Recoil: the muzzle climbs off the line
-      const lift = 0.16 * recoil;
+      const [abd, flex, aimWrist] = aimArm(palm.at, palm.normal, tgt, AIM_TWIST, elbow, 1.4);
       // Flat, firm hand: fingers straight and together, a slight natural splay
       const hand = [-0.1, -0.06, -0.04, -0.02, 0.02];
       if (side === 'L') {
         limbs.armL = lerp(limbs.armL, abd, ka);
-        limbs.armFlexL = lerp(limbs.armFlexL, flex, ka) - lift;
+        limbs.armFlexL = lerp(limbs.armFlexL, flex, ka);
         limbs.armTwistL = lerp(limbs.armTwistL, AIM_TWIST, ka);
         limbs.elbowL = lerp(limbs.elbowL, elbow, ka);
-        wristL = lerp(wristL, wrist, ka);
+        wristL = lerp(wristL, aimWrist, ka);
         fingersL = fingersL.map((f, i) => lerp(f, hand[i], ka));
       } else {
         limbs.armR = lerp(limbs.armR, abd, ka);
-        limbs.armFlexR = lerp(limbs.armFlexR, flex, ka) - lift;
+        limbs.armFlexR = lerp(limbs.armFlexR, flex, ka);
         limbs.armTwistR = lerp(limbs.armTwistR, AIM_TWIST, ka);
         limbs.elbowR = lerp(limbs.elbowR, elbow, ka);
-        wristR = lerp(wristR, wrist, ka);
+        wristR = lerp(wristR, aimWrist, ka);
         fingersR = fingersR.map((f, i) => lerp(f, hand[i], ka));
       }
     }
 
-    // Hero landing: down on one knee, a fist on the ground
-    let lift = 0;
-    let pitch = 0;
-    if (crouch > 0) {
-      limbs.hipL = lerp(limbs.hipL, 1.45, crouch);
-      limbs.kneeL = lerp(limbs.kneeL, 1.7, crouch);
-      limbs.ankleL = lerp(limbs.ankleL, -0.1, crouch);
-      limbs.hipR = lerp(limbs.hipR, 0.25, crouch);
-      limbs.kneeR = lerp(limbs.kneeR, 1.95, crouch);
-      limbs.ankleR = lerp(limbs.ankleR, 0.9, crouch);
-      limbs.hipOutL = lerp(limbs.hipOutL, 0.25, crouch);
-      limbs.armFlexR = lerp(limbs.armFlexR, -0.45, crouch);
-      limbs.armR = lerp(limbs.armR, 0.08, crouch);
-      limbs.elbowR = lerp(limbs.elbowR, 0.1, crouch);
-      fingersR = fingersR.map((f) => lerp(f, 1, crouch));
-      wristR = lerp(wristR, 0, crouch);
-      limbs.armL = lerp(limbs.armL, 0.75, crouch);
-      limbs.armFlexL = lerp(limbs.armFlexL, 0.5, crouch);
-      limbs.elbowL = lerp(limbs.elbowL, 0.5, crouch);
-      wristL = lerp(wristL, 0.4, crouch);
-      lift = -0.55 * crouch;
-      pitch = 0.42 * crouch;
+    // ── Springs: every arm, hand and leg channel ──────────────────────
+    // Whatever drives a channel (hover trim, the turn, palm assist, the
+    // aim) it reaches the joint through a near-critically damped spring, so
+    // a fast rotation of the suit sweeps the palms round instead of
+    // snapping them. Raised to shoot, the arm's spring stiffens (the shot
+    // still lands on the line); the legs are heavier
+    {
+      const goals: number[] = [...LIMB_KEYS.map((k) => limbs[k]), wristL, wristR, ...fingersL, ...fingersR];
+      if (!this.primed) {
+        this.sx.set(goals);
+        this.sv.fill(0);
+        this.primed = true;
+      }
+      const armW = lerp(15, 26, aimK) + 10 * pre;
+      for (let i = 0; i < N_SPRINGS; i++) {
+        const leg = i >= ARM_CHANNELS && i < LIMB_KEYS.length;
+        [this.sx[i], this.sv[i]] = springStep(this.sx[i], this.sv[i], goals[i], leg ? 12 : armW, 0.85, dt);
+      }
+      LIMB_KEYS.forEach((k, i) => (limbs[k] = this.sx[i]));
+      wristL = this.sx[LIMB_KEYS.length];
+      wristR = this.sx[LIMB_KEYS.length + 1];
+      fingersL = Array.from(this.sx.subarray(LIMB_KEYS.length + 2, LIMB_KEYS.length + 7));
+      fingersR = Array.from(this.sx.subarray(LIMB_KEYS.length + 7, LIMB_KEYS.length + 12));
+    }
+
+    // Each shot kicks the hand up and back off a soft elbow and rocks the
+    // chest: a snap on top of the sprung pose
+    let kick = 0;
+    for (const [side, flash] of [
+      ['L', arms.flashL],
+      ['R', arms.flashR],
+    ] as const) {
+      const recoil = flash * flash;
+      if (recoil <= 0) continue;
+      kick = Math.max(kick, recoil);
+      const k = side === 'L' ? arms.aimL : arms.aimR;
+      if (side === 'L') {
+        limbs.armFlexL -= 0.16 * recoil * k;
+        limbs.elbowL += 0.12 * recoil * k;
+        wristL += 0.1 * recoil * k;
+      } else {
+        limbs.armFlexR -= 0.16 * recoil * k;
+        limbs.elbowR += 0.12 * recoil * k;
+        wristR += 0.1 * recoil * k;
+      }
+    }
+
+    // ── Walk hook (ground locomotion blends its pose in here) ─────────
+    // After the springs: the legs are solved onto planted boots (walkCycle.ts)
+    if (m.gait.weight > 1e-3) ({ lift, pitch, roll, yaw } = m.gait.pose(m.pos, bodyQ, limbs, { lift, pitch, roll, yaw }));
+
+    let strikeNow = false;
+    let headPitch = this.head.y;
+    let headYaw = this.head.x;
+    let headRoll = this.headRoll;
+
+    // ── Hero landing: owns the whole pose from touchdown until it rises ─
+    if (crouch > 0 && this.landPose) {
+      const L = this.landPose;
+      const w = crouch;
+      const lt = this.landT;
+      // Impact compression: the torso slams on down over the fist and the
+      // arm gives, then it all springs back and settles
+      const c = lt < 0 ? 0 : lt < LAND_IN + 0.04 ? smooth01((lt - LAND_IN + 0.06) / 0.1) : Math.exp(-(lt - LAND_IN - 0.04) / 0.12) * Math.cos((lt - LAND_IN - 0.04) * 13);
+      const comp = this.landImpact * c;
+      for (const k of LIMB_KEYS) limbs[k] = lerp(limbs[k], L.limbs[k], w);
+      limbs.elbowR += 0.4 * comp * w;
+      limbs.armFlexR -= 0.12 * comp * w;
+      wristL = lerp(wristL, L.wristL, w);
+      wristR = lerp(wristR, L.wristR, w);
+      fingersL = fingersL.map((f, i) => lerp(f, L.fingersL[i], w));
+      fingersR = fingersR.map((f, i) => lerp(f, L.fingersR[i], w));
+      // Level the body whatever attitude it came in at, then lean into the three-point
+      const ub0 = this._v.set(0, 1, 0).applyQuaternion(this._qi.copy(bodyQ).invert());
+      const levelPitch = Math.atan2(ub0.z, ub0.y);
+      const levelRoll = -Math.asin(clamp(ub0.x, -1, 1));
+      pitch = lerp(pitch, levelPitch + LAND_LEAN, w);
+      roll = lerp(roll, levelRoll, w);
+      yaw = lerp(yaw, 0, w);
+      spineYaw = lerp(spineYaw, LAND_TORSO.twist, w);
+      spineBend = lerp(spineBend, this.landBend + 0.22 * comp, w);
+      spineSide = lerp(spineSide, LAND_TORSO.side, w);
+      // Head down through the impact, then it comes up to look ahead
+      const look = smooth01((lt - LAND_LOOK_UP) / 0.35);
+      headPitch = lerp(headPitch, lerp(0.55, -0.25, look) + 0.2 * comp, w);
+      headYaw = lerp(headYaw, lerp(0.05, -0.1, look), w);
+      headRoll = lerp(headRoll, 0, w);
+      // Contact: the lowest of the knee, the boots and the fist sits on the
+      // ground (the solved pose puts all three there at once)
+      // Measured in the levelled frame (the carrier's tilt taken back out)
+      const pose: FlightPose = { stance: 0, chestRecoil: 0, headPitch: 0, wristL, wristR, limbs, fingersL, fingersR, pitch: pitch - levelPitch * w, roll: roll - levelRoll * w, yaw, spineYaw, spineBend, spineSide };
+      const low = this.lowest(pose, w);
+      const groundY = COM.y - m.hipHeight();
+      lift = lerp(lift, groundY - low, w);
+      if (!this.struck && lt >= LAND_IN) {
+        this.struck = true;
+        strikeNow = true;
+      }
     }
 
     // ── Control surfaces ──────────────────────────────────────────────
@@ -411,26 +705,32 @@ export class SuitDriver {
     this.outputs.palmL = clamp01(Math.max(palms * (1 - 0.3 * m.trimRoll) * (1 - arms.aimL) * (1 - ub), assistL, arms.flashL));
     this.outputs.palmR = clamp01(Math.max(palms * (1 + 0.3 * m.trimRoll) * (1 - arms.aimR) * (1 - ub), assistR, arms.flashR));
 
+    const pose: FlightPose = {
+      stance: 0,
+      chestRecoil: -0.4 * ub + 0.35 * kick,
+      headPitch,
+      headYaw,
+      headRoll,
+      limbs,
+      wristL,
+      wristR,
+      lift,
+      pitch,
+      roll,
+      yaw,
+      spineYaw,
+      spineBend,
+      spineSide,
+      driftX: 0,
+      driftZ: 0,
+      breath: Math.sin(t * 1.7) * (1 - prone) * 0.6 * (1 - crouch),
+      legsIn: lerp(0.4, 1, prone) * this.dangle * (1 - crouch),
+      fingersL,
+      fingersR,
+    };
+    this.lastPose = pose;
     const frame: FlightCheckFrame = {
-      pose: {
-        stance: 0,
-        chestRecoil: -0.4 * ub + 0.35 * kick,
-        headPitch: this.head.y,
-        headYaw: this.head.x,
-        headRoll: this.headRoll,
-        limbs,
-        wristL,
-        wristR,
-        lift,
-        pitch,
-        roll: this.lean.x,
-        driftX: 0,
-        driftZ: 0,
-        breath: Math.sin(t * 1.7) * (1 - prone) * 0.6,
-        legsIn: lerp(0.4, 1, prone) * this.dangle * (1 - crouch),
-        fingersL,
-        fingersR,
-      },
+      pose,
       flaps: { ...this.flapState } as Record<FlapId, number>,
       spin: { 'flare.L': arms.flareSpin, 'flare.R': -arms.flareSpin },
       // Thruster / palm visuals are drawn in world space by the sim
@@ -452,7 +752,206 @@ export class SuitDriver {
     // Flare pops are the sim's (world space): keep the check's own clock
     // clear of its salvo window
     suit.setFlightCheck(frame, t % 8);
+    if (strikeNow) {
+      // The fist's knuckles, in the world, for the impact FX
+      let best: THREE.Vector3 | null = null;
+      for (const [bone, p] of FIST_R) {
+        const v = suit.boneWorldPoint(bone, p, new THREE.Vector3());
+        if (!best || v.y < best.y) best = v;
+      }
+      if (best) this.strike = { at: best, speed: m.impactSpeed };
+    }
   }
 
   private readonly flapState: Partial<Record<FlapId, number>> = {};
+
+  // ── Hero landing ────────────────────────────────────────────────────
+
+  /** 0–1: wind-up for a hero landing in the last instants before a hard touchdown. */
+  private preLanding(m: FlightModel): number {
+    if (m.grounded || m.posture > 0.9) return 0;
+    const sink = -m.vel.y;
+    if (sink < 7) return 0;
+    const tti = Math.max(0, m.clearance) / sink;
+    return smooth01((0.5 - tti) / 0.35) * smooth01((sink - 7) / 3);
+  }
+
+  /** Touchdown → slam → hold → rise, and the solved three-point pose. */
+  private updateLanding(dt: number, m: FlightModel): void {
+    if (m.crouch > this.prevCrouch + 0.05) {
+      this.landT = 0;
+      this.landAbort = false;
+      this.struck = false;
+      this.landImpact = clamp01((m.impactSpeed - 5) / 20) * 0.6 + 0.4;
+      this.landPose ??= this.solveLanding();
+    }
+    this.prevCrouch = m.crouch;
+    if (this.landT < 0) {
+      this.landW = Math.max(0, this.landW - dt / 0.25);
+      return;
+    }
+    this.landT += dt;
+    // Flying off before the rise: let go of the pose quickly
+    if (!m.grounded) this.landAbort = true;
+    if (this.landAbort) {
+      this.landW = Math.max(0, this.landW - dt / 0.22);
+      if (this.landW <= 0) this.landT = -1;
+      return;
+    }
+    const lt = this.landT;
+    // In: fast and decelerating (the knees take it). Out: deliberate
+    const win = 1 - (1 - clamp01(lt / LAND_IN)) ** 3;
+    const wout = 1 - smooth01((lt - LAND_RISE) / (LAND_UP - LAND_RISE));
+    // Blend from wherever the body is (never a jump back up)
+    this.landW = lt < LAND_IN ? Math.max(this.landW, win) : wout;
+    if (lt >= LAND_UP) {
+      this.landT = -1;
+      this.landW = 0;
+    }
+  }
+
+  /**
+   * The three-point pose, solved once on the scratch skeleton: right knee
+   * down with the shin trailing back and out, left leg lunged out and
+   * forward with the boot flat, right fist driven down to the same ground,
+   * left arm thrown back. The lunge knee, the punching arm and the tucked
+   * toe are each found by bisection so every contact sits on one plane.
+   */
+  private solveLanding(): NonNullable<SuitDriver['landPose']> {
+    const limbs: Required<LimbOffsets> = {
+      // Left arm thrown back and out, open hand
+      armL: 1.0,
+      armR: 0.05,
+      armFlexL: 0.95,
+      armFlexR: 0.4,
+      armTwistL: 0.5,
+      armTwistR: 0.15,
+      elbowL: 0.3,
+      elbowR: 0.18,
+      // Forward lean swings the legs back: the hip flexion carries it.
+      // Left: lunged out to the side and forward, knee well bent (its hip
+      // bend is solved to plant the boot). Right: the thigh back and
+      // out, the knee on the ground, the shin trailing
+      hipL: 1.9 + LAND_LEAN,
+      hipR: -0.7 + LAND_LEAN,
+      hipOutL: 0.5,
+      hipOutR: 0.3,
+      kneeL: 1.55,
+      kneeR: 1.65,
+      ankleL: 0,
+      ankleR: 0.9,
+      footRollL: -0.35,
+      footRollR: 0.15,
+    };
+    const L = {
+      limbs,
+      wristL: 0.35,
+      wristR: -0.1,
+      fingersL: [-0.1, -0.15, -0.1, -0.05, 0],
+      fingersR: [0.75, 1, 1, 1, 1],
+      bend: LAND_TORSO.bend,
+    };
+    const pose = (): FlightPose => ({
+      stance: 0,
+      chestRecoil: 0,
+      headPitch: 0,
+      wristL: L.wristL,
+      wristR: L.wristR,
+      limbs,
+      fingersL: L.fingersL,
+      fingersR: L.fingersR,
+      pitch: LAND_LEAN,
+      spineYaw: LAND_TORSO.twist,
+      spineBend: L.bend,
+      spineSide: LAND_TORSO.side,
+    });
+    const at = (pts: Array<[BoneName, [number, number, number]]>, out = _p) => {
+      applyPose(this.fk, pose());
+      this.fk.root.updateWorldMatrix(true, true);
+      return this.contactMin(pts, out);
+    };
+    const kneeY = () => at(KNEE_R).y - KNEE_PAD;
+    /** Scan [lo, hi] for the root of f nearest `from`, then refine it; no root → the closest miss. */
+    const solve = (set: (x: number) => void, lo: number, hi: number, from: number, f: () => number): number => {
+      const N = 32;
+      let best = from;
+      let bestErr = Infinity;
+      let prevX = lo;
+      set(lo);
+      let prevF = f();
+      for (let i = 1; i <= N; i++) {
+        const x = lo + ((hi - lo) * i) / N;
+        set(x);
+        const fx = f();
+        if (prevF * fx <= 0) {
+          // Bracketed: bisect it
+          let a = prevX;
+          let b = x;
+          let fa = prevF;
+          for (let k = 0; k < 20; k++) {
+            const mid = (a + b) / 2;
+            set(mid);
+            const fm = f();
+            if (fa * fm <= 0) b = mid;
+            else {
+              a = mid;
+              fa = fm;
+            }
+          }
+          const root = (a + b) / 2;
+          if (bestErr !== 0 || Math.abs(root - from) < Math.abs(best - from)) {
+            best = root;
+            bestErr = 0;
+          }
+        } else if (bestErr !== 0 && Math.abs(fx) < bestErr) {
+          best = x;
+          bestErr = Math.abs(fx);
+        }
+        prevX = x;
+        prevF = fx;
+      }
+      set(best);
+      return bestErr;
+    };
+    // Lunge: the knee bend that plants the left boot (flat) on the ground.
+    // Boot flat: the foot's pitch in the world is the body's lean + the ankle channel
+    limbs.ankleL = -LAND_LEAN;
+    solve((x) => (limbs.kneeL = x), 1.0, 2.6, 2.1, () => at(SOLE('L')).y - kneeY());
+    // Toes of the kneeling leg tucked onto the ground
+    solve((x) => (limbs.ankleR = x), -0.6, 1.8, 0.9, () => at(TOE_R).y - kneeY());
+    // Fist down: the arm swings onto the ground; if it can't reach, the
+    // torso folds further over it
+    for (let i = 0; i < 6; i++) {
+      const miss = solve((x) => (limbs.armFlexR = x), -1.4, 1.2, 0.2, () => at(FIST_R).y - KNUCKLE_PAD - kneeY());
+      if (miss < 0.005) break;
+      L.bend += 0.08;
+    }
+    this.landBend = L.bend;
+    return L;
+  }
+
+  /** Lowest contact (y, model space at lift 0) of the pose on the scratch skeleton. */
+  private lowest(pose: FlightPose, w: number): number {
+    applyPose(this.fk, { ...pose, lift: 0 });
+    this.fk.root.updateWorldMatrix(true, true);
+    const soles = Math.min(this.contactMin(SOLE('L'), _p).y, this.contactMin(SOLE('R'), _p).y);
+    // Knee and fist only bear as the body comes right down into the crouch
+    const late = 0.6 * (1 - w);
+    return Math.min(soles, this.contactMin(KNEE_R, _p).y - KNEE_PAD + late, this.contactMin(FIST_R, _p).y - KNUCKLE_PAD + late);
+  }
+
+  /** The lowest of a set of bone-carried bind points on the scratch skeleton (model space). */
+  private contactMin(pts: Array<[BoneName, [number, number, number]]>, out: THREE.Vector3): THREE.Vector3 {
+    let best = Infinity;
+    const v = _n;
+    for (const [bone, p] of pts) {
+      const h = boneSpec(bone).head;
+      v.set(p[0] - h[0], p[1] - h[1], p[2] - h[2]).applyMatrix4(this.fk.bones[bone].matrixWorld);
+      if (v.y < best) {
+        best = v.y;
+        out.copy(v);
+      }
+    }
+    return out;
+  }
 }

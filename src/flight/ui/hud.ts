@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MINI_ROCKETS } from '../../animation/flightCheck';
 import type { Combat } from '../combat/combat';
+import { LAUNCHER_PER_ARM } from '../combat/playerWeapons';
 import type { FlightModel } from '../sim/flightModel';
 import { BOOST_SPEED, CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
 import type { GroundProbe } from '../sim/flightModel';
@@ -358,7 +359,14 @@ export class Hud {
   private drawTargets(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, _m: FlightModel, c: Combat, s: number): void {
     const W = c.weapons;
     const locked = new Map<number, number>();
-    for (const h of W.locks) locked.set(h.id, (locked.get(h.id) ?? 0) + 1);
+    W.locks.forEach((h, i) => locked.set(h.id, i + 1));
+    // Forearm launcher: painted (or queued) targets in firing order, and
+    // which arm takes each
+    const atLocks = W.launcherLocks.length ? W.launcherLocks : W.launcherQueue;
+    const atOrder = new Map<number, number>();
+    atLocks.forEach((h, i) => {
+      if (h) atOrder.set(h.id, i);
+    });
     const cx = this.w / 2;
     const cy = this.h / 2;
     for (const h of c.hostiles) {
@@ -416,7 +424,7 @@ export class Hud {
         g.fillStyle = hostileColor;
         g.fillRect(x - size, y + size + 4 * s, size * 2 * Math.max(0, hp), 2.5 * s);
       }
-      // Missile lock: a spinning diamond (count if double-locked)
+      // Missile lock: a spinning diamond, numbered in salvo order (one per enemy)
       const n = locked.get(h.id);
       if (n) {
         g.save();
@@ -433,7 +441,7 @@ export class Hud {
         g.closePath();
         g.stroke();
         g.restore();
-        if (n > 1) this.text(g, `×${n}`, x - size - 6 * s, y - size + 6 * s, 9 * s, WHITE, 'right');
+        this.text(g, `${n}`, x - size - 6 * s, y - size + 6 * s, 9 * s, WHITE, 'right');
       }
       // Lead pip for the repulsors on the assisted target
       if (W.assist === h) {
@@ -445,12 +453,61 @@ export class Hud {
           g.stroke();
         }
       }
-      if (W.launcherLock === h) {
+      const at = atOrder.get(h.id);
+      if (at !== undefined) {
+        // Amber ring that closes on lock; the next round's target pulses
+        const next = at === 0;
         g.strokeStyle = AMBER;
-        g.lineWidth = 1.5;
-        const r = size * (1.6 - 0.5 * Math.min(1, W.launcherLockT / 0.5));
+        g.lineWidth = next ? 2 : 1.2;
+        const r = size * (next ? 1.55 + 0.12 * Math.sin(this.time * 12) : 1.6);
         g.beginPath();
         g.arc(x, y, r, 0, Math.PI * 2);
+        g.stroke();
+        for (let k = 0; k < 4; k++) {
+          const a = (k * Math.PI) / 2 + Math.PI / 4;
+          g.beginPath();
+          g.moveTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+          g.lineTo(x + Math.cos(a) * (r + 5 * s), y + Math.sin(a) * (r + 5 * s));
+          g.stroke();
+        }
+        this.text(g, `AT${at + 1}`, x + r + 3 * s, y + r, 8 * s, AMBER);
+      }
+    }
+    // Launcher paint: a tight amber cone
+    if (W.launcherLockProgress > 0) {
+      const r = Math.tan(THREE.MathUtils.degToRad(10)) * (this.h / 2 / Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)));
+      g.strokeStyle = 'rgba(255, 184, 77, 0.35)';
+      g.lineWidth = 1;
+      g.setLineDash([2 * s, 5 * s]);
+      g.beginPath();
+      g.arc(cx, cy, r, 0, Math.PI * 2);
+      g.stroke();
+      g.setLineDash([]);
+      g.strokeStyle = AMBER;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * W.launcherLockProgress);
+      g.stroke();
+      this.text(g, `AT LOCK ${W.launcherLocks.length}/${W.launcherAmmo}`, cx, cy + r + 14 * s, 9 * s, AMBER, 'center');
+    }
+    // Unibeam: the reactor's charge ring round the sight, then the heat
+    if (W.unibeamCharge > 0 || W.unibeamOn) {
+      const r = 26 * s;
+      g.strokeStyle = CYAN_FAINT;
+      g.lineWidth = 3 * s;
+      g.beginPath();
+      g.arc(cx, cy, r, 0, Math.PI * 2);
+      g.stroke();
+      g.strokeStyle = W.unibeamOn ? WHITE : CYAN;
+      g.beginPath();
+      g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (W.unibeamOn ? 1 : W.unibeamCharge));
+      g.stroke();
+      if (W.unibeamOn) {
+        const heat = W.unibeamHeat;
+        g.strokeStyle = heat > 0.8 ? RED : heat > 0.55 ? AMBER : CYAN;
+        g.lineWidth = 2 * s;
+        g.beginPath();
+        g.arc(cx, cy, r + 6 * s, Math.PI * 0.75, Math.PI * 0.75 + Math.PI * 1.5 * heat);
         g.stroke();
       }
     }
@@ -518,20 +575,40 @@ export class Hud {
       y += 26 * s;
     };
     row('REPULSORS', W.repulsorBusy ? 'FIRING' : 'READY', W.repulsorBusy ? WHITE : CYAN);
-    row('MICRO-MISSILES', `${W.rockets}/${MINI_ROCKETS}`, W.rockets ? CYAN : AMBER, (bx, by) => {
-      for (let i = 0; i < MINI_ROCKETS; i++) {
-        g.fillStyle = i < W.rockets ? CYAN : CYAN_FAINT;
-        g.fillRect(bx + i * 10 * s, by, 7 * s, 3 * s);
+    // Pods L | R: one pip per tube
+    row('MICRO-MISSILES', `${W.rockets}/${W.rocketCapacity}`, W.rockets ? CYAN : AMBER, (bx, by) => {
+      for (let p = 0; p < 2; p++) {
+        for (let i = 0; i < MINI_ROCKETS; i++) {
+          g.fillStyle = i < W.pods[p] ? CYAN : CYAN_FAINT;
+          g.fillRect(bx + p * 78 * s + i * 9 * s, by, 6 * s, 3 * s);
+        }
       }
     });
-    row('UNIBEAM', W.unibeamOn ? 'DISCHARGE' : W.unibeamCharge > 0 ? 'CHARGING' : `${Math.round(W.unibeamEnergy * 100)}%`, W.unibeamOn ? WHITE : CYAN, (bx, by) => {
+    // Unibeam heat: cools back from red; overheated it locks out and vents
+    const heat = W.unibeamHeat;
+    const over = W.unibeamOverheat;
+    const blink = Math.sin(this.time * 10) > 0;
+    const ubText = over ? 'OVERHEAT' : W.unibeamOn ? 'DISCHARGE' : W.unibeamCharge > 0 ? `CHARGING ${Math.round(W.unibeamCharge * 100)}%` : heat > 0.02 ? `COOLING ${Math.round(heat * 100)}°` : 'READY';
+    const ubColor = over ? (blink ? RED : AMBER) : W.unibeamOn ? WHITE : CYAN;
+    row('UNIBEAM', ubText, ubColor, (bx, by) => {
       g.fillStyle = CYAN_FAINT;
       g.fillRect(bx, by, 150 * s, 3 * s);
-      g.fillStyle = W.unibeamOn ? WHITE : CYAN;
-      g.fillRect(bx, by, 150 * s * W.unibeamEnergy, 3 * s);
+      g.fillStyle = over ? RED : heat > 0.8 ? RED : heat > 0.55 ? AMBER : W.unibeamOn ? WHITE : CYAN;
+      g.fillRect(bx, by, 150 * s * heat, 3 * s);
+      // Where the lockout releases
+      g.fillStyle = CYAN_DIM;
+      g.fillRect(bx + 150 * s * 0.35 - 0.5 * s, by - 2 * s, 1 * s, 7 * s);
     });
     row('FLARES', `${W.flares}`, W.flareCooldown > 0 ? CYAN_DIM : CYAN);
-    row('AT LAUNCHERS', W.launcherCooldown > 0 ? `${W.launcherCooldown.toFixed(1)}s` : 'READY', W.launcherCooldown > 0 ? CYAN_DIM : CYAN);
+    const atBusy = W.launcherQueue.length > 0;
+    row('AT LAUNCHERS', atBusy ? `FIRING ${W.launcherQueue.length}` : W.launcherAmmo ? `${W.launcherAmmo} RDS` : 'RELOAD', atBusy ? WHITE : W.launcherAmmo ? CYAN : AMBER, (bx, by) => {
+      for (let p = 0; p < 2; p++) {
+        for (let i = 0; i < LAUNCHER_PER_ARM; i++) {
+          g.fillStyle = i < W.launcherRounds[p] ? AMBER : CYAN_FAINT;
+          g.fillRect(bx + p * 78 * s + i * 14 * s, by, 11 * s, 3 * s);
+        }
+      }
+    });
   }
 
   private drawRadar(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, m: FlightModel, c: Combat, s: number): void {

@@ -442,14 +442,24 @@ async function boot(): Promise<void> {
       controls.enabled = false;
       document.body.classList.remove('fly-offered');
       ui.retire();
+      // The helmet HUD booting: the library's interface chatter, briefly
+      audioTimeline.engine.play({
+        id: 'handoff-hud',
+        file: 'binary-code-interface.mp3',
+        offset: 0,
+        duration: 1.8,
+        volume: 0.7,
+        fadeIn: 0.02,
+        fadeOut: 0.6,
+      });
     },
     setVolume: (v) => audioTimeline.engine.setMasterVolume(v),
     retire: retireWorkshop,
     // Long one-off steps only where nobody sees a frame drop: under the boot
-    // loader, at the INITIATE gate once the intro dolly has settled, or in a
-    // background tab
+    // loader (not its last beat, the reveal), at the INITIATE gate once the
+    // intro dolly has settled, in a background tab or on a held frame
     isQuiet: () =>
-      !document.body.classList.contains('scene-revealed') ||
+      !document.body.classList.contains('scene-ready') ||
       document.visibilityState === 'hidden' ||
       (!ui.hasInitiated() && introCam.done()) ||
       // Held on a frame (Space): nothing moving to stutter

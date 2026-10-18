@@ -39,6 +39,7 @@ FROM_KIT = {
     'ping-3': 'tap/kenney-impact-impact-metal-light-001',
     'ping-4': 'tap/kenney-impact-impact-metal-light-004',
     'flare-pop': 'thump/fs-405537-thud-2-wav-1',
+    'dirt-hit': 'glitch/fs-467122-dive-into-dirt-wav-1',
 }
 # Openverse (Freesound CC0) finds from `sfx.py search`: prepared cut or raw
 FROM_SEARCH = {
@@ -47,6 +48,10 @@ FROM_SEARCH = {
     'splash-big': ('hit/ov-fce993b0.wav', 0, None),
     'sam-launch': ('whoosh/_raw/ov-86fcafec.mp3', 0.42, 5.2),
     'jet': ('transition/_raw/ov-7de6124e.mp3', 31.0, 8.5),
+    # Terrain crashes: the stones that fly when 100 kg of armour ploughs in
+    'debris-1': ('hit/_raw/ov-3bb6fd08.mp3', 2.32, 1.9),
+    'debris-2': ('hit/_raw/ov-3bb6fd08.mp3', 11.3, 1.4),
+    'rock-hit': ('hit/_raw/ov-e331fb1f.mp3', 0, None),
 }
 # Loops: (source, start, length, crossfade)
 LOOPS = {

@@ -50,6 +50,16 @@ export interface FlightPose extends SuitPose {
    */
   fingersL?: readonly number[];
   fingersR?: readonly number[];
+  /**
+   * Torso channels (rad), shared between the spine and chest bones: twist
+   * (+ = shoulders turn to the suit's left), forward bend (+ = hunch over),
+   * side bend (+ = toward the suit's own right).
+   */
+  spineYaw?: number;
+  spineBend?: number;
+  spineSide?: number;
+  /** Whole-body yaw about the centre of mass (rad, + = turn to the suit's left). */
+  yaw?: number;
 }
 
 /**
@@ -185,6 +195,7 @@ const _qb = new THREE.Quaternion();
 const _X = new THREE.Vector3(1, 0, 0);
 const _Y = new THREE.Vector3(0, 1, 0);
 const _Z = new THREE.Vector3(0, 0, 1);
+const _e = new THREE.Euler();
 
 function setAxisAngles(
   bone: THREE.Bone,
@@ -261,6 +272,16 @@ export function applyPose(rig: SuitRig, pose: FlightPose): void {
   const breath = pose.breath ?? 0;
   setAxisAngles(b.spine, [_X, -BREATH_SPINE * breath]);
   setAxisAngles(b.chest, [_X, -CHEST_RECOIL * pose.chestRecoil - BREATH_CHEST * breath]);
+  // Torso twist / bend: split over the spine and the chest
+  if (pose.spineYaw || pose.spineBend || pose.spineSide) {
+    for (const [bone, k] of [
+      [b.spine, 0.45],
+      [b.chest, 0.55],
+    ] as const) {
+      _e.set(k * (pose.spineBend ?? 0), k * (pose.spineYaw ?? 0), k * (pose.spineSide ?? 0), 'YXZ');
+      bone.quaternion.premultiply(_qa.setFromEuler(_e));
+    }
+  }
   setAxisAngles(b.head, [_X, pose.headPitch + (BREATH_SPINE + BREATH_CHEST) * breath * 0.8], [_Y, pose.headYaw ?? 0]);
   if (pose.headRoll) b.head.quaternion.premultiply(_qa.setFromAxisAngle(_Z, pose.headRoll));
 
@@ -271,6 +292,7 @@ export function applyPose(rig: SuitRig, pose: FlightPose): void {
   _qa.setFromAxisAngle(_X, pitch);
   _qb.setFromAxisAngle(_Z, roll);
   rig.root.quaternion.multiplyQuaternions(_qa, _qb);
+  if (pose.yaw) rig.root.quaternion.premultiply(_qa.setFromAxisAngle(_Y, pose.yaw));
   _p.copy(CENTRE_OF_MASS).applyQuaternion(rig.root.quaternion);
   rig.root.position.set(
     (pose.driftX ?? 0) + CENTRE_OF_MASS.x - _p.x,

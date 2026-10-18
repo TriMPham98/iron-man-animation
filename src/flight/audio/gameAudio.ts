@@ -38,6 +38,24 @@ export interface PlayOptions {
   lowpass?: number;
   /** Fade out over the last n s (or stop after `duration`). */
   duration?: number;
+  /** Sound travels at 343 m/s (default). False: it's arriving now (a shock front reaching the ear). */
+  propagate?: boolean;
+}
+
+/**
+ * A moving source heard from where the camera stands: whatever is fed into
+ * {@link input} reaches the ear through the air — a delay line held at the
+ * light-to-ear lag (so a fast source's pitch bends exactly as the path
+ * shortens and stretches: real Doppler, not a guessed rate), air
+ * absorption over the distance, and an HRTF panner placed where the sound
+ * was *emitted*, not where the source is now.
+ */
+export interface Emitter {
+  readonly input: GainNode;
+  /** Steer from the source's track and the ear; `mix` fades the whole path. */
+  update(src: { at(t: number, out: THREE.Vector3): THREE.Vector3 }, now: number, ear: THREE.Vector3, mix: number, gate: number): void;
+  /** Seconds of travel the path currently holds. */
+  readonly lag: number;
 }
 
 export interface Loop {
@@ -48,6 +66,8 @@ export interface Loop {
 
 /** Most simultaneous voices of one file. */
 const MAX_VOICES = 8;
+/** Longest flight time an emitter path holds (s, ~2 km). */
+const MAX_LAG = 6;
 
 export class GameAudio {
   ctx: AudioContext | null = null;
@@ -59,6 +79,7 @@ export class GameAudio {
   private readonly pending = new Map<string, Promise<ArrayBuffer>>();
   private readonly listenerPos = new THREE.Vector3();
   private readonly listenerVel = new THREE.Vector3();
+  private readonly lastEar = new THREE.Vector3();
   private readonly _f = new THREE.Vector3();
   private readonly _u = new THREE.Vector3();
   /** Muffle for the helmet view / reboot (0–1). */
@@ -84,7 +105,27 @@ export class GameAudio {
   setVolume(v: number): void {
     this.volume = v;
     if (this.ctx) this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05);
+    this.setEffectsLevel(this.effects);
   }
+
+  // ── Mix levels for the pause menu + JARVIS's voice (src/flight/audio/voice) ──
+  /** SFX slider × ducking under speech (0–1). */
+  private effects = 1;
+  /** Effects buses' level: the SFX slider times any duck under JARVIS's voice. */
+  setEffectsLevel(k: number, ramp = 0.06): void {
+    this.effects = k;
+    if (!this.ctx || !this.sfx) return;
+    const t = this.ctx.currentTime;
+    this.sfx.gain.setTargetAtTime(k, t, ramp);
+    // The HUD bus skips the master gain (and its muffle): scale it here
+    this.uiBus.gain.setTargetAtTime(0.7 * k * this.volume, t, ramp);
+  }
+
+  /** Where speech goes: past the muffle (he's in the helmet), into the limiter. */
+  get voiceOut(): AudioNode | null {
+    return this.ctx ? this.comp : null;
+  }
+  private comp!: DynamicsCompressorNode;
 
   /** Fetch every file up front (decode waits for the context). */
   preload(urls: string[]): Promise<void> {
@@ -124,6 +165,7 @@ export class GameAudio {
     this.master = ctx.createGain();
     this.master.gain.value = this.volume;
     const comp = ctx.createDynamicsCompressor();
+    this.comp = comp;
     comp.threshold.value = -14;
     comp.knee.value = 10;
     comp.ratio.value = 4;
@@ -136,7 +178,8 @@ export class GameAudio {
     this.sfx = ctx.createGain();
     this.sfx.connect(this.master);
     this.uiBus = ctx.createGain();
-    this.uiBus.gain.value = 0.7;
+    this.uiBus.gain.value = 0.7 * this.effects * this.volume;
+    this.sfx.gain.value = this.effects;
     this.uiBus.connect(comp);
     // Hill echo: a couple of long, dark slap-backs (outdoors there's no
     // room, only the terrain throwing the big sounds back)
@@ -184,6 +227,18 @@ export class GameAudio {
     const f = cam.getWorldDirection(this._f);
     const u = this._u.set(0, 1, 0).applyQuaternion(cam.quaternion);
     const t = ctx.currentTime;
+    // A camera cut is a cut in the sound too: jump, don't sweep the ears
+    // across the gap (every panner would swing through the head)
+    const jump = this.lastEar.distanceToSquared(cam.position) > 25 * 25;
+    this.lastEar.copy(cam.position);
+    if (L.positionX && jump) {
+      L.positionX.cancelScheduledValues(t);
+      L.positionY.cancelScheduledValues(t);
+      L.positionZ.cancelScheduledValues(t);
+      L.positionX.setValueAtTime(cam.position.x, t);
+      L.positionY.setValueAtTime(cam.position.y, t);
+      L.positionZ.setValueAtTime(cam.position.z, t);
+    }
     if (L.positionX) {
       L.positionX.setTargetAtTime(cam.position.x, t, dt);
       L.positionY.setTargetAtTime(cam.position.y, t, dt);
@@ -229,7 +284,7 @@ export class GameAudio {
     if (o.at && !o.ui) {
       const d = o.at.distanceTo(this.listenerPos);
       // Sound travels: hear it when it arrives
-      delay += d / SPEED_OF_SOUND;
+      if (o.propagate !== false) delay += d / SPEED_OF_SOUND;
       // Air eats the highs over distance
       cutoff = Math.min(cutoff, 20000 * Math.exp(-d / 1400) + 500);
       if (o.vel) {
@@ -279,6 +334,89 @@ export class GameAudio {
     return src;
   }
 
+  /** A mixing bus into the effects (gain steered by the caller). */
+  bus(): GainNode | null {
+    if (!this.ctx) return null;
+    const g = this.ctx.createGain();
+    g.connect(this.sfx);
+    return g;
+  }
+
+  /** A path through the air from a moving source to the camera (see {@link Emitter}). */
+  emitter(ref = 20): Emitter | null {
+    const ctx = this.ctx;
+    if (!ctx) return null;
+    const input = ctx.createGain();
+    const delay = ctx.createDelay(MAX_LAG + 0.5);
+    const air = ctx.createBiquadFilter();
+    air.type = 'lowpass';
+    air.frequency.value = 20000;
+    air.Q.value = 0.5;
+    const pan = ctx.createPanner();
+    pan.panningModel = 'HRTF';
+    pan.distanceModel = 'inverse';
+    pan.refDistance = ref;
+    pan.rolloffFactor = 1;
+    pan.maxDistance = 100000;
+    const mix = ctx.createGain();
+    mix.gain.value = 0;
+    input.connect(delay).connect(air).connect(pan).connect(mix).connect(this.sfx);
+    const c = ctx;
+    const emitted = new THREE.Vector3();
+    const lastEar = new THREE.Vector3();
+    let lag = 0;
+    let lastNow = -1;
+    let silent = true;
+    return {
+      input,
+      get lag() {
+        return lag;
+      },
+      update(src, now, ear, m, gate) {
+        const t = c.currentTime;
+        const dt = lastNow < 0 ? 0 : Math.max(0, now - lastNow);
+        lastNow = now;
+        // Retarded time: the sound reaching the ear now left the source
+        // `lag` seconds ago, from where it was then (a few fixed-point steps)
+        let goal = lag;
+        for (let i = 0; i < 4; i++) {
+          src.at(now - goal, emitted);
+          goal = Math.min(MAX_LAG, emitted.distanceTo(ear) / SPEED_OF_SOUND);
+        }
+        const audible = m * gate > 1e-3;
+        // A cut (or the path coming back from silence) re-lays the line in
+        // one go under a 40 ms duck; otherwise it may only slide at a rate
+        // the ear hears as Doppler (|dlag/dt| < 1, or the line runs backwards)
+        // (past ~Mach 0.45 closing the true pitch would run away to 1/(1-M):
+        // the line falls behind instead and catches up once it's gone by)
+        const moved = lastEar.distanceToSquared(ear) > 20 * 20;
+        lastEar.copy(ear);
+        const cut = moved || silent || dt === 0 || Math.abs(goal - lag) > 1.5;
+        if (cut) {
+          lag = goal;
+          mix.gain.cancelScheduledValues(t);
+          mix.gain.setTargetAtTime(0, t, 0.008);
+          delay.delayTime.setValueAtTime(lag, t + 0.04);
+          pan.positionX.setValueAtTime(emitted.x, t + 0.04);
+          pan.positionY.setValueAtTime(emitted.y, t + 0.04);
+          pan.positionZ.setValueAtTime(emitted.z, t + 0.04);
+          mix.gain.setTargetAtTime(m * gate, t + 0.045, 0.03);
+        } else {
+          lag += THREE.MathUtils.clamp(goal - lag, -0.85 * dt, 0.85 * dt);
+          delay.delayTime.setTargetAtTime(lag, t, 0.035);
+          pan.positionX.setTargetAtTime(emitted.x, t, 0.035);
+          pan.positionY.setTargetAtTime(emitted.y, t, 0.035);
+          pan.positionZ.setTargetAtTime(emitted.z, t, 0.035);
+          mix.gain.setTargetAtTime(m * gate, t, gate < 0.5 ? 0.03 : 0.12);
+        }
+        silent = !audible;
+        // Air eats the highs over distance (a kilometre takes the top octaves)
+        const d = lag * SPEED_OF_SOUND;
+        air.frequency.setTargetAtTime(17000 * Math.exp(-d / 650) + 650, t, 0.05);
+      },
+    };
+  }
+
   /**
    * [start, end] of a recording cut out as its own buffer whose tail is
    * crossfaded (equal power) into its head, so it loops with no seam. A raw
@@ -309,7 +447,7 @@ export class GameAudio {
   }
 
   /** A steered, seamless loop over [start, end] of a file. */
-  loop(url: string, opts: { start?: number; end?: number; spatial?: boolean; ref?: number; ui?: boolean } = {}): Loop | null {
+  loop(url: string, opts: { start?: number; end?: number; spatial?: boolean; ref?: number; ui?: boolean; out?: AudioNode[] } = {}): Loop | null {
     const ctx = this.ctx;
     const file = this.buffers.get(url);
     if (!ctx || !file) return null;
@@ -330,6 +468,8 @@ export class GameAudio {
       panner.distanceModel = 'inverse';
       panner.refDistance = opts.ref ?? 10;
       gain.connect(panner).connect(this.sfx);
+    } else if (opts.out) {
+      for (const o of opts.out) gain.connect(o);
     } else {
       gain.connect(opts.ui ? this.uiBus : this.sfx);
     }

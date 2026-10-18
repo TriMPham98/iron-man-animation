@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { Suit } from '../../suit/Suit';
 import { Jets } from '../fx/jets';
 import { Particles } from '../fx/particles';
+import { SonicBoomFx } from '../fx/sonicBoom';
 import { patchLogDepth } from '../render/depth';
-import { PAD } from '../world/house';
+import { PAD, structureTop } from '../world/house';
 import { hazeAll } from '../render/haze';
 import type { World } from '../world/world';
 import { CameraRig } from './cameraRig';
@@ -38,8 +39,10 @@ export class Game {
   private readonly _aim = new THREE.Vector3();
   private controls: Controls | null = null;
   private wasGrounded = true;
-  private wasSupersonic = false;
+  /** Vapour cone and shock ring at Mach 1 (and when, with hysteresis). */
+  readonly sonic: SonicBoomFx;
   private wasBoosting = false;
+  private frameDt = 0;
 
   constructor(
     readonly world: World,
@@ -51,6 +54,8 @@ export class Game {
     this.model = new FlightModel(this.ground);
     this.rig = new CameraRig(camera);
     this.particles = new Particles(world.atmosphere.uniforms);
+    this.sonic = new SonicBoomFx(world.atmosphere.uniforms);
+    scene.add(this.sonic.group);
     this.combat = new Combat(world.field, this.ground, this.model, suit, this.particles, this.events, (amount, at) => {
       this.rig.shake += amount > 15 ? 1.4 : 0.25;
       this.particles.burst('spark', at, 6, 10, undefined, 1);
@@ -100,6 +105,7 @@ export class Game {
 
   update(dt: number): void {
     this.time += dt;
+    this.frameDt = dt;
     this.events.time = this.time;
     this.acc += dt;
     this.model.power += ((this.combat.down > 0 ? 0 : 1) - this.model.power) * (1 - Math.exp(-dt / 0.25));
@@ -128,6 +134,8 @@ export class Game {
     this.model.pos.addScaledVector(this.model.vel, owed);
     this.driver.update(dt, this.suit, this.model, aim, this.combat.weapons.arms);
     this.suit.update(dt);
+    // Shots leave the suit's hardware where it is drawn this frame
+    if (this.controls) this.combat.afterPose();
     this.suit.boneWorldPoint('head', [0, 1.72, 0.04], this.head);
     this.rig.update(dt, this.model, this.head, this.ground);
     // The suit's own shadow box rides with it
@@ -138,6 +146,7 @@ export class Game {
     const o = this.driver.outputs;
     this.jets.update(dt, this.suit, { bootL: o.bootL, bootR: o.bootR, palmL: o.palmL, palmR: o.palmR }, this.ground, this.particles, this.model.vel);
     this.particles.update(dt, this.rig.camera);
+    this.sonic.update(dt, this.model.pos, this.model.vel, this.model.speed / SPEED_OF_SOUND);
     this.model.pos.addScaledVector(this.model.vel, -owed);
   }
 
@@ -148,9 +157,9 @@ export class Game {
     this.wasGrounded = m.grounded;
     if (m.boosting !== this.wasBoosting) this.events.emit(m.boosting ? 'boostStart' : 'boostEnd', { at: m.pos });
     this.wasBoosting = m.boosting;
-    const sup = m.speed > SPEED_OF_SOUND * 1.0;
-    if (sup && !this.wasSupersonic) {
+    if (this.sonic.crossed(m.speed / SPEED_OF_SOUND, this.frameDt)) {
       this.events.emit('sonicBoom', { at: m.pos, value: m.speed });
+      this.sonic.boom(m.pos, m.vel);
       this.rig.shake += 1.6;
       // Shock collar: a ring of vapour snapping off the suit
       const f = m.vel.clone().normalize();
@@ -162,10 +171,10 @@ export class Game {
         this.particles.emit('vapor', m.pos.clone().addScaledVector(r, 1.4), r.multiplyScalar(18).addScaledVector(m.vel, 0.85), { scale: 3, life: 2.4 });
       }
     }
-    this.wasSupersonic = sup ? true : m.speed > SPEED_OF_SOUND * 0.97 && this.wasSupersonic;
-    // Transonic: a vapour cone clings to the suit
+    // Transonic: the vapour cone (SonicBoomFx) clings to the suit; a few
+    // wisps tear off its rim
     const trans = Math.exp(-Math.pow((m.mach - 1) / 0.05, 2));
-    if (trans > 0.15 && Math.random() < trans) {
+    if (trans > 0.15 && Math.random() < trans * 0.3) {
       const f = m.vel.clone().normalize();
       const a = new THREE.Vector3(0, 1, 0).cross(f).normalize();
       const b = new THREE.Vector3().crossVectors(f, a);
@@ -187,7 +196,14 @@ export class Game {
   private onContact(): void {
     const m = this.model;
     if (m.contact === 'none') return;
-    this.events.emit(m.contact, { at: m.pos, value: m.impactSpeed });
+    // What a crash lands on (the sound layers by it): the house's deck,
+    // bare rock on the steep faces, earth elsewhere
+    let text: string | undefined;
+    if (m.contact === 'impact') {
+      const deck = structureTop(m.pos.x, m.pos.z) >= this.world.field.surfaceAt(m.pos.x, m.pos.z);
+      text = deck ? 'deck' : this.ground.normal(m.pos.x, m.pos.z, this._aim).y < 0.86 ? 'rock' : 'ground';
+    }
+    this.events.emit(m.contact, { at: m.pos, value: m.impactSpeed, text });
     // Hard hits cost armour (the suit shrugs off a lot)
     if (m.contact === 'impact' && m.impactSpeed > 25) {
       this.combat.armor = Math.max(0.05, this.combat.armor - (m.impactSpeed - 25) / 220);

@@ -165,6 +165,8 @@ interface Launcher extends Mount {
   lens: THREE.MeshStandardMaterial;
   ring: THREE.MeshBasicMaterial;
   laser: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  /** The round in the bay (hidden once it has flown, until the next is up). */
+  round: THREE.Object3D;
   lastLock: number;
   /** Latched from the lock until the launcher starts to stow. */
   locked: boolean;
@@ -222,6 +224,8 @@ export class WeaponsFx {
       rockets: THREE.Object3D[];
       cells: THREE.MeshBasicMaterial[];
       front: number;
+      /** Tube bore radius (m). */
+      rimR: number;
       side: number;
       center: THREE.Vector3;
     }
@@ -403,6 +407,7 @@ export class WeaponsFx {
       lens,
       ring,
       laser,
+      round: missile,
       lastLock: 0,
       locked: false,
       normal: x,
@@ -530,7 +535,7 @@ export class WeaponsFx {
     const byArm = order.map((k) => rockets[k]);
     const cellsByArm = order.map((k) => cells[k]);
     const center = new THREE.Vector3(cx, top - H / 2, front);
-    return { ...this.mount('chest', flap, bind, rig), rockets: byArm, cells: cellsByArm, front, side: s, center };
+    return { ...this.mount('chest', flap, bind, rig), rockets: byArm, cells: cellsByArm, front, rimR, side: s, center };
   }
 
   /**
@@ -667,6 +672,7 @@ export class WeaponsFx {
       }
       if (k < 0.9) mt.locked = false;
       mt.lastLock = lock;
+      mt.round.visible = !this.loadout || this.loadout.launcher[mt.side === 'L' ? 0 : 1];
     }
     for (const mt of this.silos) {
       const k = f.flaps[mt.flap.id] ?? 0;
@@ -679,11 +685,14 @@ export class WeaponsFx {
       // its cell and its light goes amber → green; all slide home first
       // as the silo sinks
       const home = ease(0.85, 1, k);
+      const loaded = this.loadout ? this.loadout.silo[mt.side > 0 ? 0 : 1] : mt.rockets.length;
       mt.rockets.forEach((r, i) => {
+        // A cell that has fired stands empty until the pod is reloaded
+        r.visible = i < loaded;
         const out = Math.min(ease(0, 1, f.siloArmed - i), home);
         r.position.z = mt.front + 0.006 * out;
         const led = mt.cells[i].color;
-        if (home < 0.98) led.copy(CELL_OFF);
+        if (home < 0.98 || i >= loaded) led.copy(CELL_OFF);
         else led.copy(f.siloArmed - i >= 1 ? CELL_ARMED : CELL_ARMING);
       });
     }
@@ -908,6 +917,44 @@ export class WeaponsFx {
   }
 
   private readonly _lift = new THREE.Matrix4();
+
+  /**
+   * Flight sim magazine: rockets left in each silo (L, R) and whether each
+   * forearm bay holds a round. Fired cells and bays stand empty. Null hands
+   * back to the flight check's own schedule (everything loaded).
+   */
+  private loadout: { silo: [number, number]; launcher: [boolean, boolean] } | null = null;
+
+  setLoadout(l: { silo: [number, number]; launcher: [boolean, boolean] } | null): void {
+    this.loadout = l;
+  }
+
+  /** Tubes per silo, in the order they arm (and fire, last first). */
+  get siloCells(): number {
+    return this.silos[0]?.rockets.length ?? 0;
+  }
+
+  /**
+   * Mouth of one silo tube (cell in arming order) and its bore axis, model
+   * space, as the pod stands this frame; false while the silo is stowed.
+   */
+  siloMuzzle(side: 'L' | 'R', cell: number, at: THREE.Vector3, dir: THREE.Vector3): { ok: boolean; caliber: number } {
+    const mt = this.silos.find((m) => (m.side > 0 ? 'L' : 'R') === side);
+    const r = mt?.rockets[cell];
+    if (!mt || !r || !mt.root.visible) return { ok: false, caliber: 0 };
+    at.set(r.position.x, r.position.y, mt.front + 0.004).applyMatrix4(mt.root.matrix);
+    dir.set(0, 0, 1).transformDirection(mt.root.matrix);
+    return { ok: true, caliber: mt.rimR * 0.7 };
+  }
+
+  /** Nose of the forearm round and the bore axis (toward the hand), model space. */
+  launcherMuzzle(side: 'L' | 'R', at: THREE.Vector3, dir: THREE.Vector3): { ok: boolean; caliber: number; length: number } {
+    const mt = this.launchers.find((m) => m.side === side);
+    if (!mt || !mt.root.visible) return { ok: false, caliber: 0, length: 0 };
+    at.copy(mt.muzzle).applyMatrix4(mt.root.matrix);
+    dir.set(0, 1, 0).transformDirection(mt.root.matrix);
+    return { ok: true, caliber: MISSILE_R, length: mt.muzzle.y * 2 + NOZZLE };
+  }
 
   hide(): void {
     for (const mt of [...this.launchers, ...this.silos, ...this.dispensers]) mt.root.visible = false;

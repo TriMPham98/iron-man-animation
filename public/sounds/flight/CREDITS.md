@@ -36,3 +36,6 @@ deploy) come from the project library in `public/sounds/`.
 - `jet.mp3` — "Jet Flyby 1" by unfa (https://freesound.org/people/unfa/sounds/168079), CC0
 - `wind.mp3` (looped) — "Car Strong Wind Noise.mp3" by FunWithSound (https://freesound.org/people/FunWithSound/sounds/439242), CC0
 - `jet-loop.mp3` (looped) — "Jet Flyby 1" by unfa (https://freesound.org/people/unfa/sounds/168079), CC0
+- `dirt-hit.mp3` — "Dive into Dirt.wav" by CalGre (https://freesound.org/people/CalGre/sounds/467122), CC0 (sound-layer kit id `glitch/fs-467122-dive-into-dirt-wav-1`)
+- `debris-1.mp3`, `debris-2.mp3` — "Gravel Impacts and Falls.wav" by lolamadeus (https://freesound.org/people/lolamadeus/sounds/179341), CC0
+- `rock-hit.mp3` — "Stone Impact Rubble Debris 3" by Sheyvan (https://freesound.org/people/Sheyvan/sounds/569499), CC0

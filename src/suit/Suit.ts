@@ -443,6 +443,11 @@ export class Suit {
     this.reactorFx.update(t, this.rig, this.modelInv);
   }
 
+  /** Weapon hardware (muzzles, magazine) and its model → world matrix (flight sim). */
+  get weaponHardware(): { fx: WeaponsFx; modelWorld: THREE.Matrix4 } {
+    return { fx: this.weapons, modelWorld: this.model.matrixWorld };
+  }
+
   /** Deployed weapons for the HUD reticles, in world space. */
   weaponTargets(f: FlightCheckFrame): WeaponTarget[] {
     if (!this.flightActive) return [];

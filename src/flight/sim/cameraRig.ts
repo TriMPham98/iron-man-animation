@@ -15,6 +15,13 @@ export const CAMERA_MODES: CameraMode[] = ['chase', 'shoulder', 'helmet', 'flyby
 export const DEFAULT_CAMERA: CameraMode = 'shoulder';
 
 const UP = new THREE.Vector3(0, 1, 0);
+/** Kinds of cinematic set-up the flyby camera cuts between. */
+type Shot = 'side' | 'low' | 'high' | 'close' | 'orbit';
+/** How tall the suit reads in a shot (m, flying it's about its own length). */
+const SUIT_SIZE = 1.9;
+/** The longest lens the operator has (vertical FOV, deg), and the widest. */
+const FOV_TELE = 4.5;
+const FOV_WIDE = 58;
 const IDENTITY = new THREE.Quaternion();
 /** Most the chase camera trails its ideal spot round the suit (rad). */
 const MAX_SWING = 0.3;
@@ -47,7 +54,15 @@ export class CameraRig {
   swing = 20;
   private fov = 62;
   private flybyAt = new THREE.Vector3();
-  private flybyTimer = 0;
+  /** The shot being held: its kind, age, when the suit went by. */
+  private shot: Shot = 'side';
+  private shotAge = 0;
+  private passedAt = -1;
+  /** Hold this long after the pass before cutting (s, varies per shot). */
+  private holdAfter = 2;
+  /** Share of the frame's height the operator keeps the suit at. */
+  private frac = 0.11;
+  private needPlant = true;
   private time = 0;
   private readonly _f = new THREE.Vector3();
   private readonly _u = new THREE.Vector3();
@@ -66,8 +81,16 @@ export class CameraRig {
     if (at) {
       this.mode = 'flyby';
       this.flybyAt.copy(at);
+      this.frac = 0.1;
+      this.passedAt = -1;
+      this.shotAge = 0;
+    } else {
+      this.needPlant = true;
     }
   }
+
+  /** The cinematic camera's current shot (debug, captures). */
+  readonly shotInfo = { shot: 'side' as Shot, age: 0, passed: -1, frac: 0, dist: 0, fov: 50, cuts: 0 };
 
   constructor(readonly camera: THREE.PerspectiveCamera) {}
 
@@ -97,7 +120,7 @@ export class CameraRig {
   cycle(): CameraMode {
     const i = CAMERA_MODES.indexOf(this.mode);
     this.mode = CAMERA_MODES[(i + 1) % CAMERA_MODES.length];
-    this.flybyTimer = 0;
+    this.needPlant = true;
     return this.mode;
   }
 
@@ -135,52 +158,9 @@ export class CameraRig {
       this.pos.copy(ideal);
       fovGoal = 74;
     } else if (this.mode === 'flyby') {
-      this.flybyTimer -= dt;
-      const rel = this._v.copy(m.pos).sub(this.flybyAt);
-      const passed = rel.dot(m.vel) > 0 && rel.length() > 40;
-      // Gone off into the distance? (Scaled with the lead: a fixed 900 m had
-      // a camera planted 2.5 s ahead at boost speed replanting — at random
-      // either side — every single frame)
-      const far = Math.max(900, speed * Math.max(2.5, Math.min(5, 220 / Math.max(speed, 20))) * 1.6);
-      if (!this.planted && (this.flybyTimer <= 0 || passed || rel.length() > far)) {
-        // Plant the next camera ahead of the path, off to one side: a cut
-        this.cut = true;
-        const lead = Math.max(2.5, Math.min(5, 220 / Math.max(speed, 20)));
-        const side = this._v.crossVectors(m.vel.lengthSq() > 1 ? m.vel : fwd, UP).normalize();
-        if (side.lengthSq() < 0.5) side.set(1, 0, 0);
-        this.flybyAt
-          .copy(m.pos)
-          .addScaledVector(m.vel, lead)
-          .addScaledVector(side, (Math.random() < 0.5 ? -1 : 1) * (10 + speed * 0.06))
-          .add(new THREE.Vector3(0, 3 + Math.random() * 6, 0));
-        this.flybyAt.y = Math.max(this.flybyAt.y, ground.surface(this.flybyAt.x, this.flybyAt.z) + 2.5);
-        this.flybyTimer = lead * 2.2 + 1.5;
-      }
-      this.pos.copy(this.flybyAt);
-      // The operator pans after the suit on a critically damped head that
-      // tracks its position and velocity: no lag on a steady pass, but no
-      // physics-step or contact judder in the pan either. A cut starts clean
-      if (this.cut || this.lastMode !== 'flyby') {
-        this.look.copy(m.pos);
-        this.lookVel.copy(m.vel);
-        this.fov = 50;
-        this.cut = false;
-      } else {
-        const w = 14;
-        const n = Math.min(16, Math.max(1, Math.ceil(dt * w * 4)));
-        const h = dt / n;
-        for (let i = 0; i < n; i++) {
-          // Track the suit's motion (velocity feed-forward), spring onto
-          // where it was at this sub-step of the frame
-          const behind = dt - (i + 1) * h;
-          const acc = this._s.copy(m.pos).addScaledVector(m.vel, -behind).sub(this.look).multiplyScalar(w * w);
-          acc.add(this._w2.copy(m.vel).sub(this.lookVel).multiplyScalar(2 * w));
-          this.lookVel.addScaledVector(acc, h);
-          this.look.addScaledVector(this.lookVel, h);
-        }
-      }
+      this.flybyFrame(dt, m, fwd, ground);
       lookAt = this.look;
-      fovGoal = 50;
+      fovGoal = this.fov;
     } else {
       const close = this.mode === 'shoulder';
       const pull = Math.min(1, speed / 300);
@@ -260,6 +240,145 @@ export class CameraRig {
       cam.updateProjectionMatrix();
     }
     cam.updateMatrixWorld();
+    // Who's listening: a camera standing off hears the suit from where it
+    // stands (soundscape reads this)
+    cam.userData.observer = this.mode === 'flyby' || this.mode === 'attract';
     this.lastMode = this.mode;
+  }
+
+  /**
+   * The cinematic flyby: an operator on a long lens, planted ahead of the
+   * suit's path, zooming to keep it a steady size in frame as it closes,
+   * whipping round as it goes by, then holding while it tears away and
+   * shrinks into the distance — only then a cut to the next set-up.
+   */
+  private flybyFrame(dt: number, m: FlightModel, fwd: THREE.Vector3, ground: CameraGround): void {
+    const enter = this.lastMode !== 'flyby';
+    this.shotAge += dt;
+    const speed = m.speed;
+    if (!this.planted) {
+      if (enter) this.needPlant = true;
+      const dist = this._v.copy(m.pos).sub(this.flybyAt).length();
+      const closing = this._v.dot(m.vel) < 0;
+      const hover = speed < 12;
+      if (this.passedAt < 0 && !closing && !hover && this.shotAge > 0.15) this.passedAt = this.shotAge;
+      const frac = SUIT_SIZE / (2 * dist * Math.tan(THREE.MathUtils.degToRad(this.fov) / 2));
+      const since = this.passedAt < 0 ? 0 : this.shotAge - this.passedAt;
+      // Let it go: hold while it tears away and shrinks, cut once it's a speck
+      const gone = this.passedAt >= 0 && (since > this.holdAfter || (since > 1.2 && frac < 0.02));
+      const stale = this.shotAge > (hover ? 6.5 : 9);
+      if (this.needPlant || gone || stale) this.plantShot(m, fwd, ground);
+    }
+    this.pos.copy(this.flybyAt);
+    // The operator pans after the suit on a critically damped head that
+    // tracks its position and velocity: no lag on a steady pass, but no
+    // physics-step or contact judder in the pan either. A cut starts clean
+    const snap = this.cut || enter;
+    if (snap) {
+      this.look.copy(m.pos);
+      this.lookVel.copy(m.vel);
+    } else {
+      const w = 14;
+      const n = Math.min(16, Math.max(1, Math.ceil(dt * w * 4)));
+      const h = dt / n;
+      for (let i = 0; i < n; i++) {
+        // Track the suit's motion (velocity feed-forward), spring onto
+        // where it was at this sub-step of the frame
+        const behind = dt - (i + 1) * h;
+        const acc = this._s.copy(m.pos).addScaledVector(m.vel, -behind).sub(this.look).multiplyScalar(w * w);
+        acc.add(this._w2.copy(m.vel).sub(this.lookVel).multiplyScalar(2 * w));
+        this.lookVel.addScaledVector(acc, h);
+        this.look.addScaledVector(this.lookVel, h);
+      }
+    }
+    // Zoom: the lens that keeps the suit at `frac` of the frame. Judged a
+    // beat ahead (the nearer of now and 0.2 s on), so on a fast close pass
+    // the lens is already opening as it arrives; eased in log space (a
+    // focal length change feels even that way), slower once it's gone by —
+    // the operator lets it shrink away rather than chasing it to a dot
+    const d = Math.max(1, Math.min(m.pos.distanceTo(this.pos), this._s.copy(m.pos).addScaledVector(m.vel, 0.2).distanceTo(this.pos)));
+    const passed = this.passedAt >= 0;
+    const want = passed ? this.frac * 0.5 : this.frac;
+    const tele = this.planted ? 12 : FOV_TELE;
+    const goal = THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(2 * Math.atan(SUIT_SIZE / (2 * d * want))), tele, FOV_WIDE);
+    if (snap) this.fov = goal;
+    else {
+      const tau = passed ? 0.8 : goal > this.fov ? 0.1 : 0.25;
+      this.fov = Math.exp(Math.log(this.fov) + (Math.log(goal) - Math.log(this.fov)) * (1 - Math.exp(-dt / tau)));
+    }
+    this.cut = false;
+    const info = this.shotInfo;
+    info.shot = this.shot;
+    info.age = this.shotAge;
+    info.passed = this.passedAt;
+    info.dist = m.pos.distanceTo(this.pos);
+    info.fov = this.fov;
+    info.frac = SUIT_SIZE / (2 * info.dist * Math.tan(THREE.MathUtils.degToRad(this.fov) / 2));
+  }
+
+  /** Pick and place the next set-up ahead of the suit: a cut. */
+  private plantShot(m: FlightModel, fwd: THREE.Vector3, ground: CameraGround): void {
+    const speed = m.speed;
+    const hover = speed < 12;
+    const dir = this._f.copy(speed > 1 ? m.vel : fwd).normalize();
+    const side = this._u.crossVectors(dir, UP);
+    if (side.lengthSq() < 0.01) side.set(1, 0, 0);
+    side.normalize();
+    // Where the suit will be when the shot pays off: far enough out for an
+    // approach on the long lens, not so far it's a speck
+    const lead = THREE.MathUtils.clamp(260 / Math.max(speed, 20), 1.6, 4.5);
+    const p = this._w2.copy(m.pos).addScaledVector(m.vel, hover ? 0 : lead);
+    const floorAt = (x: number, z: number) => Math.max(ground.surface(x, z), 0);
+    const agl = p.y - floorAt(p.x, p.z);
+    const kinds: Shot[] = hover ? ['orbit'] : ['side', 'low', 'high', 'close', 'side', 'low'];
+    const at = this.flybyAt;
+    let kind: Shot = 'side';
+    for (let tries = 0; tries < 6; tries++) {
+      kind = kinds[Math.floor(Math.random() * kinds.length)];
+      if (kind === this.shot && !hover && tries < 4) continue;
+      const s = Math.random() < 0.5 ? -1 : 1;
+      const r = Math.random();
+      if (kind === 'orbit') {
+        const a = Math.random() * Math.PI * 2;
+        at.copy(m.pos).add(this._s.set(Math.cos(a), 0, Math.sin(a)).multiplyScalar(10 + 6 * r)).add(this._s.set(0, 1 + 3 * Math.random(), 0));
+      } else if (kind === 'side') {
+        at.copy(p).addScaledVector(side, s * (5 + Math.min(10, speed * 0.02))).addScaledVector(UP, -1.5 + 3.5 * r);
+      } else if (kind === 'low') {
+        if (agl < 60) {
+          // On the deck, looking up as it goes over
+          at.copy(p).addScaledVector(side, s * (3.5 + Math.min(8, speed * 0.015)));
+          at.y = floorAt(at.x, at.z) + 1.2;
+        } else {
+          at.copy(p).addScaledVector(UP, -(9 + Math.min(15, speed * 0.03))).addScaledVector(side, s * (3 + 3 * r));
+        }
+      } else if (kind === 'high') {
+        at.copy(p).addScaledVector(UP, 9 + Math.min(18, speed * 0.035)).addScaledVector(side, s * (3 + Math.min(6, speed * 0.01)));
+      } else {
+        // A near miss: it whips past an arm's length off the lens
+        at.copy(p).addScaledVector(side, s * (2.8 + Math.min(4, speed * 0.008))).addScaledVector(UP, 0.3 + 0.9 * r);
+      }
+      at.y = Math.max(at.y, floorAt(at.x, at.z) + 1.2);
+      // No set-up behind a ridge: the path and the suit must both be in sight
+      if (this.clearView(at, p, ground) && this.clearView(at, m.pos, ground)) break;
+    }
+    this.shot = kind;
+    this.shotAge = 0;
+    this.passedAt = -1;
+    this.holdAfter = 1.9 + Math.random() * 0.9;
+    this.frac = hover ? 0.16 : kind === 'close' ? 0.14 : kind === 'high' ? 0.095 : 0.115;
+    this.needPlant = false;
+    this.cut = true;
+    this.shotInfo.cuts++;
+  }
+
+  /** Nothing of the ground between two points (sampled). */
+  private clearView(a: THREE.Vector3, b: THREE.Vector3, ground: CameraGround): boolean {
+    for (let i = 1; i < 12; i++) {
+      const t = i / 12;
+      const x = a.x + (b.x - a.x) * t;
+      const z = a.z + (b.z - a.z) * t;
+      if (ground.surface(x, z) > a.y + (b.y - a.y) * t - 0.5) return false;
+    }
+    return true;
   }
 }

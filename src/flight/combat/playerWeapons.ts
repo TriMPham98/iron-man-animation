@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MINI_ROCKETS } from '../../animation/flightCheck';
-import { flareDrum, forearmAxis, forearmNormal } from '../../suit/flightFlaps';
+import { flareDrum } from '../../suit/flightFlaps';
 import type { Suit } from '../../suit/Suit';
 import type { Particles } from '../fx/particles';
 import type { Streaks } from '../fx/streaks';
@@ -10,21 +10,31 @@ import type { Controls } from '../sim/input';
 import { IDLE_ARMS, type ArmsState } from '../sim/suitDriver';
 import type { Heightfield } from '../world/heightfield';
 import type { Explosions } from './explosions';
+import { paintLock } from './locks';
 import type { Missiles } from './missiles';
 import type { Decoy, Hostile } from './types';
+import { UnibeamFx } from './unibeamFx';
 
 /**
  * The Mark III's arsenal, flown from the suit's own hardware:
  *  - repulsors (hold LMB): the arm swings onto the aim line and the palm
  *    fires, alternating hands;
- *  - mini-rockets (hold RMB to paint up to eight targets, release to ripple
- *    them off): the trapezius silos rise and arm cell by cell;
+ *  - mini-rockets (hold RMB to paint, release to ripple them off): the
+ *    trapezius pods rise and arm cell by cell; the paint takes one lock per
+ *    enemy and each rocket leaves its own tube;
  *  - unibeam (hold Q): the suit pulls up into a stance, the arc reactor
- *    charges and the chest fires — it cuts through anything in its line;
+ *    winds up and the chest fires a beam that cuts through everything in
+ *    its line until it overheats;
  *  - flares (F): the hip drums push out and spin, spitting a fan of flares
  *    that pull heat seekers off the suit;
- *  - forearm launchers (hold G): a laser lock, then a heavy rocket off each
- *    forearm.
+ *  - forearm launchers (hold G to paint, release to fire): both bays open,
+ *    the paint takes one lock per enemy, then one round at a time leaves a
+ *    forearm tube — alternating arms, each raised onto its target.
+ *
+ * Shots are queued by {@link update} and leave the hardware in
+ * {@link afterPose}, once the suit has been posed for the frame: muzzles
+ * read last frame's pose trail the suit by a frame's flight (metres at
+ * speed).
  */
 
 interface Bolt {
@@ -41,19 +51,44 @@ interface Flare extends Decoy {
   laid: number;
 }
 
+type Shot = { kind: 'bolt'; side: 'L' | 'R' } | { kind: 'rocket'; target: Hostile | null } | { kind: 'launcher'; side: 0 | 1; target: Hostile | null };
+
 const BOLT_SPEED = 780;
 const REPULSOR_DAMAGE = 50;
 const REPULSOR_INTERVAL = 0.17;
 const MISSILE_CONE = Math.cos(THREE.MathUtils.degToRad(19));
 const MISSILE_RANGE = 3200;
 const LOCK_TIME = 0.24;
-const UNIBEAM_CHARGE = 0.75;
-const UNIBEAM_MAX = 3.6;
-const UNIBEAM_DPS = 150;
-/** Bind-space points the weapons fire from. */
+/** Rockets per pod (one per tube) and the most targets one paint takes. */
+export const POD_ROUNDS = MINI_ROCKETS;
+const SALVO_MAX = MINI_ROCKETS;
+const SALVO_INTERVAL = 0.1;
+/** Rocket kick off the rail along its tube (m/s), and how long it coasts unguided. */
+const ROCKET_KICK = 28;
+const ROCKET_COAST = 0.16;
+/** Forearm launchers: rounds per arm, the paint, the pace of the sequence. */
+export const LAUNCHER_PER_ARM = 2;
+const LAUNCHER_LOCK_TIME = 0.4;
+const LAUNCHER_CONE = Math.cos(THREE.MathUtils.degToRad(10));
+const LAUNCHER_RANGE = 4500;
+const LAUNCHER_INTERVAL = 0.55;
+const LAUNCHER_KICK = 45;
+/** A bay stands empty this long before the arm's next round is up (s). */
+const BAY_RELOAD = 0.9;
+/** Unibeam: wind-up, seconds of beam from cold to overheat, cool-down, damage. */
+const UNIBEAM_CHARGE = 0.85;
+const UNIBEAM_MAX = 4;
+const UNIBEAM_COOL = 7;
+/** Overheated, it stays locked out until it has cooled to this. */
+const UNIBEAM_RESET = 0.35;
+const UNIBEAM_DPS = 160;
+const UNIBEAM_REACH = 2600;
+/** Bind-space points the weapons fire from (fallbacks when a bay is stowed). */
 const REACTOR: [number, number, number] = [0, 1.436, 0.19];
-const SILO_L: [number, number, number] = [0.13, 1.52, -0.02];
-const SILO_R: [number, number, number] = [-0.13, 1.52, -0.02];
+const SILO: Array<[number, number, number]> = [
+  [0.13, 1.52, -0.02],
+  [-0.13, 1.52, -0.02],
+];
 
 let flareTex: THREE.Texture | null = null;
 function flareTexture(): THREE.Texture {
@@ -73,31 +108,46 @@ function flareTexture(): THREE.Texture {
   return flareTex;
 }
 
+const SIDES = ['L', 'R'] as const;
+
 export class PlayerWeapons {
   readonly arms: ArmsState = IDLE_ARMS();
   readonly group = new THREE.Group();
   /** HUD-facing state. */
   locks: Hostile[] = [];
   lockProgress = 0;
-  rockets = MINI_ROCKETS;
-  unibeamEnergy = 1;
+  /** Rockets left in each pod (L, R). */
+  readonly pods: [number, number] = [POD_ROUNDS, POD_ROUNDS];
+  readonly rocketCapacity = POD_ROUNDS * 2;
   unibeamCharge = 0;
   unibeamOn = false;
+  /** Reactor heat 0–1; at 1 the beam cuts out until it cools. */
+  unibeamHeat = 0;
+  unibeamOverheat = false;
   flares = 48;
   flareCooldown = 0;
-  launcherCooldown = 0;
-  launcherLock: Hostile | null = null;
-  launcherLockT = 0;
+  /** Forearm rounds left (L, R), the targets painted, the paint's progress. */
+  readonly launcherRounds: [number, number] = [LAUNCHER_PER_ARM, LAUNCHER_PER_ARM];
+  launcherLocks: Hostile[] = [];
+  launcherLockProgress = 0;
+  /** Targets still to be fired on in the current sequence (null: the aim point). */
+  launcherQueue: Array<Hostile | null> = [];
+  /** Arm (0 = L) the next round leaves from. */
+  nextLauncher: 0 | 1 = 0;
   /** Where the pilot's aim meets the world (m) and the assisted target. */
   readonly aimPoint = new THREE.Vector3();
   assist: Hostile | null = null;
 
   private readonly bolts: Bolt[] = [];
   private readonly flareList: Flare[] = [];
+  private readonly beam = new UnibeamFx();
+  private readonly pending: Shot[] = [];
   private repulsorT = 0;
   private nextSide: 'L' | 'R' = 'R';
   private holdL = 0;
   private holdR = 0;
+  /** Arm raised to put a forearm round on its target (s left). */
+  private readonly launchHold: [number, number] = [0, 0];
   private chargeSide: 'L' | 'R' | null = null;
   private chargeT = 0;
   private missileHeld = false;
@@ -107,6 +157,7 @@ export class PlayerWeapons {
   private salvoSide = 0;
   private siloOpen = 0;
   private siloHold = 0;
+  private siloArming = 0;
   private reloadT = 0;
   private flareSalvo = 0;
   private flareT = 0;
@@ -114,12 +165,29 @@ export class PlayerWeapons {
   private flareHold = 0;
   private launcherOut = 0;
   private launcherHold = 0;
+  private launcherHeld = false;
+  private launcherLockT = 0;
+  private launcherT = 0;
+  private readonly bayEmpty: [number, number] = [0, 0];
+  private launcherReloadT = 0;
   private unibeamHold = 0;
-  private beamEnd = new THREE.Vector3();
+  private unibeamPower = 0;
+  private ventT = 0;
+  private readonly beamDir = new THREE.Vector3();
+  private readonly beamFrom = new THREE.Vector3();
+  private readonly beamEnd = new THREE.Vector3();
+  private beamHitGround = false;
+  private readonly eye = new THREE.Vector3();
+  private readonly aimDir = new THREE.Vector3(0, 0, -1);
+  private hostiles: readonly Hostile[] = [];
+  private lastDt = 0;
+  /** Set once the game calls {@link afterPose} itself. */
+  private posedExternally = false;
   private readonly _v = new THREE.Vector3();
   private readonly _w = new THREE.Vector3();
   private readonly _a = new THREE.Vector3();
   private readonly _b = new THREE.Vector3();
+  private readonly _n = new THREE.Vector3();
 
   constructor(
     private readonly suit: Suit,
@@ -132,6 +200,22 @@ export class PlayerWeapons {
     private readonly events: EventBus,
   ) {
     this.group.name = 'player-weapons';
+    this.group.add(this.beam.group);
+  }
+
+  /** Rockets left in both pods. */
+  get rockets(): number {
+    return this.pods[0] + this.pods[1];
+  }
+
+  /** Unibeam reserve 0–1 (1 − heat). */
+  get unibeamEnergy(): number {
+    return 1 - this.unibeamHeat;
+  }
+
+  /** Forearm rounds left on both arms. */
+  get launcherAmmo(): number {
+    return this.launcherRounds[0] + this.launcherRounds[1];
   }
 
   /** True while the unibeam wants the suit upright and slowed. */
@@ -145,15 +229,21 @@ export class PlayerWeapons {
 
   update(dt: number, c: Controls, aim: THREE.Vector3, eye: THREE.Vector3, hostiles: readonly Hostile[], enabled: boolean): void {
     const A = this.arms;
+    this.lastDt = dt;
+    this.hostiles = hostiles;
+    this.eye.copy(eye);
+    this.aimDir.copy(aim);
     this.findAim(aim, eye, hostiles);
 
     // ── Repulsors ───────────────────────────────────────────────────
     this.repulsorT -= dt;
     const fire = enabled && c.fire && !this.unibeamOn;
     if (fire && this.repulsorT <= 0 && !this.chargeSide) {
-      this.chargeSide = this.nextSide;
+      // A target well off to one side (over the shoulder, behind) is shot
+      // with the hand on that side (the suit driver's call); else alternate
+      this.chargeSide = A.aimSide > 0 ? 'L' : A.aimSide < 0 ? 'R' : this.nextSide;
       this.chargeT = 0;
-      this.nextSide = this.nextSide === 'L' ? 'R' : 'L';
+      this.nextSide = this.chargeSide === 'L' ? 'R' : 'L';
       this.repulsorT = REPULSOR_INTERVAL;
       this.events.emit('repulsorCharge', { side: this.chargeSide });
     }
@@ -164,15 +254,17 @@ export class PlayerWeapons {
       this.chargeT += dt;
       const ready = (side === 'L' ? A.aimL : A.aimR) > 0.75;
       if (this.chargeT > 0.05 && ready) {
-        this.fireBolt(side, aim);
+        this.pending.push({ kind: 'bolt', side });
         this.chargeSide = null;
       }
     }
     this.holdL = Math.max(0, this.holdL - dt);
     this.holdR = Math.max(0, this.holdR - dt);
+    this.launchHold[0] = Math.max(0, this.launchHold[0] - dt);
+    this.launchHold[1] = Math.max(0, this.launchHold[1] - dt);
     const rate = (on: boolean, cur: number) => cur + ((on ? 1 : 0) - cur) * (1 - Math.exp(-dt / (on ? 0.06 : 0.22)));
-    A.aimL = rate(this.holdL > 0, A.aimL);
-    A.aimR = rate(this.holdR > 0, A.aimR);
+    A.aimL = rate(this.holdL > 0 || this.launchHold[0] > 0, A.aimL);
+    A.aimR = rate(this.holdR > 0 || this.launchHold[1] > 0, A.aimR);
     A.flashL = Math.max(0, A.flashL - dt * 6);
     A.flashR = Math.max(0, A.flashR - dt * 6);
     A.chargeL = this.chargeSide === 'L' ? Math.min(1, this.chargeT * 10) : Math.max(0, A.chargeL - dt * 8);
@@ -189,15 +281,14 @@ export class PlayerWeapons {
     }
     if (this.missileHeld) {
       this.siloHold = 0.8;
+      const cap = Math.min(SALVO_MAX, this.rockets);
       if (A.silos > 0.95) {
         this.lockT += dt;
-        this.lockProgress = Math.min(1, this.lockT / LOCK_TIME);
-        if (this.lockT >= LOCK_TIME && this.locks.length < this.rockets) {
-          const next = this.bestTarget(aim, eye, hostiles, this.locks);
-          if (next) {
-            this.locks.push(next);
-            this.events.emit(this.locks.length >= Math.min(this.rockets, MINI_ROCKETS) ? 'lockFull' : 'lockTick', { at: next.pos, value: this.locks.length });
-          }
+        this.lockProgress = this.locks.length >= cap ? 1 : Math.min(1, this.lockT / LOCK_TIME);
+        if (this.lockT >= LOCK_TIME) {
+          // One lock per enemy: the paint never doubles up on a target
+          const next = paintLock(this.locks, cap, eye, aim, hostiles, MISSILE_CONE, MISSILE_RANGE);
+          if (next) this.events.emit(this.locks.length >= cap ? 'lockFull' : 'lockTick', { at: next.pos, value: this.locks.length });
           this.lockT = 0;
         }
       }
@@ -205,7 +296,7 @@ export class PlayerWeapons {
       if (!wantMissile) {
         this.missileHeld = false;
         this.lockProgress = 0;
-        // Release: one rocket per lock; none locked fires a pair at the aim point
+        // Release: one rocket per locked enemy; none locked fires a pair at the aim point
         this.salvo = this.locks.length ? [...this.locks] : [null, null].slice(0, Math.min(2, this.rockets));
         this.salvoT = A.silos > 0.9 ? 0 : 0.4;
         this.locks = [];
@@ -214,10 +305,11 @@ export class PlayerWeapons {
     if (this.salvo.length) {
       this.siloHold = 0.8;
       this.salvoT -= dt;
-      if (this.salvoT <= 0 && A.silos > 0.9) {
+      if (this.salvoT <= 0 && A.silos > 0.9 && this.siloArming >= 1) {
         const target = this.salvo.shift() ?? null;
-        this.fireRocket(target, aim);
-        this.salvoT = 0.085;
+        // A target that died on the way gives its rocket to the aim point
+        this.pending.push({ kind: 'rocket', target: target && target.alive ? target : null });
+        this.salvoT = SALVO_INTERVAL;
       }
     }
     this.siloHold = Math.max(0, this.siloHold - dt);
@@ -225,38 +317,52 @@ export class PlayerWeapons {
     if (siloGoal === 0 && this.siloOpen > 0.99) this.events.emit('siloClose');
     this.siloOpen += THREE.MathUtils.clamp(siloGoal - this.siloOpen, -dt / 0.4, dt / 0.35);
     A.silos = this.siloOpen;
-    A.siloArmed = this.rockets;
-    if (this.rockets < MINI_ROCKETS && this.siloOpen < 0.05) {
+    // Cells arm one after another once the pods are up
+    this.siloArming = A.silos > 0.98 ? Math.min(POD_ROUNDS, this.siloArming + dt * 16) : 0;
+    A.siloArmed = this.siloArming;
+    if (this.rockets < this.rocketCapacity && this.siloOpen < 0.05) {
       this.reloadT += dt;
-      if (this.reloadT > 2.4) {
-        this.rockets++;
+      if (this.reloadT > 1.2) {
+        this.pods[this.pods[0] <= this.pods[1] ? 0 : 1]++;
         this.reloadT = 0;
       }
     }
 
     // ── Unibeam ─────────────────────────────────────────────────────
-    // Hysteresis: it takes a quarter charge to start, and runs until empty
-    const wantBeam = enabled && c.unibeam && this.unibeamEnergy > (this.unibeamOn ? 0 : 0.25);
+    const canBeam = enabled && !this.unibeamOverheat;
+    const wantBeam = canBeam && c.unibeam;
     if (wantBeam) {
-      if (this.unibeamHold === 0) this.events.emit('unibeamCharge');
+      if (this.unibeamHold === 0) this.events.emit('unibeamCharge', { at: this.model.pos });
       this.unibeamHold = 0.3;
     }
     this.unibeamHold = Math.max(0, this.unibeamHold - dt);
-    if (this.unibeamHold > 0 && (wantBeam || this.unibeamOn)) {
-      this.unibeamCharge = Math.min(1, this.unibeamCharge + dt / UNIBEAM_CHARGE);
-    } else {
-      this.unibeamCharge = Math.max(0, this.unibeamCharge - dt * 2);
+    if (wantBeam) this.unibeamCharge = Math.min(1, this.unibeamCharge + dt / UNIBEAM_CHARGE);
+    else this.unibeamCharge = Math.max(0, this.unibeamCharge - dt * 2.5);
+    const beamNow = wantBeam && this.unibeamCharge >= 1;
+    if (beamNow && !this.unibeamOn) {
+      this.events.emit('unibeamFire', { at: this.model.pos });
+      this.beamDir.copy(aim);
     }
-    const beamNow = wantBeam && this.unibeamCharge >= 1 && this.unibeamEnergy > 0;
-    if (beamNow && !this.unibeamOn) this.events.emit('unibeamFire');
-    if (!beamNow && this.unibeamOn) this.events.emit('unibeamEnd');
+    if (!beamNow && this.unibeamOn) this.events.emit('unibeamEnd', { at: this.model.pos });
     this.unibeamOn = beamNow;
     if (this.unibeamOn) {
-      this.unibeamEnergy = Math.max(0, this.unibeamEnergy - dt / UNIBEAM_MAX);
-      this.fireBeam(dt, aim, hostiles);
+      this.unibeamHeat = Math.min(1, this.unibeamHeat + dt / UNIBEAM_MAX);
+      if (this.unibeamHeat >= 1) {
+        // Overheat: the beam cuts, the chest vents, locked out until it cools
+        this.unibeamOverheat = true;
+        this.unibeamOn = false;
+        this.unibeamCharge = 0;
+        this.ventT = 1.4;
+        this.events.emit('unibeamEnd', { at: this.model.pos, value: 1 });
+        this.events.emit('jarvis', { text: 'Unibeam overheated, sir. Venting.' });
+      }
     } else {
-      this.unibeamEnergy = Math.min(1, this.unibeamEnergy + dt / 9);
+      this.unibeamHeat = Math.max(0, this.unibeamHeat - dt / UNIBEAM_COOL);
+      if (this.unibeamOverheat && this.unibeamHeat <= UNIBEAM_RESET) this.unibeamOverheat = false;
     }
+    // The beam swells in over a few frames and collapses as fast
+    this.unibeamPower += ((this.unibeamOn ? 1 : 0) - this.unibeamPower) * (1 - Math.exp(-dt / (this.unibeamOn ? 0.05 : 0.04)));
+    if (!this.unibeamOn && this.unibeamPower < 0.01) this.unibeamPower = 0;
     A.unibeam += ((this.unibeamHold > 0 ? 1 : 0) - A.unibeam) * (1 - Math.exp(-dt / 0.2));
     this.suit.setSystemsPower({ reactor: 1, eyes: 1, repulsors: 1 });
 
@@ -287,59 +393,139 @@ export class PlayerWeapons {
     this.updateFlares(dt);
 
     // ── Forearm launchers ──────────────────────────────────────────
-    this.launcherCooldown = Math.max(0, this.launcherCooldown - dt);
-    if (enabled && c.launcher && this.launcherCooldown <= 0 && !this.unibeamOn) {
-      if (this.launcherHold === 0) this.events.emit('weaponDeploy');
+    this.updateLaunchers(dt, c, aim, eye, hostiles, enabled);
+
+    // The magazine as the hardware shows it: fired cells and bays stand empty
+    this.suit.weaponHardware.fx.setLoadout({
+      silo: [this.pods[0], this.pods[1]],
+      launcher: [this.bayLoaded(0), this.bayLoaded(1)],
+    });
+
+    // Without the game's post-pose call, fire from last frame's pose
+    if (!this.posedExternally) this.afterPose(true);
+  }
+
+  private bayLoaded(i: 0 | 1): boolean {
+    return this.launcherRounds[i] > 0 && this.bayEmpty[i] <= 0;
+  }
+
+  private updateLaunchers(dt: number, c: Controls, aim: THREE.Vector3, eye: THREE.Vector3, hostiles: readonly Hostile[], enabled: boolean): void {
+    const A = this.arms;
+    for (const i of [0, 1] as const) this.bayEmpty[i] = Math.max(0, this.bayEmpty[i] - dt);
+    const want = enabled && c.launcher && this.launcherAmmo > 0 && !this.unibeamOn && !this.launcherQueue.length;
+    if (want) {
+      if (!this.launcherHeld) {
+        this.launcherHeld = true;
+        this.launcherLocks = [];
+        this.launcherLockT = 0;
+        if (this.launcherOut < 0.1) this.events.emit('weaponDeploy');
+      }
       this.launcherHold = 0.6;
+      const cap = this.launcherAmmo;
       if (A.launchers > 0.95) {
-        const t = this.bestTarget(aim, eye, hostiles, [], Math.cos(THREE.MathUtils.degToRad(7)), 4500);
-        if (t !== this.launcherLock) {
-          this.launcherLock = t;
+        // The next arm up rides the aim line while the lasers range
+        this.launchHold[this.nextReady()] = 0.3;
+        this.launcherLockT += dt;
+        this.launcherLockProgress = this.launcherLocks.length >= cap ? 1 : Math.min(1, this.launcherLockT / LAUNCHER_LOCK_TIME);
+        if (this.launcherLockT >= LAUNCHER_LOCK_TIME) {
+          const next = paintLock(this.launcherLocks, cap, eye, aim, hostiles, LAUNCHER_CONE, LAUNCHER_RANGE);
+          if (next) this.events.emit(this.launcherLocks.length >= cap ? 'lockFull' : 'lockTick', { at: next.pos, value: this.launcherLocks.length });
           this.launcherLockT = 0;
         }
-        this.launcherLockT += dt;
-        A.lockL = A.lockR = this.launcherLock ? Math.min(1, this.launcherLockT / 0.5) : 0.25;
-        if (this.launcherLock && this.launcherLockT > 0.5) this.fireLaunchers(this.launcherLock, aim);
       }
-    } else if (this.launcherHold > 0 && !c.launcher && A.launchers > 0.95 && this.launcherCooldown <= 0) {
-      // Released before a lock: fire at the aim point
-      this.fireLaunchers(this.launcherLock && this.launcherLockT > 0.5 ? this.launcherLock : null, aim);
+      this.launcherLocks = this.launcherLocks.filter((h) => h.alive);
+    } else if (this.launcherHeld) {
+      // Release: one round per locked enemy, one at a time; none locked
+      // sends one at the aim point
+      this.launcherHeld = false;
+      this.launcherLockProgress = 0;
+      this.launcherQueue = this.launcherLocks.length ? [...this.launcherLocks] : [null];
+      this.launcherLocks = [];
+      this.launcherT = 0;
+    }
+    if (this.launcherQueue.length) {
+      this.launcherHold = 0.6;
+      this.launcherT -= dt;
+      const side = this.nextReady();
+      if (this.launcherAmmo <= 0) this.launcherQueue = [];
+      else if (A.launchers > 0.95 && this.launcherT <= 0) {
+        // Raise the arm onto the line; the round leaves once it's there
+        this.launchHold[side] = 0.45;
+        const up = side === 0 ? A.aimL : A.aimR;
+        if (up > 0.8 && this.bayLoaded(side)) {
+          const target = this.launcherQueue.shift() ?? null;
+          this.pending.push({ kind: 'launcher', side, target: target && target.alive ? target : null });
+          this.launcherRounds[side]--;
+          this.bayEmpty[side] = BAY_RELOAD;
+          this.nextLauncher = side === 0 ? 1 : 0;
+          this.launcherT = LAUNCHER_INTERVAL;
+          if (!this.launcherQueue.length) this.launcherHold = 0.9;
+        }
+      }
     }
     this.launcherHold = Math.max(0, this.launcherHold - dt);
     if (this.launcherHold === 0 && this.launcherOut > 0.99) this.events.emit('weaponStow');
     this.launcherOut += THREE.MathUtils.clamp((this.launcherHold > 0 ? 1 : 0) - this.launcherOut, -dt / 0.5, dt / 0.4);
     A.launchers = this.launcherOut;
+    // Seeker lock pulses: the arm that fires next glows hot once it has a target
+    const locked = this.launcherLocks.length > 0 || this.launcherQueue.some((t) => t);
+    const nxt = this.nextReady();
+    A.lockL = A.launchers > 0.95 ? (nxt === 0 && locked ? 1 : 0.25) : 0;
+    A.lockR = A.launchers > 0.95 ? (nxt === 1 && locked ? 1 : 0.25) : 0;
     if (this.launcherHold === 0) {
-      A.lockL = A.lockR = 0;
-      this.launcherLock = null;
+      this.launcherLocks = [];
+      this.launcherHeld = false;
     }
+    // Rounds come back up from the forearm magazine while stowed
+    if (this.launcherAmmo < LAUNCHER_PER_ARM * 2 && this.launcherOut < 0.05) {
+      this.launcherReloadT += dt;
+      if (this.launcherReloadT > 3) {
+        this.launcherRounds[this.launcherRounds[0] <= this.launcherRounds[1] ? 0 : 1]++;
+        this.launcherReloadT = 0;
+      }
+    }
+  }
 
+  /** The arm the next forearm round leaves from: alternating, skipping an empty one. */
+  private nextReady(): 0 | 1 {
+    const n = this.nextLauncher;
+    const o = n === 0 ? 1 : 0;
+    if (this.launcherRounds[n] > 0) return n;
+    return this.launcherRounds[o] > 0 ? o : n;
+  }
+
+  /**
+   * Once the suit is posed for the frame: shots leave their hardware, the
+   * unibeam traces from the reactor, and the streaks are laid.
+   */
+  afterPose(fallback = false): void {
+    if (!fallback) this.posedExternally = true;
+    for (const s of this.pending) {
+      if (s.kind === 'bolt') this.fireBolt(s.side, this.aimDir);
+      else if (s.kind === 'rocket') this.fireRocket(s.target);
+      else this.fireLauncher(s.side, s.target);
+    }
+    this.pending.length = 0;
+    this.updateBeam(this.lastDt, this.hostiles);
     this.drawStreaks();
   }
 
-  /** The hostile closest to the aim line within the cone, not already taken. */
-  private bestTarget(aim: THREE.Vector3, eye: THREE.Vector3, hostiles: readonly Hostile[], taken: readonly Hostile[], cone = MISSILE_CONE, range = MISSILE_RANGE): Hostile | null {
+  /** Aim point: the first thing along the pilot's line of sight; snaps to a target near it. */
+  private findAim(aim: THREE.Vector3, eye: THREE.Vector3, hostiles: readonly Hostile[]): void {
     let best: Hostile | null = null;
-    let bestDot = cone;
+    let bestDot = Math.cos(THREE.MathUtils.degToRad(2.6));
     for (const h of hostiles) {
       if (!h.alive) continue;
-      // A second lock on the same target only once every other is taken
-      const takenCount = taken.filter((t) => t === h).length;
       const d = this._v.copy(h.pos).sub(eye);
       const dist = d.length();
-      if (dist > range) continue;
-      const dot = d.divideScalar(dist).dot(aim) - takenCount * 0.02;
+      if (dist > 1800) continue;
+      const dot = d.dot(aim) / dist;
       if (dot > bestDot) {
         bestDot = dot;
         best = h;
       }
     }
-    return best;
-  }
-
-  /** Aim point: the first thing along the pilot's line of sight; snaps to a target near it. */
-  private findAim(aim: THREE.Vector3, eye: THREE.Vector3, hostiles: readonly Hostile[]): void {
-    this.assist = this.bestTarget(aim, eye, hostiles, [], Math.cos(THREE.MathUtils.degToRad(2.6)), 1800);
+    this.assist = best;
     const hit = this.field.raycast(eye, aim, 3000);
     this.aimPoint.copy(eye).addScaledVector(aim, hit > 0 ? hit : 1500);
   }
@@ -408,62 +594,138 @@ export class PlayerWeapons {
     }
   }
 
-  private fireRocket(target: Hostile | null, aim: THREE.Vector3): void {
-    if (this.rockets <= 0) return;
-    this.rockets--;
-    const side = this.salvoSide++ % 2 === 0 ? SILO_L : SILO_R;
-    const from = this.suit.boneWorldPoint('chest', side, new THREE.Vector3());
-    // Kick out along the suit's head line and up off its back
-    const head = this.model.thrustAxis(new THREE.Vector3());
-    const back = this.suit.boneWorldDir('chest', [0, 0, -1], new THREE.Vector3());
-    const v = this.model.vel.clone().addScaledVector(head, 30).addScaledVector(back, 14).addScaledVector(aim, 20);
-    this.missiles.launch({ team: 'player', from, vel: v, target, aimPoint: target ? undefined : this.aimPoint });
-    this.explosions.muzzle(from, v.clone().normalize(), 0.6);
-    this.events.emit('missileLaunch', { at: from });
+  /** World-space mouth and bore axis of a silo tube; false if the pod isn't up. */
+  private siloTube(side: 0 | 1, cell: number, at: THREE.Vector3, dir: THREE.Vector3): number {
+    const hw = this.suit.weaponHardware;
+    const r = hw.fx.siloMuzzle(SIDES[side], cell, at, dir);
+    if (!r.ok) return 0;
+    at.applyMatrix4(hw.modelWorld);
+    dir.transformDirection(hw.modelWorld);
+    return r.caliber;
   }
 
-  private fireLaunchers(target: Hostile | null, aim: THREE.Vector3): void {
-    for (const side of ['L', 'R'] as const) {
-      const s = side === 'L' ? 1 : -1;
-      const n = forearmNormal(side);
-      const from = this.suit.boneWorldPoint(`forearm.${side}`, [s * 0.37 + n.x * 0.05, 1.08 + n.y * 0.05, 0.03 + n.z * 0.05], new THREE.Vector3());
-      const along = this.suit.boneWorldDir(`forearm.${side}`, forearmAxis(side).toArray() as [number, number, number], new THREE.Vector3());
-      const v = this.model.vel.clone().addScaledVector(aim, 120).addScaledVector(along, 10);
-      this.missiles.launch({ team: 'player', from, vel: v, target, aimPoint: target ? undefined : this.aimPoint, heavy: true, coast: 0.08 });
-      this.explosions.muzzle(from, aim, 1);
+  private fireRocket(target: Hostile | null): void {
+    // Alternate pods, each firing its last-armed cell first
+    let side = (this.salvoSide++ % 2) as 0 | 1;
+    if (this.pods[side] <= 0) side = side === 0 ? 1 : 0;
+    if (this.pods[side] <= 0) return;
+    const cell = this.pods[side] - 1;
+    this.pods[side]--;
+    const from = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+    let caliber = this.siloTube(side, cell, from, dir);
+    if (!caliber) {
+      this.suit.boneWorldPoint('chest', SILO[side], from);
+      this.model.thrustAxis(dir);
+      caliber = 0.005;
     }
-    this.launcherCooldown = 7;
-    this.launcherHold = 0.35;
-    this.launcherLockT = 0;
-    this.events.emit('launcherFire', { at: this.model.pos });
+    // Off the rail along the tube, carrying the suit's own velocity
+    const v = this.model.vel.clone().addScaledVector(dir, ROCKET_KICK);
+    this.missiles.launch({
+      team: 'player',
+      from,
+      vel: v,
+      target,
+      aimPoint: target ? undefined : this.aimPoint,
+      coast: ROCKET_COAST,
+      caliber,
+      length: caliber * 14,
+    });
+    this.explosions.muzzle(from, dir, 0.2);
+    this.events.emit('missileLaunch', { at: from, side: SIDES[side] });
   }
 
-  private fireBeam(dt: number, aim: THREE.Vector3, hostiles: readonly Hostile[]): void {
-    const from = this.suit.boneWorldPoint('chest', REACTOR, this._b);
-    const dir = this._a.copy(this.aimPoint).sub(from).normalize();
-    if (dir.dot(aim) < 0.6) dir.copy(aim);
-    let reach = 2600;
-    const ground = this.field.raycast(from, dir, reach);
-    if (ground > 0) reach = ground;
-    let victim: Hostile | null = null;
-    for (const h of hostiles) {
-      if (!h.alive) continue;
-      const rel = this._v.copy(h.pos).sub(from);
-      const t = rel.dot(dir);
-      if (t < 0 || t > reach) continue;
-      if (rel.addScaledVector(dir, -t).lengthSq() < (h.radius + 4 + t * 0.004) ** 2) {
-        reach = t;
-        victim = h;
+  private fireLauncher(side: 0 | 1, target: Hostile | null): void {
+    const hw = this.suit.weaponHardware;
+    const from = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+    const r = hw.fx.launcherMuzzle(SIDES[side], from, dir);
+    let caliber = r.caliber;
+    let length = r.length;
+    if (r.ok) {
+      from.applyMatrix4(hw.modelWorld);
+      dir.transformDirection(hw.modelWorld);
+    } else {
+      this.palmWorld(SIDES[side], from);
+      dir.copy(this.aimDir);
+      caliber = 0.007;
+      length = 0.11;
+    }
+    const v = this.model.vel.clone().addScaledVector(dir, LAUNCHER_KICK);
+    this.missiles.launch({
+      team: 'player',
+      from,
+      vel: v,
+      target,
+      aimPoint: target ? undefined : this.aimPoint,
+      heavy: true,
+      coast: 0.1,
+      caliber,
+      length,
+    });
+    this.explosions.muzzle(from, dir, 0.45);
+    this.particles.burst('smoke', from, 3, 4, dir.clone().negate(), 0.6, { scale: 0.25, life: 0.5 });
+    this.events.emit('launcherFire', { at: from, side: SIDES[side] });
+  }
+
+  /** The beam: from the reactor along the (smoothed) aim, through everything to the ground. */
+  private updateBeam(dt: number, hostiles: readonly Hostile[]): void {
+    const from = this.suit.boneWorldPoint('chest', REACTOR, this.beamFrom);
+    const power = this.unibeamPower;
+    if (power > 0) {
+      // Aim: the assisted target, else the point under the sight; the beam
+      // sweeps onto it (heavy, never twitchy)
+      const goal = this._a.copy(this.assist ? this.assist.pos : this.aimPoint).sub(from).normalize();
+      if (goal.dot(this.aimDir) < 0.6) goal.copy(this.aimDir);
+      this.beamDir.lerp(goal, 1 - Math.exp(-dt / 0.07)).normalize();
+      const dir = this.beamDir;
+      let reach = UNIBEAM_REACH;
+      const ground = this.field.raycast(from, dir, reach);
+      this.beamHitGround = ground > 0;
+      if (ground > 0) reach = ground;
+      this.beamEnd.copy(from).addScaledVector(dir, reach);
+      // It cuts through everything along its line
+      const P = this.particles;
+      for (const h of hostiles) {
+        if (!h.alive) continue;
+        const rel = this._v.copy(h.pos).sub(from);
+        const t = rel.dot(dir);
+        if (t < 0 || t > reach) continue;
+        if (rel.addScaledVector(dir, -t).lengthSq() < (h.radius + 1.2 + t * 0.002) ** 2) {
+          const at = this._w.copy(from).addScaledVector(dir, Math.max(0, t - h.radius * 0.6));
+          if (h.damage(UNIBEAM_DPS * dt * power, at, 'unibeam')) this.onKill(h);
+          if (Math.random() < 0.8) P.burst('spark', at, 3, 22, this._n.copy(dir).negate(), 1.2);
+          P.emit('plasma', at, h.vel, { scale: 3 });
+        }
       }
+      // Impact: white-hot splash, sparks, and the ground scorched and smoking
+      const end = this.beamEnd;
+      P.emit('plasma', end, undefined, { scale: 5 });
+      if (Math.random() < 0.8) P.burst('spark', end, 4, 18, this._n.copy(dir).negate(), 1.3);
+      if (this.beamHitGround) {
+        const water = this.field.heightAt(end.x, end.z) < 0 && end.y < 1;
+        if (water) {
+          if (Math.random() < 0.6) P.burst('spray', end, 4, 8, new THREE.Vector3(0, 1.5, 0), 0.6);
+          if (Math.random() < 0.5) P.emit('mist', end, new THREE.Vector3(0, 4, 0), { scale: 1.2 });
+        } else {
+          this.field.normalAt(end.x, end.z, this._n);
+          this.beam.scorchAt(end, this._n, 4.5);
+          if (Math.random() < 0.35) P.emit('smoke', end, new THREE.Vector3(0, 3, 0), { scale: 0.7 });
+          if (Math.random() < 0.3) P.emit('fire', end, new THREE.Vector3(0, 2, 0), { scale: 0.5 });
+          if (Math.random() < 0.3) P.burst('dust', end, 2, 5, this._n, 0.8, { scale: 0.8 });
+        }
+      }
+      this.model.vel.addScaledVector(dir, -14 * dt * power);
+    } else {
+      this.beamEnd.copy(from).addScaledVector(this.aimDir, 1);
     }
-    this.beamEnd.copy(from).addScaledVector(dir, reach);
-    if (victim && victim.damage(UNIBEAM_DPS * dt, this.beamEnd, 'unibeam')) this.onKill(victim);
-    // Impact: white-hot splash, sparks, scorching dust where it digs in
-    const P = this.particles;
-    P.emit('plasma', this.beamEnd, undefined, { scale: 4 });
-    if (Math.random() < 0.7) P.burst('spark', this.beamEnd, 3, 16, undefined, 1);
-    if (ground > 0 && !victim && Math.random() < 0.4) P.emit('smoke', this.beamEnd, new THREE.Vector3(0, 3, 0), { scale: 0.6 });
-    this.model.vel.addScaledVector(dir, -14 * dt);
+    // Overheated: the chest vents steam a while
+    if (this.ventT > 0) {
+      this.ventT -= dt;
+      const out = this.suit.boneWorldDir('chest', [0, 0.3, 1], this._n);
+      if (Math.random() < 0.7) this.particles.emit('vapor', from, this._b.copy(out).multiplyScalar(4).add(this.model.vel), { scale: 0.8 });
+    }
+    this.beam.update(dt, from, this.beamEnd, this.unibeamCharge * (this.unibeamHold > 0 ? 1 : 0), power, this.beamHitGround, this.eye);
   }
 
   private popFlare(side: 'L' | 'R'): void {
@@ -535,19 +797,20 @@ export class PlayerWeapons {
       const tail = this._a.copy(b.p).addScaledVector(b.v, -0.006);
       S.add(tail, b.p, 3.5, 6.5, 10, 1, 0.16, 0.32);
     }
-    if (this.unibeamOn) {
-      const from = this.suit.boneWorldPoint('chest', REACTOR, this._b);
-      const fl = 0.85 + 0.15 * Math.sin(performance.now() * 0.05);
-      S.add(from, this.beamEnd, 6 * fl, 10 * fl, 14 * fl, 1, 0.3, 0.55);
-      S.add(from, this.beamEnd, 1.2, 2.6, 4.5, 0.6, 1.1, 1.8);
-    }
-    // Launcher lock: the forearm lasers range the target
-    if (this.arms.launchers > 0.95 && this.launcherLock) {
-      for (const side of ['L', 'R'] as const) {
-        const s = side === 'L' ? 1 : -1;
-        const from = this.suit.boneWorldPoint(`forearm.${side}`, [s * 0.37, 1.08, 0.03], this._a);
-        S.add(from, this.launcherLock.pos, 6, 0.6, 0.3, 0.5 + 0.5 * Math.min(1, this.launcherLockT * 2), 0.02);
-      }
+    // Launcher lock: each arm's laser ranges the targets it will take, the
+    // next shot's line brightest
+    if (this.arms.launchers > 0.95) {
+      const targets = this.launcherHeld ? this.launcherLocks : this.launcherQueue;
+      const hw = this.suit.weaponHardware;
+      let side = this.nextReady();
+      targets.forEach((t, i) => {
+        if (!t || !t.alive) return;
+        if (hw.fx.launcherMuzzle(SIDES[side], this._a, this._b).ok) {
+          this._a.applyMatrix4(hw.modelWorld);
+          S.add(this._a, t.pos, 6, 0.6, 0.3, i === 0 ? 0.9 : 0.35, 0.02, 0.6);
+        }
+        if (this.launcherRounds[side === 0 ? 1 : 0] > 0) side = side === 0 ? 1 : 0;
+      });
     }
   }
 

@@ -11,6 +11,7 @@ export type SimEventKind =
   | 'landed'
   | 'touchdown'
   | 'heroLanding'
+  | 'footstep'
   | 'impact'
   | 'splash'
   | 'sonicBoom'

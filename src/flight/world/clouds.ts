@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { withLogDepth } from '../render/depth';
+import { RENDER_ORDER, sortFocus } from '../render/transparency';
 import { ATMOSPHERE_GLSL } from './atmosphere';
 import { WORLD_SIZE } from './config';
 
@@ -7,9 +8,12 @@ import { WORLD_SIZE } from './config';
  * Fair-weather cumulus drifting over the coast at 1.4–2.6 km: each cloud a
  * cluster of soft puffs with a flat base, lit as rounded volumes — sunlit
  * tops, blue-grey undersides, a silver lining when the sun is behind them —
- * and fading into the haze. One instanced draw, sorted back to front. The
- * camera can fly straight through: puffs thin out as you reach them and
- * the frame goes milky white inside.
+ * and fading into the haze. Sorted back to front and drawn in two instanced
+ * calls split at the suit's distance — the puffs beyond it before the jet
+ * plumes, the puffs between it and the eye after them — so a cloud behind
+ * the suit never paints over its thrust (render/transparency). The camera
+ * can fly straight through: puffs thin out as you reach them and the frame
+ * goes milky white inside.
  */
 
 interface Puff {
@@ -140,10 +144,18 @@ function puffTexture(): THREE.Texture {
 }
 
 export class Clouds {
+  /** Puffs beyond the suit (the near ones are its child, {@link nearMesh}). */
   readonly mesh: THREE.Mesh;
+  readonly nearMesh: THREE.Mesh;
   private readonly puffs: Puff[] = [];
+  private readonly farGeo: THREE.InstancedBufferGeometry;
+  private readonly nearGeo: THREE.InstancedBufferGeometry;
   private readonly iPuff: THREE.InstancedBufferAttribute;
   private readonly iSeed: THREE.InstancedBufferAttribute;
+  private readonly nearPuff: THREE.InstancedBufferAttribute;
+  private readonly nearSeed: THREE.InstancedBufferAttribute;
+  /** Drifted puff centres + radii, unsorted. */
+  private readonly raw: Float32Array;
   private readonly order: number[];
   private readonly keys: Float32Array;
   private readonly uniforms: Record<string, THREE.IUniform>;
@@ -169,17 +181,29 @@ export class Clouds {
         this.puffs.push({ p: new THREE.Vector3(cx + Math.cos(a) * r, base + up + rad * 0.35, cz + Math.sin(a) * r * 0.7), r: rad, seed: rnd() });
       }
     }
-    const geo = new THREE.InstancedBufferGeometry();
-    const quad = new THREE.PlaneGeometry(1, 1);
-    geo.index = quad.index;
-    geo.setAttribute('position', quad.getAttribute('position'));
-    geo.setAttribute('uv', quad.getAttribute('uv'));
     const N = this.puffs.length;
-    this.iPuff = new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4).setUsage(THREE.DynamicDrawUsage);
-    this.iSeed = new THREE.InstancedBufferAttribute(new Float32Array(N), 1).setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('iPuff', this.iPuff);
-    geo.setAttribute('iSeed', this.iSeed);
-    geo.instanceCount = N;
+    const quad = new THREE.PlaneGeometry(1, 1);
+    const makeGeo = () => {
+      const geo = new THREE.InstancedBufferGeometry();
+      geo.index = quad.index;
+      geo.setAttribute('position', quad.getAttribute('position'));
+      geo.setAttribute('uv', quad.getAttribute('uv'));
+      const puff = new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4).setUsage(THREE.DynamicDrawUsage);
+      const seed = new THREE.InstancedBufferAttribute(new Float32Array(N), 1).setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('iPuff', puff);
+      geo.setAttribute('iSeed', seed);
+      geo.instanceCount = 0;
+      return { geo, puff, seed };
+    };
+    const far = makeGeo();
+    const near = makeGeo();
+    this.farGeo = far.geo;
+    this.nearGeo = near.geo;
+    this.iPuff = far.puff;
+    this.iSeed = far.seed;
+    this.nearPuff = near.puff;
+    this.nearSeed = near.seed;
+    this.raw = new Float32Array(N * 4);
     this.order = this.puffs.map((_, i) => i);
     this.keys = new Float32Array(N);
     this.uniforms = {
@@ -200,10 +224,16 @@ export class Clouds {
         depthWrite: false,
       }),
     );
-    this.mesh = new THREE.Mesh(geo, mat);
+    this.mesh = new THREE.Mesh(this.farGeo, mat);
     this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = 4;
+    this.mesh.renderOrder = RENDER_ORDER.cloudsFar;
     this.mesh.name = 'clouds';
+    // Same material, drawn after the plumes (a child: world adds only `mesh`)
+    this.nearMesh = new THREE.Mesh(this.nearGeo, mat);
+    this.nearMesh.frustumCulled = false;
+    this.nearMesh.renderOrder = RENDER_ORDER.cloudsNear;
+    this.nearMesh.name = 'clouds-near';
+    this.mesh.add(this.nearMesh);
   }
 
   /** 0–1: how deep inside a cloud the eye is (post white-out). */
@@ -222,8 +252,10 @@ export class Clouds {
       let z = p.p.z + this.offset.z;
       x = ((((x + half) % (2 * half)) + 2 * half) % (2 * half)) - half;
       z = ((((z + half) % (2 * half)) + 2 * half) % (2 * half)) - half;
-      this.iPuff.setXYZW(i, x, p.p.y, z, p.r);
-      this.iSeed.setX(i, p.seed);
+      this.raw[i * 4] = x;
+      this.raw[i * 4 + 1] = p.p.y;
+      this.raw[i * 4 + 2] = z;
+      this.raw[i * 4 + 3] = p.r;
       const dx = x - eye.x;
       const dy = p.p.y - eye.y;
       const dz = z - eye.z;
@@ -232,24 +264,32 @@ export class Clouds {
       const d = Math.sqrt(d2);
       if (d < p.r * 0.8) inside = Math.max(inside, 1 - d / (p.r * 0.8));
     }
-    // Back to front
+    // Back to front, split at the suit: [far … | … near]
     this.order.sort((a, b) => this.keys[b] - this.keys[a]);
-    const src = this.iPuff.array as Float32Array;
-    const tmp = this.sorted ?? (this.sorted = new Float32Array(src.length));
-    const seeds = this.iSeed.array as Float32Array;
-    const tmpS = this.sortedSeeds ?? (this.sortedSeeds = new Float32Array(seeds.length));
+    const f = sortFocus.valid ? sortFocus.point.distanceToSquared(eye) : 0;
+    let split = N;
+    if (sortFocus.valid) {
+      split = 0;
+      while (split < N && this.keys[this.order[split]] >= f) split++;
+    }
+    const fp = this.iPuff.array as Float32Array;
+    const fs = this.iSeed.array as Float32Array;
+    const np = this.nearPuff.array as Float32Array;
+    const ns = this.nearSeed.array as Float32Array;
     for (let o = 0; o < N; o++) {
       const i = this.order[o];
-      tmp.set(src.subarray(i * 4, i * 4 + 4), o * 4);
-      tmpS[o] = seeds[i];
+      const near = o >= split;
+      const k = near ? o - split : o;
+      (near ? np : fp).set(this.raw.subarray(i * 4, i * 4 + 4), k * 4);
+      (near ? ns : fs)[k] = this.puffs[i].seed;
     }
-    src.set(tmp);
-    seeds.set(tmpS);
-    this.iPuff.needsUpdate = true;
-    this.iSeed.needsUpdate = true;
+    this.farGeo.instanceCount = split;
+    this.nearGeo.instanceCount = N - split;
+    this.mesh.visible = true;
+    this.nearMesh.visible = split < N;
+    this.iPuff.needsUpdate = this.iSeed.needsUpdate = true;
+    if (split < N) this.nearPuff.needsUpdate = this.nearSeed.needsUpdate = true;
     return Math.min(1, inside * 1.6);
   }
 
-  private sorted: Float32Array | null = null;
-  private sortedSeeds: Float32Array | null = null;
 }

@@ -48,22 +48,51 @@ const MATS = {
   },
 };
 
-function missileMesh(team: Team, heavy: boolean): THREE.Group {
+/**
+ * One unit-calibre airframe (radius 1, nose forward along +Z, length
+ * {@link UNIT_LEN} calibres), shared by every rocket; each is scaled to its
+ * own tube. Built once: nothing to allocate or dispose per shot.
+ */
+const UNIT_LEN = 16;
+let airframe: { body: THREE.BufferGeometry; nose: THREE.BufferGeometry; fins: THREE.BufferGeometry } | null = null;
+function unitAirframe() {
+  if (airframe) return airframe;
+  const L = UNIT_LEN;
+  const body = new THREE.CylinderGeometry(1, 1, L * 0.78, 10).rotateX(Math.PI / 2).translate(0, 0, -L * 0.11);
+  const nose = new THREE.ConeGeometry(1, L * 0.22, 10).rotateX(Math.PI / 2).translate(0, 0, L * 0.39);
+  const fin = new THREE.BoxGeometry(0.12, 2.6, L * 0.14).translate(0, 1.3, -L * 0.42);
+  const fins = [0, 1, 2, 3].map((i) => fin.clone().rotateZ(Math.PI / 4 + (i * Math.PI) / 2));
+  airframe = { body, nose, fins: mergeGeometries(fins) };
+  return airframe;
+}
+
+function mergeGeometries(gs: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const nrm: number[] = [];
+  for (const g of gs) {
+    const ng = g.index ? g.toNonIndexed() : g;
+    pos.push(...(ng.getAttribute('position').array as Float32Array));
+    nrm.push(...(ng.getAttribute('normal').array as Float32Array));
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  return out;
+}
+
+/** A rocket `caliber` m in radius and `length` m long (nose along +Z). */
+function missileMesh(team: Team, caliber: number, length: number): THREE.Group {
   const g = new THREE.Group();
   const { body, nose } = MATS[team];
-  const s = heavy ? 1.6 : team === 'player' ? 0.6 : 1.4;
-  const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.06 * s, 0.06 * s, 0.9 * s, 10).rotateX(Math.PI / 2), body);
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.06 * s, 0.22 * s, 10).rotateX(Math.PI / 2).translate(0, 0, 0.56 * s), nose);
-  g.add(cyl, tip);
-  for (let i = 0; i < 4; i++) {
-    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.004 * s * 10, 0.16 * s, 0.14 * s), body);
-    fin.position.set(0, 0, -0.38 * s);
-    fin.rotation.z = (i * Math.PI) / 2;
-    fin.translateY(0.08 * s);
-    g.add(fin);
-  }
+  const a = unitAirframe();
+  g.add(new THREE.Mesh(a.body, body), new THREE.Mesh(a.nose, nose), new THREE.Mesh(a.fins, body));
+  g.scale.set(caliber, caliber, length / UNIT_LEN);
   return g;
 }
+
+/** Default airframes (m): enemy seekers; the suit's own come from their tubes. */
+const ENEMY_CALIBER = 0.09;
+const ENEMY_LENGTH = 1.5;
 
 let glowTex: THREE.Texture | null = null;
 function glowTexture(): THREE.Texture {
@@ -93,6 +122,7 @@ export class Missiles {
   private readonly _d = new THREE.Vector3();
   private readonly _los = new THREE.Vector3();
   private readonly _q = new THREE.Quaternion();
+  private readonly _q2 = new THREE.Vector3();
   private readonly FWD = new THREE.Vector3(0, 0, 1);
 
   constructor(
@@ -112,20 +142,28 @@ export class Missiles {
     aimPoint?: THREE.Vector3;
     heavy?: boolean;
     coast?: number;
+    /** Airframe radius and length (m): the tube it left. */
+    caliber?: number;
+    length?: number;
   }): void {
     const heavy = !!opts.heavy;
-    const mesh = missileMesh(opts.team, heavy);
+    const caliber = opts.caliber ?? ENEMY_CALIBER;
+    const mesh = missileMesh(opts.team, caliber, opts.length ?? (opts.caliber ? caliber * UNIT_LEN : ENEMY_LENGTH));
     const glow = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffd8a0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }),
     );
-    glow.scale.setScalar(heavy ? 2.4 : 1.4);
+    glow.visible = false;
+    mesh.position.copy(opts.from);
+    mesh.quaternion.setFromUnitVectors(this.FWD, this._d.copy(opts.vel).normalize());
     this.group.add(mesh, glow);
     const player = opts.team === 'player';
+    const base = player ? (heavy ? 640 : 430) : 330;
     this.live.push({
       team: opts.team,
       pos: opts.from.clone(),
       vel: opts.vel.clone(),
-      speed: player ? (heavy ? 640 : 430) : 330,
+      // A rocket off a fast suit still gains on it
+      speed: Math.max(base, opts.vel.length() + (heavy ? 220 : 160)),
       accel: player ? 260 : 120,
       turn: player ? 34 : 22,
       life: player ? 9 : 12,
@@ -194,16 +232,24 @@ export class Missiles {
           dir.applyQuaternion(this._q);
         }
       }
-      m.vel.copy(dir).multiplyScalar(m.age < m.coast ? sp * Math.exp(-dt * 1.5) : newSp);
+      // Coasting off the rail the round keeps the suit's speed plus its
+      // kick (it never drops back onto the suit); the motor lights after
+      if (m.age < m.coast) m.vel.y -= 9.81 * dt;
+      else m.vel.copy(dir).multiplyScalar(newSp);
       const prev = this._v.copy(m.pos);
       m.pos.addScaledVector(m.vel, dt);
 
       // Orient + glow at the tail
       m.mesh.position.copy(m.pos);
-      m.mesh.quaternion.setFromUnitVectors(this.FWD, dir);
+      m.mesh.quaternion.setFromUnitVectors(this.FWD, this._q2.copy(m.vel).normalize());
       const lit = m.age > m.coast * 0.5;
       m.glow.visible = lit;
-      m.glow.position.copy(m.pos).addScaledVector(dir, m.heavy ? -0.8 : -0.4);
+      // Motor plume at the nozzle: small at ignition (by the suit), then the
+      // bright point that carries it across the sky
+      const burn = Math.min(1, (m.age - m.coast * 0.5) / 0.35);
+      const tail = m.mesh.scale.z * UNIT_LEN * 0.5;
+      m.glow.position.copy(m.pos).addScaledVector(dir, -tail);
+      m.glow.scale.setScalar(THREE.MathUtils.lerp(0.12, m.team === 'enemy' ? 2 : m.heavy ? 1.8 : 1.1, burn));
       m.glow.material.opacity = 0.85 + 0.15 * Math.sin(m.age * 60);
 
       // Trail: puffs laid by distance travelled
