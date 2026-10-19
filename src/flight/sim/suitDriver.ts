@@ -258,6 +258,8 @@ export interface SuitOutputs {
   bootR: number;
   palmL: number;
   palmR: number;
+  /** 0–1: the palms burning as full thrusters (boost), drawn as big as the boots. */
+  palmBoost: number;
 }
 
 /** One frame of hero-landing contact, for the sim's impact FX (world space). */
@@ -291,7 +293,12 @@ export class SuitDriver {
   private readonly tuck = new THREE.Vector2();
   private readonly armOut = new THREE.Vector2();
   private readonly spread = new THREE.Vector2();
-  readonly outputs: SuitOutputs = { bootL: 0, bootR: 0, palmL: 0, palmR: 0 };
+  /** Braking (X / the auto flare) and free fall, sprung: [value, velocity]. */
+  private readonly brakeK = new THREE.Vector2();
+  private readonly fallK = new THREE.Vector2();
+  /** Travel direction in the body frame, smoothed (what the braking palms push against). */
+  private readonly travel = new THREE.Vector3(0, -1, 0);
+  readonly outputs: SuitOutputs = { bootL: 0, bootR: 0, palmL: 0, palmR: 0, palmBoost: 0 };
   /** Palm turn-assist per hand, sprung: [value, velocity]. */
   private readonly palmAssistL = new THREE.Vector2();
   private readonly palmAssistR = new THREE.Vector2();
@@ -436,7 +443,8 @@ export class SuitDriver {
     const palmsDown = this.dangle;
     let wristL = 1.45 * palmsDown;
     let wristR = 1.45 * palmsDown;
-    let fingersL: number[] = [0.08, 0.12, 0.15, 0.18, 0.2].map((r) => lerp(r, -0.25, palmsDown));
+    // (on the ground: a loose, half-curled hand)
+    let fingersL: number[] = [0.22, 0.35, 0.45, 0.5, 0.55].map((r) => lerp(r, -0.25, palmsDown));
     let fingersR = fingersL.slice();
 
     // Coming in hot for a hero landing: knees come up and the right fist
@@ -515,6 +523,58 @@ export class SuitDriver {
     let spineSide = 0;
     let lift = -0.06 * tuck * hoverish;
 
+    // ── Braking: the whole body throws itself against the travel ──────
+    // X (or the flight computer's own flare): like a bird landing the suit
+    // rears back — chest up, hips under, the legs swung forward with the
+    // knees bent to meet the ground — and both arms punch out ahead into
+    // the oncoming air, palms flat to it, the repulsors firing forward to
+    // kill the speed. Sprung in (a beat of anticipation) and out
+    const sp = m.speed;
+    if (sp > 0.5) this.travel.lerp(this._v.copy(m.vel).applyQuaternion(this._qi.copy(bodyQ).invert()).divideScalar(sp), 1 - Math.exp(-dt / 0.08)).normalize();
+    springTo(this.brakeK, clamp01(m.palmBrake) * this.dangle * (1 - crouch) * (1 - ub) * (1 - pre), 9, 0.6, dt);
+    const bk = clamp01(this.brakeK.x);
+    // ── Free fall: boots cut, dropping feet first ─────────────────────
+    // Arms thrown up and out against the rush of air, elbows soft, hands
+    // open; legs long, a little apart, toes pointed; head down to watch
+    // the ground come. The wind worries at every limb
+    springTo(this.fallK, clamp01(m.freefall) * (1 - crouch) * (1 - bk), 6, 0.55, dt);
+    const ff = clamp01(this.fallK.x);
+    if (ff > 1e-3) {
+      const gust = (k: number, ph: number) => ff * k * (Math.sin(t * 11.3 + ph) * 0.6 + Math.sin(t * 17.9 + ph * 2.1) * 0.4) * clamp01(sp / 40);
+      for (const [s, ph] of [
+        ['L', 0],
+        ['R', 1.7],
+      ] as const) {
+        limbs[`arm${s}`] = lerp(limbs[`arm${s}`], 1.2 + gust(0.06, ph), ff);
+        limbs[`armFlex${s}`] = lerp(limbs[`armFlex${s}`], 0.25 + gust(0.05, ph + 1), ff);
+        limbs[`armTwist${s}`] = lerp(limbs[`armTwist${s}`], 0, ff);
+        limbs[`elbow${s}`] = lerp(limbs[`elbow${s}`], 0.6 + gust(0.08, ph + 2), ff);
+        limbs[`hip${s}`] = lerp(limbs[`hip${s}`], 0.12 + gust(0.04, ph + 3), ff);
+        limbs[`hipOut${s}`] = lerp(limbs[`hipOut${s}`], 0.16, ff);
+        limbs[`knee${s}`] = lerp(limbs[`knee${s}`], 0.22 + gust(0.05, ph + 4), ff);
+        limbs[`ankle${s}`] = lerp(limbs[`ankle${s}`], 0.45, ff);
+      }
+      wristL = lerp(wristL, 0.25, ff);
+      wristR = lerp(wristR, 0.25, ff);
+      fingersL = fingersL.map((f) => lerp(f, -0.15, ff));
+      fingersR = fingersR.map((f) => lerp(f, -0.15, ff));
+      spineBend = lerp(spineBend, -0.12, ff);
+    }
+    if (bk > 1e-3) {
+      // How much of the travel is ahead of the chest (forward braking) vs
+      // below the boots (the flare onto the ground): the legs come forward
+      // for the first and gather under for the second
+      const ahead = clamp01(this.travel.z * 1.4);
+      for (const s of ['L', 'R'] as const) {
+        limbs[`hip${s}`] = lerp(limbs[`hip${s}`], 0.35 + 0.45 * ahead, bk);
+        limbs[`hipOut${s}`] = lerp(limbs[`hipOut${s}`], 0.12, bk);
+        limbs[`knee${s}`] = lerp(limbs[`knee${s}`], 0.55 + 0.25 * ahead, bk);
+        limbs[`ankle${s}`] = lerp(limbs[`ankle${s}`], 0.05, bk);
+      }
+      pitch = lerp(pitch, -0.22 * ahead, bk);
+      spineBend = lerp(spineBend, -0.18 * ahead + 0.12 * (1 - ahead), bk);
+    }
+
     // Repulsor aim: the arm punches out onto the aim line, palm flat to it.
     // The body has already turned toward the shot (hips, then shoulders);
     // the arm solves in the twisted chest's frame and never leaves its
@@ -559,6 +619,34 @@ export class SuitDriver {
         limbs.elbowR = lerp(limbs.elbowR, elbow, ka);
         wristR = lerp(wristR, aimWrist, ka);
         fingersR = fingersR.map((f, i) => lerp(f, hand[i], ka));
+      }
+    }
+
+    // Braking arms: each palm laid flat onto the travel (its jet then fires
+    // straight ahead of the suit, against the motion), splayed a little to
+    // its own side so the two hands make a wide V. A raised repulsor arm
+    // keeps its shot
+    if (bk > 1e-3) {
+      for (const side of ['L', 'R'] as const) {
+        const k = bk * (1 - (side === 'L' ? arms.aimL : arms.aimR));
+        if (k <= 1e-3) continue;
+        const s = side === 'L' ? 1 : -1;
+        const tc = _tgt.copy(this.travel).applyQuaternion(chestQ);
+        const tgt = clampReach(tc.set(s * tc.x + 0.35, tc.y, tc.z).normalize());
+        const palm = suit.palms[0] ?? { at: [0.35, 0.96, 0.03], normal: [-0.94, -0.34, -0.04] };
+        const [abd, flex, w] = aimArm(palm.at, palm.normal, tgt, AIM_TWIST, 0.2, 1.4);
+        const hand = [-0.05, -0.1, -0.05, 0, 0.05];
+        limbs[`arm${side}`] = lerp(limbs[`arm${side}`], abd, k);
+        limbs[`armFlex${side}`] = lerp(limbs[`armFlex${side}`], flex, k);
+        limbs[`armTwist${side}`] = lerp(limbs[`armTwist${side}`], AIM_TWIST, k);
+        limbs[`elbow${side}`] = lerp(limbs[`elbow${side}`], 0.2, k);
+        if (side === 'L') {
+          wristL = lerp(wristL, w, k);
+          fingersL = fingersL.map((f, i) => lerp(f, hand[i], k));
+        } else {
+          wristR = lerp(wristR, w, k);
+          fingersR = fingersR.map((f, i) => lerp(f, hand[i], k));
+        }
       }
     }
 
@@ -611,11 +699,16 @@ export class SuitDriver {
 
     // ── Walk hook (ground locomotion blends its pose in here) ─────────
     // After the springs: the legs are solved onto planted boots (walkCycle.ts)
-    if (m.gait.weight > 1e-3) ({ lift, pitch, roll, yaw } = m.gait.pose(m.pos, bodyQ, limbs, { lift, pitch, roll, yaw }));
+    if (m.gait.weight > 1e-3) {
+      let twist = 0;
+      ({ lift, pitch, roll, yaw, twist = 0 } = m.gait.pose(m.pos, bodyQ, limbs, { lift, pitch, roll, yaw }));
+      spineYaw += twist;
+    }
 
     let strikeNow = false;
-    let headPitch = this.head.y;
-    let headYaw = this.head.x;
+    // Falling, the head tips down to watch the ground come
+    let headPitch = lerp(this.head.y, 0.55, ff);
+    let headYaw = this.head.x * (1 - 0.6 * ff);
     let headRoll = this.headRoll;
 
     // ── Hero landing: owns the whole pose from touchdown until it rises ─
@@ -693,15 +786,25 @@ export class SuitDriver {
     // ── Thrusters ─────────────────────────────────────────────────────
     const thr = m.throttle;
     const hoverShare = 1 - fl;
-    const boots = m.grounded ? 0 : clamp01(thr * 1.35 + 0.08);
+    // (cut in a fall: not even the idle flicker)
+    const boots = m.grounded ? 0 : clamp01(thr * 1.35 + 0.08 * (1 - ff));
     this.outputs.bootL = clamp01(boots * (1 - 0.18 * m.trimRoll));
     this.outputs.bootR = clamp01(boots * (1 + 0.18 * m.trimRoll));
-    const palms = m.grounded ? 0 : lerp(0.55, 0.3, fl) * clamp01(thr * 2) + 0.1 * hoverShare * this.dangle;
+    const palms = m.grounded ? 0 : lerp(0.55, 0.3, fl) * clamp01(thr * 2) + 0.1 * hoverShare * this.dangle * (1 - ff);
+    // Braking: both palms burn hard into the travel
+    const brakeL = 0.95 * bk * (1 - arms.aimL);
+    const brakeR = 0.95 * bk * (1 - arms.aimR);
     // Turn assist: the pushing palm's jet rises with the push, never snaps
     const assistL = 0.85 * clamp01(this.palmAssistL.x) * (1 - arms.aimL);
     const assistR = 0.85 * clamp01(this.palmAssistR.x) * (1 - arms.aimR);
-    this.outputs.palmL = clamp01(Math.max(palms * (1 - 0.3 * m.trimRoll) * (1 - arms.aimL) * (1 - ub), assistL, arms.flashL));
-    this.outputs.palmR = clamp01(Math.max(palms * (1 + 0.3 * m.trimRoll) * (1 - arms.aimR) * (1 - ub), assistR, arms.flashR));
+    // On boost the palms are thrusters as much as the boots: trailing aft,
+    // they burn at the boots' level (a raised arm keeps its shot)
+    this.outputs.palmBoost += ((m.boosting ? 1 : 0) - this.outputs.palmBoost) * (1 - Math.exp(-dt / 0.15));
+    const pb = this.outputs.palmBoost;
+    const palmsL = lerp(palms, this.outputs.bootL, pb);
+    const palmsR = lerp(palms, this.outputs.bootR, pb);
+    this.outputs.palmL = clamp01(Math.max(palmsL * (1 - 0.3 * m.trimRoll * (1 - pb)) * (1 - arms.aimL) * (1 - ub), assistL, brakeL, arms.flashL));
+    this.outputs.palmR = clamp01(Math.max(palmsR * (1 + 0.3 * m.trimRoll * (1 - pb)) * (1 - arms.aimR) * (1 - ub), assistR, brakeR, arms.flashR));
 
     const pose: FlightPose = {
       stance: 0,
@@ -769,9 +872,10 @@ export class SuitDriver {
   private preLanding(m: FlightModel): number {
     if (m.grounded || m.posture > 0.9) return 0;
     const sink = -m.vel.y;
-    if (sink < 7) return 0;
+    // The flight computer's flare always ends in the three-point
+    if (sink < (m.flare ? 2 : 7)) return 0;
     const tti = Math.max(0, m.clearance) / sink;
-    return smooth01((0.5 - tti) / 0.35) * smooth01((sink - 7) / 3);
+    return smooth01((0.5 - tti) / 0.35) * (m.flare ? 1 : smooth01((sink - 7) / 3));
   }
 
   /** Touchdown → slam → hold → rise, and the solved three-point pose. */

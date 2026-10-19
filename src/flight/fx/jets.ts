@@ -107,6 +107,8 @@ export interface JetState {
   bootR: number;
   palmL: number;
   palmR: number;
+  /** 0–1: palms drawn as full thrusters (as long and wide as the boots). */
+  palmBoost?: number;
 }
 
 export interface GroundQuery {
@@ -212,9 +214,11 @@ export class Jets {
       lightSum += k;
       lightPos.addScaledVector(j.pos, k).addScaledVector(j.dir, 0.8 * k);
     });
+    const pb = state.palmBoost ?? 0;
     this.palms.forEach((j, i) => {
       const k = palmPowers[i];
-      this.drawJet(j, k, 0.18 + 0.6 * Math.pow(k, 1.3), 0.7 + 0.4 * k, t, i + 7);
+      const len = THREE.MathUtils.lerp(0.18 + 0.6 * Math.pow(k, 1.3), 0.6 + 1.6 * Math.pow(k, 1.3), pb);
+      this.drawJet(j, k, len, THREE.MathUtils.lerp(0.7 + 0.4 * k, 0.85 + 0.6 * k, pb), t, i + 7);
     });
     // It's there to wash the ground at take-off: up high it only scorched
     // the boot plates white

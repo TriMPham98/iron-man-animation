@@ -15,7 +15,10 @@ import { boneSpec } from '../../suit/rig';
  * while the suit moves, turns, or still has a boot out of place, and stops
  * on both feet. The pelvis rides an inverted pendulum: it sits as low as
  * the furthest stance boot needs (that's the bob), dips on each heavy
- * footfall, and sways over the stance foot; the arms swing against the legs.
+ * footfall, sways over the stance foot and turns with the stride (the hip
+ * goes forward with its leg) while the shoulders turn against it. The arms
+ * hang close and swing against the legs a beat behind them, loose at the
+ * elbow; each boot lands heel first and rolls flat.
  *
  * Stepped at the physics rate by the flight model (which turns each boot
  * strike into a footstep); posed at the render rate by the suit driver.
@@ -62,6 +65,8 @@ export interface RootPose {
   pitch: number;
   roll: number;
   yaw: number;
+  /** Shoulders turned against the hips (spine yaw, rad): written by the gait. */
+  twist?: number;
 }
 const ZERO_ROOT: RootPose = { lift: 0, pitch: 0, roll: 0, yaw: 0 };
 
@@ -347,7 +352,8 @@ export class Gait {
           f.swinging = false;
           f.pos.copy(f.to);
           f.yaw = f.toYaw;
-          f.heel = 0;
+          // Heel first: the toes are still up and roll down onto the ground
+          f.heel = moving ? -lerp(0.16, 0.22, this.run) : 0;
           const k = Math.hypot(f.to.x - f.from.x, f.to.z - f.from.z);
           const s = moving ? lerp(0.5, 1, this.run) : 0.3;
           strike = Math.max(strike, s * clamp(0.4 + k * 1.2, 0.4, 1));
@@ -364,7 +370,8 @@ export class Gait {
         rotY(_a.copy(f.pos).sub(_b.set(pos.x, f.pos.y, pos.z)), -heading, _a);
         const behind = -_a.z - 0.05;
         const goal = moving && other.swinging ? clamp(behind / 0.35, 0, 1) * lerp(0.3, 0.55, this.run) * smooth(0.0, 0.6, other.t) : 0;
-        f.heel += (goal - f.heel) * approach(dt, 0.05);
+        // (a heel-strike's toes-up rolls down a little slower than a push-off rises)
+        f.heel += (goal - f.heel) * approach(dt, f.heel < 0 ? 0.07 : 0.05);
       }
     }
     this.updateBody(dt, strike);
@@ -457,11 +464,17 @@ export class Gait {
     const sf = this.swingFrac;
     // Sway over the stance boot (the left boot swings around phase sf/2)
     const c = Math.cos(2 * Math.PI * (this.phase - sf / 2)) * this.active;
+    // Stride: +1 with the left boot furthest forward (end of its swing), −1
+    // with the right
+    const stride = Math.cos(2 * Math.PI * (this.phase - sf)) * this.active;
     const out: RootPose = {
       lift: root.lift,
       pitch: root.pitch + this.lean * w,
-      roll: root.roll + 0.03 * c * (1 - 0.4 * this.run) * w,
-      yaw: root.yaw,
+      roll: root.roll + 0.045 * c * (1 - 0.4 * this.run) * w,
+      // The pelvis turns with the forward leg …
+      yaw: root.yaw - lerp(0.07, 0.1, this.run) * stride * w,
+      // … and the shoulders the other way, a little further
+      twist: lerp(0.11, 0.16, this.run) * stride * w,
     };
     // Never ask a stance leg for more than it has
     const walkLift = this.attached ? Math.min(this.bob, this.reachLift(pos, q, out)) : this.bob;
@@ -491,16 +504,26 @@ export class Gait {
         limbs.footRollR = lerp(limbs.footRollR, 0, w);
       }
     }
-    // Arms swing against the legs (left arm forward with the right boot),
-    // elbows fold as the pace picks up
-    const swingK = lerp(0.22, 0.34, this.run) * w;
-    limbs.armFlexL += clamp(zRel[0] / 0.4, -1.3, 1.3) * swingK;
-    limbs.armFlexR += clamp(zRel[1] / 0.4, -1.3, 1.3) * swingK;
-    const elbow = (0.12 + lerp(0.1, 0.75, this.run) * this.active) * w;
-    limbs.elbowL += elbow;
-    limbs.elbowR += elbow;
-    limbs.armL += 0.04 * w;
-    limbs.armR += 0.04 * w;
+    void zRel;
+    // Arms: hanging close to the body, swung against the legs (left arm
+    // forward with the right boot) from the shoulder like pendulums — a
+    // beat behind the legs, so they reverse soft instead of on the footfall
+    // — and the elbow bends more as the hand comes forward
+    const armPh = 2 * Math.PI * (this.phase - sf - 0.07);
+    const swingA = lerp(0.2, 0.42, this.run) * this.active;
+    const swL = Math.cos(armPh) * swingA;
+    const swR = -swL;
+    limbs.armFlexL += swL * w;
+    limbs.armFlexR += swR * w;
+    const elbow = 0.2 + lerp(0.05, 0.75, this.run) * this.active;
+    limbs.elbowL += (elbow + 0.35 * Math.max(0, -swL)) * w;
+    limbs.elbowR += (elbow + 0.35 * Math.max(0, -swR)) * w;
+    // In to the sides (the flight pose holds them off the body); the
+    // forward hand drifts a touch across toward the centre line
+    limbs.armL += (-0.26 - 0.04 * Math.max(0, -swL)) * w;
+    limbs.armR += (-0.26 - 0.04 * Math.max(0, -swR)) * w;
+    limbs.armTwistL += 0.35 * w;
+    limbs.armTwistR += 0.35 * w;
     return out;
   }
 

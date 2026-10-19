@@ -32,18 +32,15 @@ export const SFX = {
   sparkCrackle: `${LIB}spark-crackle.mp3`,
   steamRelease: `${LIB}steam-release.mp3`,
   electricMotor: `${LIB}electric-motor.mp3`,
-  jarvisStartup: `${LIB}jarvis-startup.mp3`,
   metalResonate: `${LIB}metal-resonate.mp3`,
   unclampDry: `${LIB}unclamp-dry.mp3`,
   // Combat and air (CC0 kit, picked by eye from their spectrograms)
   explosionNear: `${KIT}explosion-near.mp3`,
   explosionSub: `${KIT}explosion-sub.mp3`,
   explosionHuge: `${KIT}explosion-huge.mp3`,
-  sonicCrack: `${KIT}sonic-crack.mp3`,
-  sonicBoom: `${KIT}sonic-boom.mp3`,
+  sonicNwave: `${KIT}sonic-nwave.mp3`,
   heroThud: `${KIT}hero-thud.mp3`,
   deepBoom: `${KIT}deep-boom.mp3`,
-  metalCrash: `${KIT}metal-crash.mp3`,
   rocket1: `${KIT}rocket-1.mp3`,
   rocket2: `${KIT}rocket-2.mp3`,
   flyby: `${KIT}flyby.mp3`,
@@ -67,12 +64,6 @@ export const SFX = {
   wind: `${KIT}wind.mp3`,
   jet: `${KIT}jet.mp3`,
   jetLoop: `${KIT}jet-loop.mp3`,
-  // Terrain crashes (CC0 field recordings, see CREDITS.md)
-  dirtHit: `${KIT}dirt-hit.mp3`,
-  rockHit: `${KIT}rock-hit.mp3`,
-  debris1: `${KIT}debris-1.mp3`,
-  debris2: `${KIT}debris-2.mp3`,
-  metalSliding: `${LIB}metal-sliding.mp3`,
 } as const;
 
 /**
@@ -115,9 +106,6 @@ class Track {
   }
 }
 
-/** Ground a crash lands on (game.ts tags each impact). */
-type Surface = 'rock' | 'ground' | 'deck';
-
 /** Least time between two plays of a state-change sound (s). */
 const DEBOUNCE: Partial<Record<SimEvent['kind'], number>> = {
   takeoff: 0.4,
@@ -125,7 +113,6 @@ const DEBOUNCE: Partial<Record<SimEvent['kind'], number>> = {
   landed: 0.4,
   touchdown: 0.4,
   heroLanding: 0.4,
-  impact: 0.05,
   splash: 0.15,
   boostStart: 0.3,
 };
@@ -145,8 +132,6 @@ export class Soundscape {
   private readonly lastAt = new Map<string, number>();
   private readonly _v = new THREE.Vector3();
   private readonly _w = new THREE.Vector3();
-  /** Armour grinding along the ground while it stays in contact. */
-  private scrape: Loop | null = null;
   /** The air torn open by a fast pass (heard from outside only). */
   private roar: Loop | null = null;
   /** The suit's own loops, heard as the pilot (in the suit) … */
@@ -163,10 +148,6 @@ export class Soundscape {
   /** Where the ears were last frame. */
   private readonly ear = new THREE.Vector3();
   private lastBoom = -99;
-  /** Last ground contact, and how hard the slide is. */
-  private lastContact = -99;
-  private contactSpeed = 0;
-  private debrisT = 0;
 
   constructor(private readonly audio: GameAudio) {}
 
@@ -192,7 +173,6 @@ export class Soundscape {
     this.boost = A.loop(SFX.thrusterBurn, { start: 1.4, end: 3.9, out });
     this.wind = A.loop(SFX.wind);
     this.beam = A.loop(SFX.thrusterBurn, { start: 1.0, end: 3.0, out });
-    this.scrape = A.loop(SFX.metalSliding, { start: 0.45, end: 1.75, out });
     this.roar = A.loop(SFX.jetLoop, { out: this.air ? [this.air.input] : undefined });
   }
 
@@ -202,58 +182,24 @@ export class Soundscape {
   }
 
   /**
-   * The boom as a bystander hears it: the N-wave's two cracks a beat apart,
-   * then the weight of it rolling off the hills. `arriving` = the shock
-   * front is at the ear now (no travel time left to add).
+   * The double boom: a real recording of the N-wave hitting the ground —
+   * the bow shock's crack, then ~0.11 s on the tail shock's — with a sub
+   * slam under each crack and the whole thing thrown back off the hills.
+   * `ui` = the pilot's own (the shock leaves from round him); otherwise
+   * placed at `at`, `arriving` = the front is at the ear now (no travel time
+   * left to add).
    */
-  private boomFrom(at: THREE.Vector3, arriving: boolean): void {
+  private doubleBoom(at: THREE.Vector3 | undefined, arriving: boolean): void {
     const A = this.audio;
     if (this.now - this.lastBoom < 1.5) return;
     this.lastBoom = this.now;
-    const o = { at, ref: 60, propagate: !arriving };
-    A.play(SFX.sonicCrack, { ...o, gain: 1.1 });
-    A.play(SFX.sonicCrack, { ...o, gain: 0.85, delay: 0.09, rate: 0.9 });
-    A.play(SFX.deepBoom, { ...o, gain: 1.0, lowpass: 2400, echo: 0.55, delay: 0.01 });
-    A.play(SFX.explosionSub, { ...o, gain: 0.55, lowpass: 260, delay: 0.03 });
-  }
-
-  /** A crash into the ground, layered by how hard and onto what. */
-  private crash(at: THREE.Vector3, speed: number, surface: Surface): void {
-    const A = this.audio;
-    // A new hit, or one more bump of a slide already grinding along? The
-    // slide is the scrape loop's; only a clearly harder knock cuts through
-    const sliding = this.now - this.lastContact < 0.35;
-    const prev = this.contactSpeed;
-    this.lastContact = this.now;
-    this.contactSpeed = Math.max(speed, prev * 0.9);
-    if (sliding && speed < prev * 1.35 + 4) {
-      // Stones kicked up along the way, now and then (never per bump)
-      if (this.now >= this.debrisT) {
-        this.debrisT = this.now + 0.28 + Math.random() * 0.3;
-        if (surface !== 'deck') A.play(pick([SFX.debris1, SFX.debris2]), { at, gain: 0.12 + 0.25 * Math.min(1, speed / 40), vary: 0.12, ref: 8 });
-      }
-      return;
-    }
-    // Weight: 0 = a stumble, 1 = a hundred-plus kilos of armour at 50 m/s
-    const k = THREE.MathUtils.clamp((speed - 3) / 50, 0, 1);
-    const heavy = 1 - 0.18 * k;
-    // The armour: shell ringing on the hit
-    A.play(SFX.metalCrash, { at, gain: 0.35 + 0.75 * k, rate: 1.04 * heavy, vary: 0.05, ref: 10 });
-    // The body: a thud you feel, lower the harder it lands
-    A.play(SFX.heroThud, { at, gain: 0.35 + 0.8 * k, rate: 0.95 * heavy, vary: 0.04, ref: 10 });
-    if (k > 0.35) A.play(SFX.deepBoom, { at, gain: (k - 0.25) * 1.1, lowpass: 420, ref: 14, echo: 0.25 * k });
-    // The ground: what it's made of, and what flies off it
-    if (surface === 'deck') {
-      A.play(SFX.metalClang, { at, gain: 0.4 + 0.5 * k, vary: 0.06, ref: 8, delay: 0.01 });
-      A.play(SFX.impact, { at, gain: 0.4 + 0.4 * k, ref: 8 });
-    } else {
-      const rock = surface === 'rock';
-      A.play(rock ? SFX.rockHit : SFX.dirtHit, { at, gain: (rock ? 0.45 : 0.6) + 0.6 * k, vary: 0.06, ref: 10, rate: rock ? 1 : 0.9 });
-      // Debris raining back down a beat later, longer for a bigger crater
-      A.play(pick([SFX.debris1, SFX.debris2]), { at, gain: 0.25 + 0.6 * k, vary: 0.1, ref: 10, delay: 0.05 + 0.1 * k, lowpass: rock ? 14000 : 7000 });
-      if (k > 0.55) A.play(SFX.debris1, { at, gain: 0.35 * k, rate: 0.85, ref: 10, delay: 0.35 + 0.2 * Math.random(), lowpass: 6000 });
-    }
-    this.debrisT = this.now + 0.4;
+    const o = at ? { at, ref: 60, propagate: !arriving } : { ui: true };
+    // The cracks land 0.07 s and 0.18 s into the file
+    A.play(SFX.sonicNwave, { ...o, gain: 1.5, echo: 0.6 });
+    A.play(SFX.sonicNwave, { ...o, gain: 0.6, rate: 0.82, lowpass: 900, delay: 0.012 });
+    A.play(SFX.explosionSub, { ...o, gain: 0.95, lowpass: 240, delay: 0.06 });
+    A.play(SFX.deepBoom, { ...o, gain: 1.1, lowpass: 1600, delay: 0.17, echo: 0.5 });
+    A.play(SFX.explosionHuge, { ...o, gain: 0.45, lowpass: 420, delay: 0.25 });
   }
 
   /** The sea: the slap, the body going in, spray coming down after. */
@@ -304,9 +250,6 @@ export class Soundscape {
         A.play(SFX.deepBoom, { at, gain: 0.9, ref: 10, echo: 0.3 });
         A.play(SFX.impact, { at, gain: 0.7, ref: 8, delay: 0.02 });
         break;
-      case 'impact':
-        if (at) this.crash(at, e.value ?? 10, (e.text as Surface) ?? 'ground');
-        break;
       case 'splash':
         if (at) this.splash(at, e.value ?? 5);
         break;
@@ -319,14 +262,11 @@ export class Soundscape {
           const ahead = -r.dot(m.vel) / (r.length() * m.speed + 1e-6);
           const mach = Math.max(1.001, m.mach);
           if (ahead <= Math.sqrt(1 - 1 / (mach * mach))) this.coneArmed = true;
-          else this.boomFrom(at, false);
+          else this.doubleBoom(at, false);
           break;
         }
-        // The pilot breaks it: two cracks of the N-wave, then the weight of it
-        this.lastBoom = this.now;
-        A.play(SFX.sonicCrack, { ui: true, gain: 0.95 });
-        A.play(SFX.sonicCrack, { ui: true, gain: 0.7, delay: 0.11, rate: 0.92 });
-        A.play(SFX.sonicBoom, { ui: true, gain: 1.15, delay: 0.02 });
+        // The pilot breaks it
+        this.doubleBoom(undefined, true);
         break;
       case 'boostStart':
         A.play(SFX.rocket1, { at, gain: 0.8, rate: 0.7, ref: 10 });
@@ -337,8 +277,11 @@ export class Soundscape {
       case 'repulsorFire':
         A.play(SFX.repulsor, { at, gain: 0.75, vary: 0.07, ref: 10, offset: 0.05 });
         A.play(SFX.repulsorZap, { at, gain: 0.22, vary: 0.08, ref: 10, rate: 0.85 });
+        // The blast has weight: a short low punch under the whine
+        A.play(SFX.heroThud, { at, gain: 0.3, rate: 1.7, vary: 0.06, lowpass: 900, ref: 10, duration: 0.25 });
         break;
       case 'repulsorHit':
+        A.play(SFX.explosionNear, { at, gain: 0.28, rate: 1.5, vary: 0.08, ref: 25, duration: 0.6 });
         A.play(SFX.sparkCrackle, { at, gain: 0.5, vary: 0.1, ref: 25 });
         A.play(pick([SFX.ping1, SFX.ping2, SFX.ping3, SFX.ping4]), { at, gain: 0.35, vary: 0.1, ref: 25 });
         break;
@@ -431,7 +374,9 @@ export class Soundscape {
         A.play(SFX.metalResonate, { ui: true, gain: 0.5, rate: 0.8 });
         break;
       case 'reboot':
-        A.play(SFX.jarvisStartup, { ui: true, gain: 0.8 });
+        // Systems spinning back up (no voice: the HUD carries the words)
+        A.play(SFX.electricMotor, { ui: true, gain: 0.6 });
+        A.play(SFX.thrusterIgnite, { ui: true, gain: 0.5, delay: 0.25 });
         break;
       case 'jarvis':
         A.play(SFX.jarvisBlip, { ui: true, gain: 0.3 });
@@ -471,7 +416,7 @@ export class Soundscape {
       const cone = Math.sqrt(1 - 1 / (m.mach * m.mach));
       const inCone = ahead > cone;
       if (!inCone) this.coneArmed = true;
-      if (inCone && this.coneArmed && this.outside) this.boomFrom(m.pos, true);
+      if (inCone && this.coneArmed && this.outside) this.doubleBoom(m.pos, true);
       if (inCone) this.coneArmed = false;
       gate = inCone ? 1 : 0;
     } else {
@@ -494,11 +439,6 @@ export class Soundscape {
     const air = Math.min(1, (m.speed / 260) ** 2);
     this.wind?.set((0.05 + 0.85 * air) * inside + 0.04 * out, 0.9 + 0.3 * Math.min(1, m.speed / 400) * inside, 600 + 9000 * Math.min(1, m.speed / 300) * inside);
     this.beam?.set(beamOn ? 0.6 / Math.max(0.3, near * 1.6) : 0, 1.9, beamOn ? 9000 : 2000);
-    // Armour grinding along the ground while the contacts keep coming
-    const grinding = this.now - this.lastContact < 0.3 && !m.grounded && m.speed > 3;
-    if (!grinding) this.contactSpeed *= Math.exp(-dt / 0.3);
-    const grind = grinding ? Math.min(1, m.speed / 35) : 0;
-    this.scrape?.set(grind * 0.9, 0.75 + 0.35 * grind, 2500 + 9000 * grind);
     // Missile warning: a fast, insistent tone while a seeker is on us
     if (combat.incoming > 0) {
       this.warnT -= dt;

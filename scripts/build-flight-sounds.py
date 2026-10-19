@@ -18,11 +18,8 @@ FROM_KIT = {
     'explosion-near': 'boom/fs-264031-low-mid-afar-explosion-1-wav-1',
     'explosion-sub': 'hit/fs-513110-cinematic-trailer-hit-explos-1',
     'explosion-huge': 'boom/fs-320782-huge-explosion-thunder-explo-3',
-    'sonic-crack': 'boom/fs-105351-backfire-ogg-1',
-    'sonic-boom': 'boom/fs-636624-deep-hit-2',
     'hero-thud': 'hit/fs-640204-heavy-metal-thud-on-ground-1',
     'deep-boom': 'boom/fs-539968-deep-boom-3',
-    'metal-crash': 'hit/fs-614063-heavy-metal-impact-2-1',
     'rocket-1': 'whoosh/fs-449995-whoosh-med-low-wav-1',
     'rocket-2': 'whoosh/fs-449994-whoosh-med-mid-wav-1',
     'flyby': 'whoosh/fs-449989-whoosh-long-mid-wav-1',
@@ -39,19 +36,22 @@ FROM_KIT = {
     'ping-3': 'tap/kenney-impact-impact-metal-light-001',
     'ping-4': 'tap/kenney-impact-impact-metal-light-004',
     'flare-pop': 'thump/fs-405537-thud-2-wav-1',
-    'dirt-hit': 'glitch/fs-467122-dive-into-dirt-wav-1',
 }
 # Openverse (Freesound CC0) finds from `sfx.py search`: prepared cut or raw
+# (source, start, length[, filter chain replacing the default fade + loudnorm])
 FROM_SEARCH = {
     'gun': ('hit/ov-b2d50241.wav', 0, None),
     'splash': ('hit/ov-60466366.wav', 0, None),
     'splash-big': ('hit/ov-fce993b0.wav', 0, None),
     'sam-launch': ('whoosh/_raw/ov-86fcafec.mp3', 0.42, 5.2),
     'jet': ('transition/_raw/ov-7de6124e.mp3', 31.0, 8.5),
-    # Terrain crashes: the stones that fly when 100 kg of armour ploughs in
-    'debris-1': ('hit/_raw/ov-3bb6fd08.mp3', 2.32, 1.9),
-    'debris-2': ('hit/_raw/ov-3bb6fd08.mp3', 11.3, 1.4),
-    'rock-hit': ('hit/_raw/ov-e331fb1f.mp3', 0, None),
+    # A real double boom off the ground (bow and tail shock ~0.11 s apart),
+    # with its own chain: the DC of the recorder's flat pressure step
+    # high-passed out, the body lifted and the two cracks pushed up against
+    # a limiter so they hit like a slammed door
+    'sonic-nwave': ('boom/_raw/ov-3da9f151.mp3', 43.38, 1.8,
+                    'highpass=f=22:poles=2,afade=t=in:d=0.004,afade=t=out:st=0.5:d=1.2,bass=g=6:f=80:w=0.8,'
+                    'acompressor=threshold=-14dB:ratio=2:attack=0.5:release=120,alimiter=limit=0.7:attack=1:release=40:level=false'),
 }
 # Loops: (source, start, length, crossfade)
 LOOPS = {
@@ -78,10 +78,10 @@ def main():
         e = cat[sid]
         run(['-i', os.path.join(KIT, e['file']), '-ar', '44100', '-ac', '1', '-q:a', '3', os.path.join(OUT, name + '.mp3')])
         credits.append(f"- `{name}.mp3` — {e['credit']} (sound-layer kit id `{sid}`, CC0)")
-    for name, (rel, start, length) in FROM_SEARCH.items():
+    for name, (rel, start, length, *chain) in FROM_SEARCH.items():
         trim = ['-ss', str(start)] + (['-t', str(length)] if length else [])
         fade = f"afade=t=in:d=0.01,afade=t=out:st={max(0.0, (length or 99) - 0.4)}:d=0.4" if length else 'afade=t=in:d=0.005'
-        run([*trim, '-i', os.path.join(CAND, rel), '-af', f'{fade},loudnorm=I=-16:TP=-1.5', '-ar', '44100', '-ac', '1', '-q:a', '3', os.path.join(OUT, name + '.mp3')])
+        run([*trim, '-i', os.path.join(CAND, rel), '-af', chain[0] if chain else f'{fade},loudnorm=I=-16:TP=-1.5', '-ar', '44100', '-ac', '1', '-q:a', '3', os.path.join(OUT, name + '.mp3')])
         credits.append(f"- `{name}.mp3` — {credit_of_search(rel)}")
     for name, (rel, start, length, xf) in LOOPS.items():
         # Seamless loop: the tail crossfades into the head
@@ -101,7 +101,7 @@ def main():
         ])
         os.remove(tmp)
         credits.append(f"- `{name}.mp3` (looped) — {credit_of_search(rel)}")
-    # Hand-written sections (## headings, e.g. the JARVIS voice) are kept as they are
+    # Hand-written sections (## headings) are kept as they are
     path = os.path.join(OUT, 'CREDITS.md')
     kept = ''
     if os.path.exists(path):

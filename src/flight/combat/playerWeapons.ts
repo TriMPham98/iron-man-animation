@@ -22,7 +22,7 @@ import { UnibeamFx } from './unibeamFx';
  *  - mini-rockets (hold RMB to paint, release to ripple them off): the
  *    trapezius pods rise and arm cell by cell; the paint takes one lock per
  *    enemy and each rocket leaves its own tube;
- *  - unibeam (hold Q): the suit pulls up into a stance, the arc reactor
+ *  - unibeam (hold Space): the suit pulls up into a stance, the arc reactor
  *    winds up and the chest fires a beam that cuts through everything in
  *    its line until it overheats;
  *  - flares (F): the hip drums push out and spin, spitting a fan of flares
@@ -42,6 +42,13 @@ interface Bolt {
   v: THREE.Vector3;
   life: number;
   side: 'L' | 'R';
+  /** Where it left the palm, carried on with the suit: the streak never reaches back past it. */
+  o: THREE.Vector3;
+  /** The suit's velocity when it fired (the bolt carries it too). */
+  vs: THREE.Vector3;
+  /** Age (s) and path laid since the last wisp of ionised trail (m). */
+  age: number;
+  laid: number;
 }
 
 interface Flare extends Decoy {
@@ -56,6 +63,9 @@ type Shot = { kind: 'bolt'; side: 'L' | 'R' } | { kind: 'rocket'; target: Hostil
 const BOLT_SPEED = 780;
 const REPULSOR_DAMAGE = 50;
 const REPULSOR_INTERVAL = 0.17;
+/** Recoil of one shot on the suit (m/s) and the shove it gives what it hits (m/s). */
+const REPULSOR_RECOIL = 0.9;
+const REPULSOR_KNOCK = 9;
 const MISSILE_CONE = Math.cos(THREE.MathUtils.degToRad(19));
 const MISSILE_RANGE = 3200;
 const LOCK_TIME = 0.24;
@@ -535,8 +545,15 @@ export class PlayerWeapons {
     return out;
   }
 
+  /** Just off the face of the palm, along its normal: where a shot is born. */
+  private palmMuzzle(side: 'L' | 'R', out: THREE.Vector3): THREE.Vector3 {
+    const p = this.suit.palms[side === 'L' ? 0 : 1];
+    this.palmWorld(side, out);
+    return out.addScaledVector(this.suit.boneWorldDir(p.bone, p.normal, this._b), 0.1);
+  }
+
   private fireBolt(side: 'L' | 'R', aim: THREE.Vector3): void {
-    const from = this.palmWorld(side, new THREE.Vector3());
+    const from = this.palmMuzzle(side, new THREE.Vector3());
     let target = this.aimPoint;
     if (this.assist) {
       // Lead the target
@@ -546,12 +563,23 @@ export class PlayerWeapons {
     const dir = target.clone().sub(from).normalize();
     // Never fire backward through the suit
     if (dir.dot(aim) < 0.5) dir.copy(aim);
-    // Energy bolts don't inherit the suit's speed: they fly where they're aimed
-    const v = dir.multiplyScalar(BOLT_SPEED);
-    this.bolts.push({ p: from, v, life: 2.2, side });
+    // Muzzle blast: a white flash in the palm and a cone of plasma thrown
+    // down the line, riding the suit's own speed
+    this.particles.emit('flash', from, this.model.vel, { scale: 0.09 });
+    this.particles.emit('plasma', from, this.model.vel, { scale: 2.4 });
+    for (let i = 0; i < 9; i++) {
+      const v = this._w.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(5).addScaledVector(dir, 10 + Math.random() * 26).add(this.model.vel);
+      this.particles.emit('plasma', from, v, { scale: 0.9 + Math.random() * 0.6 });
+    }
+    // The kick goes back up the arm into the suit
+    this.model.vel.addScaledVector(dir, -REPULSOR_RECOIL);
+    // The bolt leaves the palm at its own speed on top of the suit's, so a
+    // shot fired flat out still pulls ahead of the hand, never falls behind it
+    const vs = this.model.vel.clone();
+    const v = dir.clone().multiplyScalar(BOLT_SPEED).add(vs);
+    this.bolts.push({ p: from.clone(), o: from, vs, v, life: 2.2, side, age: 0, laid: 0 });
     if (side === 'L') this.arms.flashL = 1;
     else this.arms.flashR = 1;
-    this.particles.emit('plasma', from, this.model.vel, { scale: 1.6 });
     this.events.emit('repulsorFire', { at: from, side });
   }
 
@@ -560,7 +588,16 @@ export class PlayerWeapons {
       const b = this.bolts[i];
       const prev = this._a.copy(b.p);
       b.p.addScaledVector(b.v, dt);
+      b.o.addScaledVector(b.vs, dt);
       b.life -= dt;
+      b.age += dt;
+      // Ionised air left hanging along the path: a wisp every few metres
+      b.laid += BOLT_SPEED * dt;
+      while (b.laid > 7) {
+        b.laid -= 7;
+        const at = this._b.copy(b.p).addScaledVector(b.v, -b.laid / BOLT_SPEED);
+        this.particles.emit('plasma', at, undefined, { scale: 0.55, life: 0.22 });
+      }
       let hit: THREE.Vector3 | null = null;
       // Against hostiles (segment vs sphere)
       const seg = this._v.copy(b.p).sub(prev);
@@ -571,6 +608,8 @@ export class PlayerWeapons {
         const c = this._w.copy(prev).addScaledVector(seg, t);
         if (c.distanceToSquared(h.pos) < h.radius * h.radius) {
           hit = c.clone();
+          // A repulsor hits like a ram: the target is shoved off its line
+          h.vel.addScaledVector(seg, REPULSOR_KNOCK / Math.sqrt(Math.max(len2, 1e-6)));
           const killed = h.damage(REPULSOR_DAMAGE, hit, 'repulsor');
           if (killed) this.onKill(h);
           break;
@@ -580,9 +619,12 @@ export class PlayerWeapons {
       if (!hit && b.p.y < surf) hit = new THREE.Vector3(b.p.x, surf + 0.3, b.p.z);
       if (hit || b.life <= 0) {
         if (hit) {
-          this.particles.burst('plasma', hit, 10, 9, undefined, 1, { scale: 1.6 });
-          this.particles.burst('spark', hit, 14, 14, undefined, 1);
-          this.particles.emit('flash', hit, undefined, { scale: 0.22 });
+          // A blue-white detonation: a hard flash, a shell of plasma
+          // blown outward, sparks and a slower glowing core
+          this.particles.emit('flash', hit, undefined, { scale: 0.4 });
+          this.particles.burst('plasma', hit, 22, 16, undefined, 1, { scale: 1.8 });
+          this.particles.burst('plasma', hit, 6, 2, undefined, 1, { scale: 3.2, life: 0.4 });
+          this.particles.burst('spark', hit, 22, 18, undefined, 1);
           const water = this.field.heightAt(hit.x, hit.z) < 0 && hit.y < 1;
           if (water) this.particles.burst('spray', hit, 10, 6, new THREE.Vector3(0, 1.4, 0), 0.6);
           else if (hit.y < surf + 1) this.particles.burst('dust', hit, 5, 4, new THREE.Vector3(0, 0.8, 0), 0.8, { scale: 0.8 });
@@ -793,8 +835,13 @@ export class PlayerWeapons {
   private drawStreaks(): void {
     const S = this.streaks;
     for (const b of this.bolts) {
-      const tail = this._a.copy(b.p).addScaledVector(b.v, -0.006);
-      S.add(tail, b.p, 3.5, 6.5, 10, 1, 0.16, 0.32);
+      // A white-hot slug in a blue sheath, its tail stretched behind it —
+      // but never back past the palm it left (it grows out of the hand)
+      const len = Math.min(0.012, b.p.distanceTo(b.o) / b.v.length());
+      const tail = this._a.copy(b.p).addScaledVector(b.v, -len);
+      S.add(tail, b.p, 2.2, 4.5, 10, 0.7, 0.1, 0.55);
+      const mid = this._b.copy(b.p).addScaledVector(b.v, -len * 0.45);
+      S.add(mid, b.p, 9, 11, 14, 1, 0.05, 0.16);
     }
     // Launcher lock: each arm's laser ranges the targets it will take, the
     // next shot's line brightest

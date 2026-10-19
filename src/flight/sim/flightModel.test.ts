@@ -125,7 +125,7 @@ describe('FlightModel', () => {
       i.boost = true; // jogging, Shift held through the hop
       i.vertical = t > 1 && t < 1.8 ? 1 : 0;
       if (was && !m.grounded) takeoffs++;
-      if (['landed', 'touchdown', 'heroLanding', 'impact'].includes(m.contact)) landings++;
+      if (['landed', 'touchdown', 'heroLanding'].includes(m.contact)) landings++;
       was = m.grounded;
       // Shift held from the ground doesn't fire the boost
       if (t < 4) expect(m.boosting).toBe(false);
@@ -222,6 +222,62 @@ describe('FlightModel', () => {
     });
     expect(contact).toBe('heroLanding');
     expect(m.grounded).toBe(true);
+  });
+
+  it('falls feet first to its terminal speed on full down, and holds it', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 1500, 0);
+    m.grounded = false;
+    m.airT = 5;
+    let maxFl = 0;
+    run(m, 18, (i) => {
+      i.vertical = -1;
+      maxFl = Math.max(maxFl, m.flightness);
+    });
+    expect(maxFl).toBeLessThan(0.05); // never tips over into flight
+    expect(m.thrust).toBeLessThan(0.5); // boots cut
+    expect(-m.vel.y).toBeGreaterThan(68);
+    expect(-m.vel.y).toBeLessThan(80);
+  });
+
+  it('flares at the last second out of a terminal fall into a hero landing', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 400, 0);
+    m.vel.set(0, -72, 0);
+    m.grounded = false;
+    m.airT = 5;
+    let flareAt = -1;
+    let contact = 'none';
+    let touch = 0;
+    run(m, 10, (i) => {
+      i.vertical = -1; // still held: the flight computer overrides it
+      if (m.flare && flareAt < 0) flareAt = m.clearance;
+      if (m.contact !== 'none' && contact === 'none') {
+        contact = m.contact;
+        touch = m.impactSpeed;
+      }
+    });
+    expect(flareAt).toBeGreaterThan(30);
+    expect(flareAt).toBeLessThan(80);
+    expect(contact).toBe('heroLanding');
+    expect(touch).toBeGreaterThan(6);
+    expect(touch).toBeLessThan(20);
+  });
+
+  it('skims low over the ground without the flare taking over', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 12, 0);
+    m.vel.set(0, -4, 150);
+    m.grounded = false;
+    m.flightness = 1;
+    m.posture = 1.42;
+    m.speedCmd = 150;
+    let flared = false;
+    run(m, 3, (i) => {
+      i.aim.set(0, 0.02, 1).normalize();
+      flared ||= m.flare;
+    });
+    expect(flared).toBe(false);
   });
 
   it('rolls out of inverted flight instead of dithering on the ±π seam', () => {

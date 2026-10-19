@@ -3,11 +3,11 @@
  *
  * The same keys mean two things (the flight model reads them by mode):
  * on foot, W/S walk forward and back and A/D sidestep relative to the
- * look, Shift runs and Space takes off; in the air, mouse aims (the suit
+ * look, Shift runs and E takes off; in the air, mouse aims (the suit
  * steers toward where you look), W/S set the throttle, A/D roll in flight
- * and strafe in a hover, Space/C climb and descend, Shift boosts, X flares
- * to a hover. LMB repulsors, RMB missile lock
- * (release to fire), Q unibeam, F flares, G forearm launchers.
+ * and strafe in a hover, E climbs, Q cuts the boots (free fall), Shift
+ * boosts, X fires the palms forward to brake. LMB repulsors, RMB missile lock
+ * (release to fire), Space unibeam, F flares, G forearm launchers.
  * On a pad: right stick aims, left stick strafes / rolls (and moves in a
  * hover), triggers are throttle and brake, A/X climb/descend, L3 boost,
  * RB repulsors, LB missiles, Y unibeam, B flares, R3 camera.
@@ -62,7 +62,7 @@ export class Input {
       if (e.repeat) return;
       this.keys.add(e.code);
       this.pressedQueue.add(e.code);
-      if (['Space', 'Tab', 'KeyF', 'KeyG', 'KeyQ', 'ControlLeft'].includes(e.code)) e.preventDefault();
+      if (['Space', 'Tab', 'KeyF', 'KeyG', 'KeyQ', 'KeyE', 'ControlLeft'].includes(e.code)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => {
@@ -117,13 +117,13 @@ export class Input {
       aimPitch: -this.mouseDY * sens * (this.invertY ? -1 : 1),
       throttle: k('KeyW', 'KeyS'),
       lateral: k('KeyD', 'KeyA'),
-      vertical: k('Space', 'KeyC') + (this.key('ControlLeft') ? -1 : 0),
+      vertical: k('KeyE', 'KeyQ') + (this.key('KeyC') || this.key('ControlLeft') ? -1 : 0),
       forward: 0,
       boost: this.key('ShiftLeft', 'ShiftRight'),
       brake: this.key('KeyX'),
       fire: (this.buttons & 1) !== 0,
-      missile: (this.buttons & 4) !== 0 || this.key('KeyE'),
-      unibeam: this.key('KeyQ'),
+      missile: (this.buttons & 4) !== 0,
+      unibeam: this.key('Space'),
       flares: this.key('KeyF'),
       launcher: this.key('KeyG'),
       pressed: new Set(this.pressedQueue),

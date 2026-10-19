@@ -110,10 +110,10 @@ export class GameAudio {
     this.setEffectsLevel(this.effects);
   }
 
-  // ── Mix levels for the pause menu + JARVIS's voice (src/flight/audio/voice) ──
-  /** SFX slider × ducking under speech (0–1). */
+  // ── Mix levels for the pause menu ──
+  /** SFX slider (0–1). */
   private effects = 1;
-  /** Effects buses' level: the SFX slider times any duck under JARVIS's voice. */
+  /** Effects buses' level: the SFX slider. */
   setEffectsLevel(k: number, ramp = 0.06): void {
     this.effects = k;
     if (!this.ctx || !this.sfx) return;
@@ -123,11 +123,6 @@ export class GameAudio {
     this.uiBus.gain.setTargetAtTime(0.7 * k * this.volume, t, ramp);
   }
 
-  /** Where speech goes: past the muffle (he's in the helmet), into the limiter. */
-  get voiceOut(): AudioNode | null {
-    return this.ctx ? this.comp : null;
-  }
-  private comp!: DynamicsCompressorNode;
 
   /** Fetch every file up front (decode waits for the context). */
   preload(urls: string[]): Promise<void> {
@@ -167,7 +162,6 @@ export class GameAudio {
     this.master = ctx.createGain();
     this.master.gain.value = this.volume;
     const comp = ctx.createDynamicsCompressor();
-    this.comp = comp;
     comp.threshold.value = -14;
     comp.knee.value = 10;
     comp.ratio.value = 4;

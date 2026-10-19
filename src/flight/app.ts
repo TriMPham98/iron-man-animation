@@ -11,7 +11,6 @@ import { Input, type Controls } from './sim/input';
 import { Hud } from './ui/hud';
 import type { Screens } from './ui/screens';
 import { bindFlightSettings } from './ui/flightSettings';
-import type { JarvisVoice } from './audio/voice/jarvisVoice';
 import { SUN_DIR } from './world/config';
 import { World } from './world/world';
 
@@ -57,8 +56,6 @@ export class FlightApp {
   game!: Game;
   post!: FlightPost;
   hud!: Hud;
-  /** JARVIS, spoken (src/flight/audio/voice). */
-  voice!: JarvisVoice;
   /**
    * Keyboard / mouse / pad. Created only once the sim is shown: its window
    * listeners swallow Space / Tab / F / G / Q, which the workshop still needs
@@ -166,7 +163,7 @@ export class FlightApp {
     });
     screens.onSettings = () => this.applySettings();
     this.applySettings();
-    this.voice = bindFlightSettings(this);
+    bindFlightSettings(this);
 
     const q = this.query;
     this.lens = {

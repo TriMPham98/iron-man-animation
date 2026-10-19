@@ -14,7 +14,7 @@ import './screens.css';
 type Row = [key: string, action: string];
 
 /**
- * The controls reference. GROUND = on foot (the movement keys walk; Space
+ * The controls reference. GROUND = on foot (the movement keys walk; E
  * takes off and they fly), FLIGHT = in the air, ANY TIME = both.
  */
 export const CONTROLS: { ground: Row[]; flight: Row[]; always: Row[] } = {
@@ -22,19 +22,19 @@ export const CONTROLS: { ground: Row[]; flight: Row[]; always: Row[] } = {
     ['MOUSE', 'look · turn'],
     ['W A S D', 'walk · sidestep'],
     ['SHIFT', 'run'],
-    ['SPACE', 'take off'],
+    ['E', 'take off'],
   ],
   flight: [
     ['MOUSE', 'aim / steer'],
     ['W / S', 'throttle'],
     ['A / D', 'roll · strafe'],
-    ['SPACE', 'climb'],
-    ['C', 'descend · land'],
+    ['E', 'climb'],
+    ['Q', 'drop (free fall)'],
     ['SHIFT', 'boost'],
-    ['X', 'air brake · hover'],
+    ['X', 'brake (palm jets)'],
     ['LMB', 'repulsors'],
     ['RMB', 'paint · fire rockets'],
-    ['Q', 'unibeam'],
+    ['SPACE', 'unibeam'],
     ['F', 'flares'],
     ['G', 'forearm launchers'],
   ],
@@ -62,12 +62,10 @@ export interface Settings {
   volume: number;
   /** Effects volume (0–1). */
   sfx: number;
-  /** JARVIS's voice volume (0–1). */
-  voice: number;
   quality: Quality;
 }
 
-const DEFAULTS: Settings = { invertY: false, sensitivity: 1, volume: 0.9, sfx: 1, voice: 1, quality: 'ultra' };
+const DEFAULTS: Settings = { invertY: false, sensitivity: 1, volume: 0.9, sfx: 1, quality: 'ultra' };
 const STORE = 'mk3-flight-settings';
 
 /** What the pause menu's buttons do (wired by the app: src/flight/ui/flightSettings.ts). */
@@ -123,7 +121,7 @@ export class Screens {
       `<div class="kh">GROUND</div>${CONTROLS.ground.map(keyCell).join('')}` +
       `<div class="kh">FLIGHT</div>${CONTROLS.flight.slice(1).map(keyCell).join('')}` +
       `<div class="kh">ANY TIME</div>${CONTROLS.always.map(keyCell).join('')}`;
-    const pct = (k: 'volume' | 'sfx' | 'voice', label: string, id: string) => `
+    const pct = (k: 'volume' | 'sfx', label: string, id: string) => `
       <div class="fp-field"><label for="${id}">${label}</label>
         <input class="fp-range" id="${id}" type="range" min="0" max="1" step="0.05" data-k="${k}">
         <output for="${id}"></output></div>`;
@@ -182,8 +180,6 @@ export class Screens {
                 <div class="fp-h">LEVELS</div>
                 ${pct('volume', 'MASTER', 'fp-vol')}
                 ${pct('sfx', 'EFFECTS', 'fp-sfx')}
-                ${pct('voice', 'J.A.R.V.I.S.', 'fp-voice')}
-                <p class="fp-note">Effects duck under JARVIS while he speaks.</p>
               </section>
               <section class="fp-pane" id="fp-graphics" role="tabpanel" data-pane="graphics">
                 <div class="fp-h">QUALITY PRESET</div>
@@ -240,7 +236,7 @@ export class Screens {
   private syncInputs(): void {
     const s = this.settings;
     for (const input of this.pause.querySelectorAll<HTMLInputElement>('input.fp-range')) {
-      const k = input.dataset.k as 'volume' | 'sfx' | 'voice' | 'sensitivity';
+      const k = input.dataset.k as 'volume' | 'sfx' | 'sensitivity';
       input.value = String(s[k]);
       const p = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min));
       input.style.setProperty('--v', `${(p * 100).toFixed(1)}%`);

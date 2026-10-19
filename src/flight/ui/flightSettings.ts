@@ -1,26 +1,18 @@
 import type * as THREE from 'three';
-import { JarvisVoice } from '../audio/voice/jarvisVoice';
 import type { FlightApp } from '../app';
 import type { Quality, Settings } from './screens';
 
 /**
- * Wires the pause menu and JARVIS's voice into a built FlightApp (one call
- * from FlightApp.build): every 'jarvis' line shown is also spoken, the
- * menu's buttons drive the sim, the audio sliders set the mix and the
- * graphics preset caps the resolution.
+ * Wires the pause menu into a built FlightApp (one call from
+ * FlightApp.build): the menu's buttons drive the sim, the audio sliders set
+ * the mix and the graphics preset caps the resolution.
  */
 
 /** Ceiling on the drawing-buffer pixel ratio per preset (on top of the adaptive guard). */
 export const QUALITY_DPR: Record<Quality, number> = { low: 0.7, medium: 1, high: 1.25, ultra: Infinity };
 
-export function bindFlightSettings(app: FlightApp): JarvisVoice {
+export function bindFlightSettings(app: FlightApp): void {
   const { screens, game, audio, renderer } = app;
-  const voice = new JarvisVoice(audio);
-
-  game.events.on((e) => {
-    if (e.kind === 'jarvis' && e.text) voice.say(e.text);
-  });
-
   // ── Graphics preset: cap whatever the adaptive resolution asks for ──
   let cap = Infinity;
   const setPixelRatio = renderer.setPixelRatio.bind(renderer);
@@ -50,7 +42,7 @@ export function bindFlightSettings(app: FlightApp): JarvisVoice {
 
   const apply = (s: Settings) => {
     applyQuality(s.quality);
-    voice.setLevels(s.volume, s.sfx, s.voice);
+    audio.setEffectsLevel(s.sfx);
   };
   screens.addSettingsListener(apply);
   apply(screens.settings);
@@ -88,6 +80,4 @@ export function bindFlightSettings(app: FlightApp): JarvisVoice {
     startWas = start;
   };
   window.addEventListener('gamepadconnected', () => requestAnimationFrame(pollStart), { once: true });
-
-  return voice;
 }

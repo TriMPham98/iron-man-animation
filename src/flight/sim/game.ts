@@ -4,7 +4,7 @@ import { Jets } from '../fx/jets';
 import { Particles } from '../fx/particles';
 import { SonicBoomFx } from '../fx/sonicBoom';
 import { patchLogDepth } from '../render/depth';
-import { PAD, structureTop } from '../world/house';
+import { PAD } from '../world/house';
 import { hazeAll } from '../render/haze';
 import type { World } from '../world/world';
 import { CameraRig } from './cameraRig';
@@ -152,7 +152,7 @@ export class Game {
     sun.position.copy(this.model.pos).addScaledVector(this.world.atmosphere.uniforms.uSunDir.value as THREE.Vector3, 120);
     this.suit.group.visible = this.rig.mode !== 'helmet';
     const o = this.driver.outputs;
-    this.jets.update(dt, this.suit, { bootL: o.bootL, bootR: o.bootR, palmL: o.palmL, palmR: o.palmR }, this.ground, this.particles, this.model.vel);
+    this.jets.update(dt, this.suit, { bootL: o.bootL, bootR: o.bootR, palmL: o.palmL, palmR: o.palmR, palmBoost: o.palmBoost }, this.ground, this.particles, this.model.vel);
     this.particles.update(dt, this.rig.camera);
     this.sonic.update(dt, this.model.pos, this.model.vel, this.model.speed / SPEED_OF_SOUND);
     this.model.pos.addScaledVector(this.model.vel, -owed);
@@ -167,16 +167,26 @@ export class Game {
     this.wasBoosting = m.boosting;
     if (this.sonic.crossed(m.speed / SPEED_OF_SOUND, this.frameDt)) {
       this.events.emit('sonicBoom', { at: m.pos, value: m.speed });
-      this.sonic.boom(m.pos, m.vel);
-      this.rig.shake += 1.6;
-      // Shock collar: a ring of vapour snapping off the suit
+      // Two shock fronts, the bow's and the tail's (the double boom you hear)
       const f = m.vel.clone().normalize();
+      this.sonic.boom(m.pos, m.vel);
+      this.sonic.boom(m.pos.clone().addScaledVector(f, -7), m.vel);
+      // The shock slams through the suit: a hard jolt, not a rumble
+      this.rig.shake += 2.6;
+      // Shock collars: rings of vapour snapping off the suit, the second
+      // a beat behind the first
       const a = new THREE.Vector3(0, 1, 0).cross(f).normalize();
       const b = new THREE.Vector3().crossVectors(f, a);
-      for (let i = 0; i < 48; i++) {
-        const t = (i / 48) * Math.PI * 2;
-        const r = a.clone().multiplyScalar(Math.cos(t)).addScaledVector(b, Math.sin(t));
-        this.particles.emit('vapor', m.pos.clone().addScaledVector(r, 1.4), r.multiplyScalar(18).addScaledVector(m.vel, 0.85), { scale: 3, life: 2.4 });
+      for (const [back, k] of [
+        [0, 1],
+        [5, 0.7],
+      ]) {
+        for (let i = 0; i < 64; i++) {
+          const t = (i / 64) * Math.PI * 2;
+          const r = a.clone().multiplyScalar(Math.cos(t)).addScaledVector(b, Math.sin(t));
+          const at = m.pos.clone().addScaledVector(r, 1.4).addScaledVector(f, -back);
+          this.particles.emit('vapor', at, r.multiplyScalar(30 * k).addScaledVector(m.vel, 0.85), { scale: 3.4 * k, life: 2.4 });
+        }
       }
     }
     // Transonic: the vapour cone (SonicBoomFx) clings to the suit; a few
@@ -204,33 +214,20 @@ export class Game {
   private onContact(): void {
     const m = this.model;
     if (m.contact === 'none') return;
-    // What a crash lands on (the sound layers by it): the house's deck,
-    // bare rock on the steep faces, earth elsewhere
-    let text: string | undefined;
-    if (m.contact === 'impact') {
-      const deck = structureTop(m.pos.x, m.pos.z) >= this.world.field.surfaceAt(m.pos.x, m.pos.z);
-      text = deck ? 'deck' : this.ground.normal(m.pos.x, m.pos.z, this._aim).y < 0.86 ? 'rock' : 'ground';
-    }
-    this.events.emit(m.contact, { at: m.pos, value: m.impactSpeed, text });
-    // Hard hits cost armour (the suit shrugs off a lot)
-    if (m.contact === 'impact' && m.impactSpeed > 25) {
-      this.combat.armor = Math.max(0.05, this.combat.armor - (m.impactSpeed - 25) / 220);
-      this.combat.damageFlash = Math.min(1, this.combat.damageFlash + 0.5);
-    }
+    // (the ground never hurts the suit: every hard arrival is a hero landing)
+    this.events.emit(m.contact, { at: m.pos, value: m.impactSpeed });
     const below = m.pos.clone();
     below.y = this.ground.surface(m.pos.x, m.pos.z) + 0.1;
     if (m.contact === 'heroLanding') {
-      this.rig.shake += 1.2;
+      // Harder the arrival, the bigger the ring
+      const k = THREE.MathUtils.clamp((m.impactSpeed - 7) / 30, 0, 1);
+      this.rig.shake += 1.2 + 0.8 * k;
       // A ring of dust blown flat off the impact, low and quick to settle
       for (let i = 0; i < 22; i++) {
         const a = (i / 22) * Math.PI * 2;
-        this.particles.emit('dust', below, new THREE.Vector3(Math.cos(a) * 16, 0.4, Math.sin(a) * 16), { scale: 0.55, life: 0.6 });
+        this.particles.emit('dust', below, new THREE.Vector3(Math.cos(a) * 16, 0.4, Math.sin(a) * 16), { scale: 0.55 + 0.4 * k, life: 0.6 + 0.4 * k });
       }
       this.particles.burst('spark', below, 18, 7, new THREE.Vector3(0, 0.8, 0), 1);
-    } else if (m.contact === 'impact') {
-      this.rig.shake += Math.min(2, m.impactSpeed / 30);
-      this.particles.burst('dust', below, 14, 8, new THREE.Vector3(0, 0.5, 0), 1, { scale: 1.3 });
-      this.particles.burst('spark', below, 24, 12, new THREE.Vector3(0, 0.6, 0), 1);
     } else if (m.contact === 'splash') {
       this.rig.shake += Math.min(1.5, m.impactSpeed / 25);
       const n = Math.round(10 + m.impactSpeed);
