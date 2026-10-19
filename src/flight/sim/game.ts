@@ -172,9 +172,10 @@ export class Game {
     if (m.boosting !== this.wasBoosting) this.events.emit(m.boosting ? 'boostStart' : 'boostEnd', { at: m.pos });
     this.wasBoosting = m.boosting;
     if (this.sonic.crossed(m.speed / SPEED_OF_SOUND, this.frameDt)) {
-      // (DCS-style: nothing goes off at the suit — no flash, no jolt; the
-      // vapour cone fades, and only an outside ear hears the boom)
+      // The pilot still doesn't hear his own boom; the shock does jolt the
+      // picture, the same kick as the first flight sim
       this.events.emit('sonicBoom', { at: m.pos, value: m.speed });
+      this.rig.shake += 1.6;
     }
     // Transonic: the vapour cone (SonicBoomFx) clings to the suit; a few
     // wisps tear off its rim
@@ -202,7 +203,7 @@ export class Game {
     if (m.contact === 'heroLanding') {
       // Harder the arrival, the bigger the ring
       const k = THREE.MathUtils.clamp((m.impactSpeed - 7) / 30, 0, 1);
-      this.rig.shake += 1.2 + 0.8 * k;
+      this.rig.shake += 1.2;
       // A ring of dust blown flat off the impact, low and quick to settle
       for (let i = 0; i < 22; i++) {
         const a = (i / 22) * Math.PI * 2;

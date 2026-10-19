@@ -12,8 +12,11 @@ import { HOME, coastZ, type Heightfield } from './heightfield';
  * they're what gives low flying its sense of speed.
  *
  * Level of detail, per 128 m cell:
- *  - Near (< ~420 m): real instanced geometry, one draw per species, with
- *    rounded canopy normals and wind sway in the vertex shader.
+ *  - Close (< ~150 m): the full models (twigs, rounder clumps, more palm
+ *    fans), one draw per species.
+ *  - Near (to ~420 m): the same layouts built lighter. Both with crown
+ *    light baked into the vertex colours, rounded canopy normals and wind
+ *    sway in the vertex shader.
  *  - Far (to 2 km): one instanced draw of camera-facing impostors cut from
  *    an atlas the 3D models are rendered into at boot (colour + normals),
  *    so they light and shade like the models they stand in for. They
@@ -30,6 +33,8 @@ const RADIUS = 2000;
 /** 3D models hand over to impostors across this band (m). */
 const LOD_NEAR = 330;
 const LOD_FAR = 420;
+/** The full models within this (m); the lighter builds beyond. */
+const LOD_HI = 150;
 /** Dense brush out to here (m). */
 const TUFT_R = 230;
 /** Rebuild the lists after this much travel (m) or turn (cos of ~7°). */
@@ -43,6 +48,7 @@ const PLANT_BUDGET_MS = 2.5;
 const KINDS = ['bush', 'oak', 'pine', 'palm'] as const;
 type Kind = (typeof KINDS)[number];
 const CAP: Record<Kind | 'tuft' | 'grass', number> = { bush: 16000, oak: 5000, pine: 2500, palm: 2000, tuft: 10000, grass: 16000 };
+const CAP_HI: Record<Kind, number> = { bush: 4000, oak: 1500, pine: 800, palm: 800 };
 const IMP_CAP = 60000;
 /** Floats per near instance: matrix (16) + tint (3). */
 const NEAR_STRIDE = 19;
@@ -60,8 +66,25 @@ function seeded(cx: number, cz: number, salt = 0): () => number {
 
 // ── Models ───────────────────────────────────────────────────────────────
 
-/** Lumpy blob with normals pointing out from its own centre. */
-function blob(r: number, sy: number, at: THREE.Vector3, seed: number, detail = 0): THREE.BufferGeometry {
+/**
+ * Every model comes in two builds off one layout: `hi` for the trees right
+ * by the eye (rounder clumps, twigs, more fronds), `lo` out to the
+ * impostors. Same silhouette, so the swap between them barely shows.
+ */
+type Detail = 'hi' | 'lo';
+
+/** A stable 0–1 hash of a point (shared corners of a non-indexed mesh agree). */
+function hash3(x: number, y: number, z: number, seed: number): number {
+  const h = Math.sin(Math.round(x * 997) * 12.9898 + Math.round(y * 997) * 78.233 + Math.round(z * 997) * 37.719 + seed * 4.1) * 43758.5453;
+  return h - Math.floor(h);
+}
+
+/**
+ * Lumpy blob with normals pointing out from its own centre. `leafy` kicks
+ * each corner in or out at random, so the outline reads as ragged leaves
+ * rather than a polygon; the normals stay smooth, so the light doesn't.
+ */
+function blob(r: number, sy: number, at: THREE.Vector3, seed: number, detail = 0, leafy = 0): THREE.BufferGeometry {
   const g = new THREE.IcosahedronGeometry(r, detail);
   const pos = g.getAttribute('position');
   const nrm = new Float32Array(pos.count * 3);
@@ -74,7 +97,8 @@ function blob(r: number, sy: number, at: THREE.Vector3, seed: number, detail = 0
       1 +
       0.2 * Math.sin(v.x * 5.1 / r + seed) * Math.sin(v.z * 4.3 / r + seed * 2) +
       0.12 * Math.sin(v.y * 7 / r + seed) +
-      (detail > 0 ? 0.08 * Math.sin(v.x * 13 / r + v.z * 11 / r + seed * 3) : 0);
+      (detail > 0 ? 0.08 * Math.sin(v.x * 13 / r + v.z * 11 / r + seed * 3) : 0) +
+      leafy * (hash3(v.x / r, v.y / r, v.z / r, seed) - 0.5);
     v.multiplyScalar(k);
     v.y *= sy;
     // Flat-ish underside: crowns sit on their branches, not on a point
@@ -89,7 +113,76 @@ function blob(r: number, sy: number, at: THREE.Vector3, seed: number, detail = 0
   return g;
 }
 
+/**
+ * A leaf clump. Far off it's just the lumpy blob; close up (`hi`) a
+ * smaller core shingled with small leaf triangles standing off its
+ * surface at all angles, so the outline breaks up into foliage and light
+ * gets in among the leaves. Leaves carry the blob's outward normal, so the
+ * clump still shades as one soft mass.
+ */
+function clump(r: number, sy: number, at: THREE.Vector3, seed: number, hi: boolean, leafy: number, leaf = 0.42): THREE.BufferGeometry {
+  if (!hi) return blob(r, sy, at, seed, 0, leafy);
+  const core = blob(r * 0.86, sy, at, seed, 0, leafy * 0.6);
+  const cp = core.getAttribute('position');
+  const rnd = seeded(seed, 977);
+  const n = Math.round(68 * r * r);
+  const pos = new Float32Array(n * 9);
+  const nrm = new Float32Array(n * 9);
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const p = new THREE.Vector3();
+  const out = new THREE.Vector3();
+  const t1 = new THREE.Vector3();
+  const t2 = new THREE.Vector3();
+  const tris = cp.count / 3;
+  for (let k = 0; k < n; k++) {
+    const f = Math.floor(rnd() * tris) * 3;
+    a.fromBufferAttribute(cp, f);
+    b.fromBufferAttribute(cp, f + 1);
+    c.fromBufferAttribute(cp, f + 2);
+    let u = rnd();
+    let v = rnd();
+    if (u + v > 1) {
+      u = 1 - u;
+      v = 1 - v;
+    }
+    p.copy(a).addScaledVector(b.sub(a), u).addScaledVector(c.sub(a), v);
+    out.copy(p).sub(at).normalize();
+    p.addScaledVector(out, r * (0.02 + rnd() * 0.16));
+    // A leaf tilted anywhere up to ~70° off the surface, facing out
+    t1.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).cross(out).normalize();
+    t2.crossVectors(out, t1);
+    const tilt = (rnd() - 0.5) * 2.4;
+    const s = leaf * (0.7 + rnd() * 0.6);
+    const ln = t2.clone().multiplyScalar(Math.cos(tilt)).addScaledVector(out, Math.sin(tilt));
+    const corners = [p.clone().addScaledVector(ln, s), p.clone().addScaledVector(t1, s * 0.6).addScaledVector(ln, -s * 0.4), p.clone().addScaledVector(t1, -s * 0.6).addScaledVector(ln, -s * 0.4)];
+    // Wind it to face out of the clump
+    const fn = corners[1].clone().sub(corners[0]).cross(corners[2].clone().sub(corners[0]));
+    if (fn.dot(out) < 0) corners.reverse();
+    const nn = out.clone();
+    nn.y = nn.y * 0.8 + 0.35;
+    nn.normalize();
+    corners.forEach((q, j) => {
+      pos.set([q.x, q.y, q.z], k * 9 + j * 3);
+      nrm.set([nn.x, nn.y, nn.z], k * 9 + j * 3);
+    });
+  }
+  const leaves = new THREE.BufferGeometry();
+  leaves.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  leaves.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  return mergeGeometries([bare(core), leaves]);
+}
+
+/** Non-indexed, position + normal only: anything can then merge with anything. */
+function bare(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  const out = g.index ? g.toNonIndexed() : g;
+  for (const k of Object.keys(out.attributes)) if (k !== 'position' && k !== 'normal') out.deleteAttribute(k);
+  return out;
+}
+
 function paint(g: THREE.BufferGeometry, top: THREE.Color, bottom: THREE.Color, y0: number, y1: number): THREE.BufferGeometry {
+  g = bare(g);
   const pos = g.getAttribute('position');
   const col = new Float32Array(pos.count * 3);
   const c = new THREE.Color();
@@ -99,8 +192,49 @@ function paint(g: THREE.BufferGeometry, top: THREE.Color, bottom: THREE.Color, y
     col.set([c.r, c.g, c.b], i * 3);
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  if (g.getAttribute('uv')) g.deleteAttribute('uv');
-  return g.index ? g.toNonIndexed() : g;
+  return g;
+}
+
+const _fl = new THREE.Vector3();
+const _fn = new THREE.Vector3();
+const _fe = new THREE.Vector3();
+const _fc = new THREE.Color();
+const _fw = new THREE.Color();
+const WARM = new THREE.Color(1.3, 1.15, 0.62);
+
+/**
+ * Merges a crown's clumps and bakes its light into the vertex colours:
+ * darker deep inside and underneath (the self-shadowing the models can't
+ * cast), a clump-to-clump breakup in tone and a warmer, yellower cast on
+ * the outer twigs; normals pulled toward the crown's envelope so it
+ * shades as one mass, not a pile of balls. Free at draw time, and the
+ * impostors inherit it from the bake.
+ */
+function foliage(parts: THREE.BufferGeometry[], c: THREE.Vector3, rad: THREE.Vector3, top: THREE.Color, bottom: THREE.Color, seed: number): THREE.BufferGeometry {
+  const g = paint(mergeGeometries(parts.map(bare)), top, bottom, c.y - rad.y, c.y + rad.y);
+  const pos = g.getAttribute('position');
+  const nrm = g.getAttribute('normal');
+  const col = g.getAttribute('color');
+  const S = THREE.MathUtils.smoothstep;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    _fl.set(x, y, z).sub(c).divide(rad);
+    const d = _fl.length();
+    // The envelope's own normal, with the same lean to the sky
+    _fe.copy(_fl).divide(rad).normalize();
+    _fe.y = _fe.y * 0.8 + 0.35;
+    _fn.fromBufferAttribute(nrm, i).lerp(_fe.normalize(), 0.45).normalize();
+    nrm.setXYZ(i, _fn.x, _fn.y, _fn.z);
+    const ao = (0.38 + 0.62 * S(d, 0.3, 1.0)) * (0.7 + 0.3 * THREE.MathUtils.clamp(_fl.y * 0.6 + 0.55, 0, 1));
+    const blot = Math.sin(x * 1.3 + seed) * Math.sin(z * 1.1 - seed * 0.7) * Math.sin(y * 1.7 + seed * 1.3);
+    _fc.fromBufferAttribute(col, i).multiplyScalar(ao * (1 + 0.3 * blot) * (0.86 + 0.28 * hash3(x, y, z, seed)));
+    _fw.copy(_fc).multiply(WARM);
+    _fc.lerp(_fw, S(blot, 0.1, 0.8) * S(d, 0.75, 1.05) * 0.7);
+    col.setXYZ(i, _fc.r, _fc.g, _fc.b);
+  }
+  return g;
 }
 
 /** A tapered limb from a to b (open tube). */
@@ -113,17 +247,27 @@ function limb(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, sides 
 }
 
 const BARK = [new THREE.Color(0.075, 0.062, 0.05), new THREE.Color(0.045, 0.037, 0.03)] as const;
+const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
-/** Chaparral clump: three dense lobes (also sage, and the brush near the eye, by tint). */
-function bushGeometry(): THREE.BufferGeometry {
-  const g = mergeGeometries([
-    blob(0.9, 0.66, new THREE.Vector3(0, 0.5, 0), 1),
-    blob(0.66, 0.72, new THREE.Vector3(0.62, 0.38, 0.2), 2),
-    blob(0.58, 0.7, new THREE.Vector3(-0.5, 0.32, -0.45), 3),
-    blob(0.5, 0.8, new THREE.Vector3(-0.2, 0.75, 0.45), 4),
-    blob(0.45, 0.7, new THREE.Vector3(0.3, 0.3, -0.7), 5),
-  ]);
-  return paint(g, new THREE.Color(0.075, 0.095, 0.04), new THREE.Color(0.02, 0.028, 0.012), 0, 1.1);
+/** Chaparral clump: dense lobes (also sage, and the brush near the eye, by tint). */
+function bushGeometry(d: Detail): THREE.BufferGeometry {
+  const hi = d === 'hi';
+  // (the lighter build stays smooth: it's also the brush right by the eye)
+  const lf = hi ? 0.2 : 0;
+  return foliage(
+    [
+      clump(0.9, 0.66, V(0, 0.5, 0), 1, hi, lf, 0.24),
+      clump(0.66, 0.72, V(0.62, 0.38, 0.2), 2, hi, lf, 0.24),
+      clump(0.58, 0.7, V(-0.5, 0.32, -0.45), 3, hi, lf, 0.24),
+      clump(0.5, 0.8, V(-0.2, 0.75, 0.45), 4, hi, lf, 0.24),
+      clump(0.45, 0.7, V(0.3, 0.3, -0.7), 5, hi, lf, 0.24),
+    ],
+    V(0, 0.45, 0),
+    V(1.3, 0.75, 1.3),
+    new THREE.Color(0.085, 0.105, 0.045),
+    new THREE.Color(0.03, 0.04, 0.017),
+    2,
+  );
 }
 
 /** Dry grass clump: a fan of thin bent blades (two-sided). */
@@ -172,42 +316,87 @@ function grassGeometry(): THREE.BufferGeometry {
   return g;
 }
 
-/** Coast live oak: short trunk forking into limbs under a broad, flat-topped, lumpy crown. */
-function oakGeometry(): THREE.BufferGeometry {
-  const base = new THREE.Vector3(0, 0, 0);
-  const fork = new THREE.Vector3(0.1, 2.0, 0);
-  const wood = [
-    limb(base, fork, 0.34, 0.26, 6),
-    limb(fork, new THREE.Vector3(2.0, 3.9, 0.7), 0.2, 0.09),
-    limb(fork, new THREE.Vector3(-1.8, 4.0, -0.8), 0.19, 0.08),
-    limb(fork, new THREE.Vector3(0.3, 4.4, -1.6), 0.16, 0.07),
-  ].map((g) => paint(g, BARK[0], BARK[1], 0, 3));
-  const canopy = mergeGeometries([
-    blob(2.6, 0.85, new THREE.Vector3(0.1, 4.9, 0), 3, 1),
-    blob(2.0, 0.8, new THREE.Vector3(2.2, 4.2, 0.8), 4, 1),
-    blob(1.9, 0.8, new THREE.Vector3(-2.0, 4.3, -0.9), 5),
-    blob(1.7, 0.85, new THREE.Vector3(0.5, 4.8, -2.0), 6),
-    blob(1.7, 0.8, new THREE.Vector3(-0.8, 4.5, 2.0), 7),
-    blob(1.4, 0.85, new THREE.Vector3(3.1, 3.9, -0.9), 8),
-    blob(1.7, 0.85, new THREE.Vector3(0.6, 6.4, 0.4), 9),
-    blob(1.3, 0.85, new THREE.Vector3(-1.4, 6.0, -0.6), 10),
-  ]);
-  const crown = paint(canopy, new THREE.Color(0.1, 0.13, 0.05), new THREE.Color(0.022, 0.032, 0.014), 2.8, 6.6);
-  return mergeGeometries([...wood, crown]);
+/**
+ * Coast live oak: a short trunk forking low into five spreading limbs,
+ * each spraying twigs out to a leaf clump, under a broad, flat-topped dome
+ * filled in over the fork.
+ */
+function oakGeometry(d: Detail): THREE.BufferGeometry {
+  const hi = d === 'hi';
+  const rnd = seeded(11, 5);
+  const fork = V(0.1, 1.7, 0);
+  const wood = [limb(V(0, 0, 0), fork, 0.38, 0.3, hi ? 8 : 5)];
+  const clumps: THREE.BufferGeometry[] = [];
+  const lf = 0.3;
+  const N = 6;
+  for (let i = 0; i < N; i++) {
+    const ang = (i / N) * Math.PI * 2 + rnd() * 0.5;
+    const reach = 1.4 + rnd() * 0.9;
+    const end = V(Math.cos(ang) * reach, 3.0 + rnd() * 0.8, Math.sin(ang) * reach);
+    wood.push(limb(fork, end, 0.2, 0.11, hi ? 6 : 4));
+    const nt = 2 + (rnd() < 0.5 ? 1 : 0);
+    for (let t = 0; t < nt; t++) {
+      const a2 = ang + (t - (nt - 1) / 2) * 0.6 + (rnd() - 0.5) * 0.3;
+      const out = 0.5 + rnd() * 0.9;
+      // The farthest-flung twigs sag lowest: the dome's skirt
+      const tip = V(Math.cos(a2) * (reach + out), end.y + 1.1 - out * 0.6 + rnd() * 0.5, Math.sin(a2) * (reach + out));
+      // Twigs only show close up, under the crown's edge
+      if (hi) wood.push(limb(end, tip, 0.1, 0.035, 4));
+      clumps.push(clump(1.0 + rnd() * 0.45, 0.8, tip, i * 3 + t, hi, lf));
+    }
+  }
+  // The dome over the fork
+  for (let i = 0; i < 6; i++) {
+    const ang = (i / 6) * Math.PI * 2 + 0.3;
+    clumps.push(clump(1.3 + rnd() * 0.3, 0.82, V(Math.cos(ang) * 1.8, 5.1 + rnd() * 0.6, Math.sin(ang) * 1.8), 20 + i, hi, lf));
+  }
+  for (let i = 0; i < 3; i++) {
+    const ang = (i / 3) * Math.PI * 2 + 1.1;
+    clumps.push(clump(1.35, 0.85, V(Math.cos(ang) * 0.7, 6.1 + rnd() * 0.4, Math.sin(ang) * 0.7), 30 + i, hi, lf));
+  }
+  const crown = foliage(clumps, V(0, 4.6, 0), V(4.3, 2.4, 4.3), new THREE.Color(0.105, 0.135, 0.052), new THREE.Color(0.03, 0.042, 0.018), 3);
+  return mergeGeometries([...wood.map((g) => paint(g, BARK[0], BARK[1], 0, 3)), crown]);
 }
 
-/** A star-rimmed cone: needled tiers read ragged, not like party hats. */
-function tier(r: number, h: number, y: number, seed: number): THREE.BufferGeometry {
-  const c = new THREE.ConeGeometry(r, h, 10, 1, true).translate(0, y, 0);
+/** Turns a surface inside out (the underside of a pine's tier). */
+function flipped(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  g = bare(g);
+  for (const name of ['position', 'normal']) {
+    const a = g.getAttribute(name);
+    for (let t = 0; t < a.count; t += 3) {
+      const x = a.getX(t + 1);
+      const y = a.getY(t + 1);
+      const z = a.getZ(t + 1);
+      a.setXYZ(t + 1, a.getX(t + 2), a.getY(t + 2), a.getZ(t + 2));
+      a.setXYZ(t + 2, x, y, z);
+    }
+  }
+  const n = g.getAttribute('normal');
+  for (let k = 0; k < n.count; k++) n.setXYZ(k, -n.getX(k) * 0.6, -n.getY(k) * 0.4 + 0.25, -n.getZ(k) * 0.6);
+  return g;
+}
+
+/**
+ * A whorl of needled branches: a star-rimmed cone whose points droop (so
+ * the tiers read ragged, not like party hats), twisted against the one
+ * below, and closed underneath so it doesn't go hollow seen from below.
+ */
+function tier(r: number, h: number, y: number, seed: number, hi: boolean): THREE.BufferGeometry {
+  const segs = hi ? 14 : 10;
+  const c = new THREE.ConeGeometry(r, h, segs, hi ? 2 : 1, true).translate(0, y, 0);
   const pos = c.getAttribute('position');
   const v = new THREE.Vector3();
+  const rim = y - h / 2;
   for (let k = 0; k < pos.count; k++) {
     v.fromBufferAttribute(pos, k);
-    if (v.y < y) {
-      const a = Math.atan2(v.z, v.x);
-      const s = 0.72 + 0.28 * (Math.round(((a + Math.PI) / (2 * Math.PI)) * 10) % 2) + 0.08 * Math.sin(a * 3 + seed);
-      pos.setXYZ(k, v.x * s, v.y - 0.25 * (1 - s), v.z * s);
-    }
+    const t = (y + h / 2 - v.y) / h; // 0 apex .. 1 rim
+    if (t < 0.05) continue;
+    const a = Math.atan2(v.z, v.x);
+    const star = Math.round(((a + Math.PI) / (2 * Math.PI)) * segs) % 2;
+    const s = 1 - t * t * (0.28 * (1 - star) - 0.08 * Math.sin(a * 3 + seed));
+    // Branch tips sag under their own weight
+    const sag = t * t * (0.25 + 0.2 * star) * h * 0.5;
+    pos.setXYZ(k, v.x * s, v.y - sag, v.z * s);
   }
   c.computeVertexNormals();
   const n = c.getAttribute('normal');
@@ -215,78 +404,121 @@ function tier(r: number, h: number, y: number, seed: number): THREE.BufferGeomet
     v.set(n.getX(k), n.getY(k) + 0.5, n.getZ(k)).normalize();
     n.setXYZ(k, v.x, v.y, v.z);
   }
-  return c;
+  const under = flipped(new THREE.ConeGeometry(r * 0.85, h * 0.3, hi ? 10 : 7, 1, true).translate(0, rim - h * 0.05 + h * 0.15, 0));
+  return mergeGeometries([bare(c), under]).rotateY(seed * 1.7);
 }
 
-function pineGeometry(): THREE.BufferGeometry {
-  const trunk = paint(limb(new THREE.Vector3(), new THREE.Vector3(0, 3, 0), 0.22, 0.14), BARK[0], BARK[1], 0, 2);
-  const crown = mergeGeometries([0, 1, 2, 3].map((i) => tier(2.5 - i * 0.55, 3.4 - i * 0.45, 3.0 + i * 1.75, i)));
-  return mergeGeometries([trunk, paint(crown, new THREE.Color(0.06, 0.1, 0.06), new THREE.Color(0.02, 0.035, 0.02), 1.8, 9.5)]);
-}
-
-/** Mexican fan palm: a tall, slightly bent trunk under a mop of drooping fronds. */
-function palmGeometry(): THREE.BufferGeometry {
-  const H = 13;
-  const pts: THREE.Vector3[] = [];
-  for (let i = 0; i <= 7; i++) {
-    const t = i / 7;
-    pts.push(new THREE.Vector3(0.9 * t * t, H * t, 0.25 * t * t));
+/** A pine high on the range: eight ragged whorls up a tapering trunk. */
+function pineGeometry(d: Detail): THREE.BufferGeometry {
+  const hi = d === 'hi';
+  const rnd = seeded(7, 3);
+  const trunk = paint(limb(V(0, 0, 0), V(0, 9.5, 0), 0.26, 0.05, hi ? 7 : 5), BARK[0], BARK[1], 0, 2);
+  const tiers: THREE.BufferGeometry[] = [];
+  const T = 8;
+  for (let i = 0; i < T; i++) {
+    const t = i / (T - 1);
+    tiers.push(tier(2.6 * (1 - 0.78 * t) * (0.9 + rnd() * 0.2), 2.3 - 0.9 * t, 2.6 + i * 0.95, i + 1, hi));
   }
-  const trunk = mergeGeometries(pts.slice(1).map((p, i) => limb(pts[i], p, 0.24 - i * 0.015, 0.23 - (i + 1) * 0.015, 6)));
-  const trunkP = paint(trunk, new THREE.Color(0.12, 0.1, 0.08), new THREE.Color(0.07, 0.06, 0.05), 0, H);
+  tiers.push(bare(new THREE.ConeGeometry(0.3, 1.5, 6, 1, true).translate(0, 10.1, 0)));
+  const crown = foliage(tiers, V(0, 6.0, 0), V(2.7, 4.6, 2.7), new THREE.Color(0.07, 0.11, 0.065), new THREE.Color(0.022, 0.038, 0.022), 5);
+  return mergeGeometries([trunk, crown]);
+}
+
+/**
+ * Mexican fan palm: a tall, slender, slightly bent trunk flaring at the
+ * foot, a brown skirt of dead fronds, and a crown of palmate fans on long
+ * stalks, each fan's leaflets splaying and drooping at the tips. The fans
+ * are single sheets (the palms' material is two-sided).
+ */
+function palmGeometry(d: Detail): THREE.BufferGeometry {
+  const hi = d === 'hi';
+  const H = 13;
+  const SEG = hi ? 10 : 6;
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i <= SEG; i++) {
+    const t = i / SEG;
+    pts.push(V(0.9 * t * t, H * t, 0.25 * t * t));
+  }
+  const rad = (t: number) => 0.2 - 0.05 * t + 0.16 * (1 - t) ** 8;
+  const trunk = mergeGeometries(pts.slice(1).map((p, i) => bare(limb(pts[i], p, rad(i / SEG), rad((i + 1) / SEG), hi ? 7 : 5))));
+  const trunkP = paint(trunk, new THREE.Color(0.13, 0.11, 0.09), new THREE.Color(0.075, 0.065, 0.055), 0, H);
   const top = pts[pts.length - 1];
   // Old fronds: a dead brown skirt under the crown
-  const skirt = paint(blob(0.75, 1.2, top.clone().add(new THREE.Vector3(0, -0.7, 0)), 9), new THREE.Color(0.1, 0.075, 0.045), new THREE.Color(0.05, 0.04, 0.03), H - 1.6, H);
-  const fronds: THREE.BufferGeometry[] = [];
-  const N = 11;
-  for (let f = 0; f < N; f++) {
-    const a = (f / N) * Math.PI * 2 + (f % 2) * 0.2;
-    const lift = f % 3 === 0 ? 0.55 : f % 3 === 1 ? 0.25 : -0.05;
-    const dir = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
-    const side = new THREE.Vector3(-dir.z, 0, dir.x);
-    const pos: number[] = [];
-    const nrm: number[] = [];
-    const SEG = 5;
-    const L = 4.0;
-    const ring: THREE.Vector3[][] = [];
-    for (let s = 0; s <= SEG; s++) {
-      const t = s / SEG;
-      // Out and arching over: up, then drooping at the tip
-      const c = top
-        .clone()
-        .addScaledVector(dir, L * t)
-        .add(new THREE.Vector3(0, L * (lift * t - 0.55 * t * t), 0));
-      const w = 0.8 * Math.sin(Math.PI * Math.min(1, t * 1.15 + 0.08));
-      ring.push([c.clone().addScaledVector(side, -w), c, c.clone().addScaledVector(side, w)]);
-    }
-    const up = new THREE.Vector3(0, 1, 0);
-    const push = (v: THREE.Vector3) => {
-      pos.push(v.x, v.y, v.z);
-      const n = up.clone().addScaledVector(dir, 0.35).normalize();
+  const skirt = paint(blob(0.72, 1.5, top.clone().add(V(0, -1.0, 0)), 9, hi ? 1 : 0, 0.5), new THREE.Color(0.12, 0.09, 0.055), new THREE.Color(0.045, 0.035, 0.025), H - 2.2, H);
+
+  const rnd = seeded(5, 13);
+  const pos: number[] = [];
+  const nrm: number[] = [];
+  const col: number[] = [];
+  const green = new THREE.Color(0.1, 0.14, 0.05);
+  const deep = new THREE.Color(0.04, 0.055, 0.022);
+  const dead = new THREE.Color(0.13, 0.11, 0.05);
+  const c = new THREE.Color();
+  const tri = (a: THREE.Vector3, b: THREE.Vector3, e: THREE.Vector3, n: THREE.Vector3, ca: THREE.Color, cb: THREE.Color, ce: THREE.Color) => {
+    for (const [p, k] of [
+      [a, ca],
+      [b, cb],
+      [e, ce],
+    ] as const) {
+      pos.push(p.x, p.y, p.z);
       nrm.push(n.x, n.y, n.z);
-    };
-    for (let s = 0; s < SEG; s++) {
-      for (const [i0, i1] of [
-        [0, 1],
-        [1, 2],
-      ]) {
-        // Folded leaf: the mid-rib sits a little lower than the edges
-        const a0 = ring[s][i0];
-        const b0 = ring[s][i1];
-        const a1 = ring[s + 1][i0];
-        const b1 = ring[s + 1][i1];
-        for (const v of [a0, a1, b0, b0, a1, b1]) push(v);
-        for (const v of [a0, b0, a1, b0, b1, a1]) push(v); // back face
+      col.push(k.r, k.g, k.b);
+    }
+  };
+  const UPV = V(0, 1, 0);
+  const N = hi ? 16 : 10;
+  const L = hi ? 9 : 5;
+  const LS = hi ? 3 : 2;
+  for (let f = 0; f < N; f++) {
+    const a = (f / N) * Math.PI * 2 + (rnd() - 0.5) * 0.5;
+    // Young fans stand up; the oldest hang, browning, toward the skirt
+    const lift = f % 3 === 0 ? 0.9 : f % 3 === 1 ? 0.35 : -0.25 - rnd() * 0.3;
+    const age = THREE.MathUtils.clamp(-lift * 1.6, 0, 1);
+    const dir = V(Math.cos(a), 0, Math.sin(a));
+    const side = V(-dir.z, 0, dir.x);
+    const fwd = dir.clone().multiplyScalar(Math.cos(lift)).addScaledVector(UPV, Math.sin(lift));
+    const base = top.clone().add(V(0, 0.2, 0));
+    const hub = base.clone().addScaledVector(fwd, 1.4);
+    // Stalk: a thin ribbon out to the fan
+    const sw = side.clone().multiplyScalar(0.05);
+    const cs = c.copy(deep).lerp(dead, age).clone();
+    const nUp = side.clone().cross(fwd).normalize();
+    if (nUp.y < 0) nUp.negate();
+    tri(base.clone().sub(sw), hub.clone().sub(sw), hub.clone().add(sw), nUp, cs, cs, cs);
+    tri(base.clone().sub(sw), hub.clone().add(sw), base.clone().add(sw), nUp, cs, cs, cs);
+    const tipC = c.copy(green).lerp(dead, age).multiplyScalar(0.9 + rnd() * 0.25).clone();
+    const rootC = c.copy(deep).lerp(dead, age * 0.7).clone();
+    for (let l = 0; l < L; l++) {
+      const th = (l / (L - 1) - 0.5) * 2.5;
+      const ld = fwd.clone().multiplyScalar(Math.cos(th)).addScaledVector(side, Math.sin(th));
+      const pw = fwd.clone().multiplyScalar(-Math.sin(th)).addScaledVector(side, Math.cos(th));
+      const len = 1.9 * (1 - 0.22 * Math.abs(th)) * (0.9 + rnd() * 0.2);
+      const droop = len * (0.45 + 0.35 * Math.abs(th) + 0.3 * age);
+      const at = (t: number, w: number) => hub.clone().addScaledVector(ld, len * t).addScaledVector(UPV, -droop * t * t).addScaledVector(pw, w);
+      const width = (t: number) => (0.2 * (1 - t) + 0.02) * (hi ? 1 : 1.3);
+      const n = nUp.clone().addScaledVector(ld, 0.3).normalize();
+      for (let s = 0; s < LS; s++) {
+        const t0 = s / LS;
+        const t1 = (s + 1) / LS;
+        const c0 = c.copy(rootC).lerp(tipC, Math.sqrt(t0)).clone();
+        const c1 = c.copy(rootC).lerp(tipC, Math.sqrt(t1)).clone();
+        const a0 = at(t0, -width(t0));
+        const b0 = at(t0, width(t0));
+        const a1 = at(t1, -width(t1));
+        const b1 = at(t1, width(t1));
+        tri(a0, a1, b0, n, c0, c1, c0);
+        tri(b0, a1, b1, n, c0, c1, c1);
       }
     }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
-    fronds.push(g);
   }
-  const crown = paint(mergeGeometries(fronds), new THREE.Color(0.1, 0.14, 0.05), new THREE.Color(0.045, 0.06, 0.025), H - 2, H + 1.5);
+  const crown = new THREE.BufferGeometry();
+  crown.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  crown.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  crown.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   return mergeGeometries([trunkP, skirt, crown]);
 }
+
+const MODELS: Record<Kind, (d: Detail) => THREE.BufferGeometry> = { bush: bushGeometry, oak: oakGeometry, pine: pineGeometry, palm: palmGeometry };
 
 // ── Shaders ──────────────────────────────────────────────────────────────
 
@@ -326,6 +558,10 @@ const SHADE_GLSL = /* glsl */ `
   reflectedLight.directDiffuse *= vegBake.r;
   reflectedLight.directSpecular *= vegBake.r;
   reflectedLight.indirectDiffuse *= mix(0.6, 1.0, vegBake.g);
+  // Backlit leaves: the low sun glowing through crowns seen against it
+  vec3 vegV = normalize(vInstWorld + vec3(0.0, 4.0, 0.0) - cameraPosition);
+  float vegBack = pow(max(dot(vegV, uSunDir), 0.0), 4.0);
+  reflectedLight.indirectDiffuse += diffuseColor.rgb * uSunColor * (vegBack * 0.35 * RECIPROCAL_PI * vegBake.r);
 `;
 
 const IMP_VERT_PARS = /* glsl */ `
@@ -507,6 +743,7 @@ const TINT = {
 export class Vegetation {
   readonly group = new THREE.Group();
   private readonly near: Record<Kind, THREE.InstancedMesh>;
+  private readonly close: Record<Kind, THREE.InstancedMesh>;
   private readonly tuft: THREE.InstancedMesh;
   private readonly grass: THREE.InstancedMesh;
   private readonly imp: THREE.Mesh<THREE.InstancedBufferGeometry, THREE.MeshStandardMaterial>;
@@ -539,10 +776,10 @@ export class Vegetation {
       uTime: { value: 0 },
       uEye: { value: new THREE.Vector3() },
     };
-    this.geos = { bush: bushGeometry(), oak: oakGeometry(), pine: pineGeometry(), palm: palmGeometry() };
+    this.geos = { bush: MODELS.bush('lo'), oak: MODELS.oak('lo'), pine: MODELS.pine('lo'), palm: MODELS.palm('lo') };
 
-    const nearMat = (fade: THREE.Vector4, key: string) => {
-      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
+    const nearMat = (fade: THREE.Vector4, key: string, side: THREE.Side = THREE.FrontSide) => {
+      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, side });
       mat.envMapIntensity = 0.7;
       const u = { ...this.uniforms, uFade: { value: fade } };
       mat.onBeforeCompile = (shader) => {
@@ -560,6 +797,8 @@ export class Vegetation {
     // shrink away in its last few metres: no discard in the models' shader
     // (alpha-tested draws lose hidden-surface removal on tiled GPUs)
     const treeMat = nearMat(new THREE.Vector4(1e6, 1e6 + 1, LOD_FAR - 14, LOD_FAR), 'near');
+    // Palm fans are single sheets
+    const palmMat = nearMat(new THREE.Vector4(1e6, 1e6 + 1, LOD_FAR - 14, LOD_FAR), 'near-palm', THREE.DoubleSide);
     const tuftMat = nearMat(new THREE.Vector4(1e6, 1e6 + 1, TUFT_R * 0.75, TUFT_R), 'tuft');
     const make = (geo: THREE.BufferGeometry, cap: number, mat: THREE.Material) => {
       const m = new THREE.InstancedMesh(geo, mat, cap);
@@ -577,7 +816,13 @@ export class Vegetation {
       bush: make(this.geos.bush, CAP.bush, treeMat),
       oak: make(this.geos.oak, CAP.oak, treeMat),
       pine: make(this.geos.pine, CAP.pine, treeMat),
-      palm: make(this.geos.palm, CAP.palm, treeMat),
+      palm: make(this.geos.palm, CAP.palm, palmMat),
+    };
+    this.close = {
+      bush: make(MODELS.bush('hi'), CAP_HI.bush, treeMat),
+      oak: make(MODELS.oak('hi'), CAP_HI.oak, treeMat),
+      pine: make(MODELS.pine('hi'), CAP_HI.pine, treeMat),
+      palm: make(MODELS.palm('hi'), CAP_HI.palm, palmMat),
     };
     this.tuft = make(this.geos.bush, CAP.tuft, tuftMat);
     this.grass = make(grassGeometry(), CAP.grass, tuftMat);
@@ -802,6 +1047,7 @@ export class Vegetation {
     const cz = Math.floor(eye.z / CELL);
     const reach = Math.ceil(RADIUS / CELL);
     const nearCount: Record<Kind, number> = { bush: 0, oak: 0, pine: 0, palm: 0 };
+    const hiCount: Record<Kind, number> = { bush: 0, oak: 0, pine: 0, palm: 0 };
     let impN = 0;
     let tuftN = 0;
     let grassN = 0;
@@ -823,6 +1069,10 @@ export class Vegetation {
         c[(at + i) * 3 + 2] = src[o + 18];
       }
       return Math.max(0, n);
+    };
+    const put = (mesh: THREE.InstancedMesh, src: Float32Array, o: number, at: number) => {
+      (mesh.instanceMatrix.array as Float32Array).set(src.subarray(o, o + 16), at * 16);
+      (mesh.instanceColor!.array as Float32Array).set(src.subarray(o + 16, o + 19), at * 3);
     };
     for (let j = -reach; j <= reach; j++) {
       for (let i = -reach; i <= reach; i++) {
@@ -859,8 +1109,23 @@ export class Vegetation {
         const dy = Math.max(c.minY - eye.y, 0, eye.y - c.maxY);
         const dMin = Math.sqrt(flat2 + dy * dy);
         const dMax = Math.hypot(Math.max(Math.abs(c.x - eye.x) + half, 0), Math.max(Math.abs(c.z - eye.z) + half, 0), Math.max(Math.abs(c.minY - eye.y), Math.abs(c.maxY - eye.y)));
-        if (dMin < LOD_FAR + REBUILD_MOVE) {
-          for (const k of KINDS) nearCount[k] += copyNear(this.near[k], c.near[k], nearCount[k], CAP[k]);
+        if (dMax < LOD_HI) {
+          for (const k of KINDS) hiCount[k] += copyNear(this.close[k], c.near[k], hiCount[k], CAP_HI[k]);
+        } else if (dMin > LOD_HI) {
+          if (dMin < LOD_FAR + REBUILD_MOVE) for (const k of KINDS) nearCount[k] += copyNear(this.near[k], c.near[k], nearCount[k], CAP[k]);
+        } else {
+          // Straddling the hand-over: tree by tree
+          for (const k of KINDS) {
+            const src = c.near[k];
+            for (let o = 0; o < src.length; o += NEAR_STRIDE) {
+              const ex = src[o + 12] - eye.x;
+              const ey = src[o + 13] - eye.y;
+              const ez = src[o + 14] - eye.z;
+              if (ex * ex + ey * ey + ez * ez < LOD_HI * LOD_HI) {
+                if (hiCount[k] < CAP_HI[k]) put(this.close[k], src, o, hiCount[k]++);
+              } else if (nearCount[k] < CAP[k]) put(this.near[k], src, o, nearCount[k]++);
+            }
+          }
         }
         if (dMax > LOD_NEAR - REBUILD_MOVE && c.imp.length) {
           const n = Math.min(IMP_CAP - impN, c.imp.length / IMP_STRIDE);
@@ -894,10 +1159,14 @@ export class Vegetation {
       attr.needsUpdate = true;
     };
     for (const k of KINDS) {
-      const m = this.near[k];
-      m.count = nearCount[k];
-      upload(m.instanceMatrix, m.count);
-      upload(m.instanceColor!, m.count);
+      for (const [m, n] of [
+        [this.near[k], nearCount[k]],
+        [this.close[k], hiCount[k]],
+      ] as const) {
+        m.count = n;
+        upload(m.instanceMatrix, n);
+        upload(m.instanceColor!, n);
+      }
     }
     this.tuft.count = tuftN;
     upload(this.tuft.instanceMatrix, tuftN);
@@ -910,7 +1179,7 @@ export class Vegetation {
     upload(this.impB, impN);
     upload(this.impT, impN);
     this.pending = pending;
-    const nearN = KINDS.reduce((s, k) => s + nearCount[k], 0);
+    const nearN = KINDS.reduce((s, k) => s + nearCount[k] + hiCount[k], 0);
     this.stats = { cells, near: nearN, imp: impN, tuft: tuftN + grassN, rebuilds: this.stats.rebuilds + 1, buildMs: +(performance.now() - t0).toFixed(2) };
   }
 

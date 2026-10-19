@@ -81,6 +81,24 @@ const AIM_TWIST = -Math.PI / 2;
 const ASSIST_TWIST = Math.PI / 2;
 /** Forearm roll for the braking arms (palms to the travel, elbows soft). */
 const BRAKE_TWIST = -0.5;
+const BRAKE_ELBOW = 0.25;
+
+/**
+ * A braking arm's bearing in the chest frame (rad, + out to its own side)
+ * for the travel's bearing `phi` (same sense): a little out when the
+ * travel is dead ahead, out to the side with it, back past the hip when
+ * it's behind — and from the far side it stays forward, then swings back
+ * round its own side as the travel comes round behind. Continuous all the
+ * way round (±π meet at the same reach).
+ */
+export function brakeAzimuth(phi: number): number {
+  const FWD = 0.15;
+  const ACROSS = -0.3;
+  const BACK = 1.9;
+  if (phi >= 0) return lerp(FWD, BACK, smooth01(phi / Math.PI));
+  if (phi >= -Math.PI / 2) return lerp(FWD, ACROSS, -phi / (Math.PI / 2));
+  return lerp(ACROSS, BACK, smooth01((-phi - Math.PI / 2) / (Math.PI / 2)));
+}
 /** Hover yaw limits from the flight model (rad/s, rad/s²): turn channels are normalised by them. */
 const HOVER_YAW_RATE = 3.2;
 const HOVER_YAW_ACC = HOVER_YAW_RATE / 0.22;
@@ -100,8 +118,10 @@ const ARM_JOINTS = (['upperArm.L', 'forearm.L', 'hand.L'] as const).map((b) => n
 
 /** Shoulder angles (abduction, flexion) taking the shoulder-frame vector `v` onto `t`: upper arm Rx(flex)·Rz(abd). */
 export function shoulderOnto(v: THREE.Vector3, t: THREE.Vector3): [number, number] {
-  // Rz(abd) takes v's sideways component onto t.x …
-  const rho = Math.max(1e-4, Math.hypot(v.x, v.y));
+  // Rz(abd) takes v's sideways component onto t.x … (both as unit
+  // directions: v is the shoulder → palm offset, half a metre, and measured
+  // raw a target out to the side saturated the abduction)
+  const rho = Math.max(1e-4, Math.hypot(v.x, v.y) / Math.max(1e-4, v.length()));
   const abd = clamp(Math.asin(clamp(t.x / rho, -1, 1)) - Math.atan2(v.x, -v.y), -0.6, 1.5);
   _ax.copy(v).applyAxisAngle(_Z, abd);
   // … and Rx(flex) swings what's left onto t in the sagittal plane
@@ -626,30 +646,42 @@ export class SuitDriver {
       }
     }
 
-    // Braking arms: thrown out low and wide like a skydiver's flare — each
-    // arm down and out from the shoulder and forward into the travel, never
-    // up at shoulder height (that shrugged the pauldrons into the helmet),
-    // elbows soft, palms flat to the oncoming air so their jets fire
-    // against the motion. A raised repulsor arm keeps its shot
+    // Braking arms: thrown out low like a skydiver's flare, palms flat to
+    // the oncoming air so their jets fire against the motion. The reach
+    // follows the travel round the body without a seam: ahead, both arms
+    // push forward and down; to one side, that arm swings out to it and
+    // the other stays forward; behind (the suit spun round on the aim),
+    // both sweep down past the hips and push back from there. Always below
+    // the shoulders' line (raised, it shrugged the pauldrons into the
+    // helmet and flung an arm up over the back). A raised repulsor arm
+    // keeps its shot
     if (bk > 1e-3) {
+      // (and leaned back on the flare, pulled toward the ground with it)
       const down = this._v.set(0, -1, 0).applyQuaternion(this._qi.copy(bodyQ).invert()).applyQuaternion(chestQ);
       for (const side of ['L', 'R'] as const) {
         const k = bk * (1 - (side === 'L' ? arms.aimL : arms.aimR));
         if (k <= 1e-3) continue;
         const s = side === 'L' ? 1 : -1;
         const tc = _tgt.copy(this.travel).applyQuaternion(chestQ);
-        tc.x *= s;
-        tc.multiplyScalar(0.8).addScaledVector(down, 0.8);
-        const tgt = clampReach(tc.set(tc.x + 0.3, Math.min(tc.y, -0.6), tc.z).normalize());
+        // Travel up the body (still half prone) reads as ahead of the chest
+        const phi = Math.atan2(s * tc.x, tc.z + 0.6 * Math.max(0, tc.y));
+        const az = brakeAzimuth(phi);
+        const behind = clamp01(-Math.cos(phi));
+        const el = -lerp(0.7, 1.05, Math.max(behind, clamp01(-tc.y)));
+        tc.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+        tc.x += 0.45 * s * down.x;
+        tc.y += 0.45 * down.y;
+        tc.z += 0.45 * down.z;
+        const tgt = clampReach(tc.normalize());
         const palm = suit.palms[0] ?? { at: [0.35, 0.96, 0.03], normal: [-0.94, -0.34, -0.04] };
         // Only half the aim's forearm roll: the full roll bent the elbow
         // across the body and the solver hiked the shoulder to make up for it
-        const [abd, flex, w] = aimArm(palm.at, palm.normal, tgt, BRAKE_TWIST, 0.15, 1.4);
+        const [abd, flex, w] = aimArm(palm.at, palm.normal, tgt, BRAKE_TWIST, BRAKE_ELBOW, 1.4);
         const hand = [-0.05, -0.1, -0.05, 0, 0.05];
         limbs[`arm${side}`] = lerp(limbs[`arm${side}`], abd, k);
         limbs[`armFlex${side}`] = lerp(limbs[`armFlex${side}`], flex, k);
         limbs[`armTwist${side}`] = lerp(limbs[`armTwist${side}`], BRAKE_TWIST, k);
-        limbs[`elbow${side}`] = lerp(limbs[`elbow${side}`], 0.15, k);
+        limbs[`elbow${side}`] = lerp(limbs[`elbow${side}`], BRAKE_ELBOW, k);
         if (side === 'L') {
           wristL = lerp(wristL, w, k);
           fingersL = fingersL.map((f, i) => lerp(f, hand[i], k));

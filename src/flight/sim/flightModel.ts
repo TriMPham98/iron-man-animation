@@ -281,9 +281,11 @@ export class FlightModel {
     }
     // In a hover, forward stick alone carries you into flight once you're quick
     // (a fall is not flight, however fast it gets)
-    const wantFlight = !falling && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.brake && !input.stance));
+    // X drops it out of flight at once (not once the throttle has run
+    // down): the body is the brakes' now, free to swing round onto the aim
+    const wantFlight = !falling && !input.brake && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.stance));
     const flightGoal = wantFlight && !this.grounded ? 1 : 0;
-    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? 0.55 : 0.4);
+    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? 0.55 : input.brake ? 0.22 : 0.4);
     if (this.grounded) this.flightness = 0;
     const fl = smooth(0.05, 0.95, this.flightness);
 

@@ -223,9 +223,8 @@ export class CameraRig {
       if (Math.abs(this.bank) > 1e-5) cam.quaternion.multiply(this._q.setFromAxisAngle(this._s.set(0, 0, 1), this.bank));
     }
 
-    // Shake: impacts, boost, the air at speed
-    const transonic = Math.exp(-Math.pow((m.mach - 1) / 0.06, 2));
-    const s = this.shake + Math.max(0, speed - 150) / 1500 + (m.boosting ? 0.04 : 0) + transonic * 0.12;
+    // Shake: impacts and boost. Supersonic flight itself does not shake the picture
+    const s = this.shake + (m.boosting ? 0.04 : 0);
     if (s > 0.0005 && this.mode !== 'flyby') {
       const t = this.time;
       const n = (a: number, b: number) => Math.sin(t * a) * 0.6 + Math.sin(t * b + 1.3) * 0.4;
