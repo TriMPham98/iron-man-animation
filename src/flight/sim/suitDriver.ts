@@ -295,7 +295,7 @@ export class SuitDriver {
   private readonly tuck = new THREE.Vector2();
   private readonly armOut = new THREE.Vector2();
   private readonly spread = new THREE.Vector2();
-  /** Braking (X / the auto flare) and free fall, sprung: [value, velocity]. */
+  /** Braking (X) and free fall, sprung: [value, velocity]. */
   private readonly brakeK = new THREE.Vector2();
   private readonly fallK = new THREE.Vector2();
   /** Travel direction in the body frame, smoothed (what the braking palms push against). */
@@ -882,10 +882,9 @@ export class SuitDriver {
   private preLanding(m: FlightModel): number {
     if (m.grounded || m.posture > 0.9) return 0;
     const sink = -m.vel.y;
-    // The flight computer's flare always ends in the three-point
-    if (sink < (m.flare ? 2 : 7)) return 0;
+    if (sink < 7) return 0;
     const tti = Math.max(0, m.clearance) / sink;
-    return smooth01((0.5 - tti) / 0.35) * (m.flare ? 1 : smooth01((sink - 7) / 3));
+    return smooth01((0.5 - tti) / 0.35) * smooth01((sink - 7) / 3);
   }
 
   /** Touchdown → slam → hold → rise, and the solved three-point pose. */

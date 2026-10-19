@@ -28,10 +28,9 @@ import { BACK_SPEED, Gait, RUN_SPEED, STRAFE_RUN, STRAFE_SPEED, WALK_SPEED } fro
  * upright onto ground sets the boots down and it walks again.
  *
  * Full down (Q) cuts the boots: the suit drops feet first to its terminal
- * speed and stays there. Anything coming at the ground too fast (a fall, a
- * dive) is caught by the flight computer: it flares on its own — upright,
- * boots and palms against the fall — and puts the suit down in a hero
- * landing. The ground never hurts the suit.
+ * speed and stays there. Anything that hits the ground hard (a fall, a
+ * dive) arrives in a hero landing — the pilot does the braking. The ground
+ * never hurts the suit.
  */
 
 export interface FlightInput {
@@ -95,20 +94,7 @@ const FALL_DRAG = GRAVITY / (FALL_TERMINAL * FALL_TERMINAL);
 const FALL_STICK = -0.5;
 /** Palms and limbs steering a fall (m/s²). */
 const FALL_STEER = 4;
-/**
- * Auto flare — a last-second burn, not a cautious descent: the thrust it
- * may use (m/s², ~9 g), the decel it plans on (net), its reaction time
- * (s), and the sink it slams down at (m/s). Only a real plunge arms it: a
- * sink past FLARE_ARM, steeper than FLARE_SLOPE (sink / speed, ~30°), so
- * a shallow dive or skimming low over rolling ground never trips it.
- */
-const FLARE_MAX = 90;
-const FLARE_DECEL = 64;
-const FLARE_LAG = 0.08;
-export const TOUCH_SINK = 12;
-const FLARE_ARM = 22;
-const FLARE_SLOPE = 0.5;
-/** Palm jets braking (X / flare) against the travel (m/s²). */
+/** Palm jets braking (X) against the travel (m/s²). */
 const PALM_BRAKE = 9;
 /** Above this, the air is too thin and the suit starts icing (m). */
 export const ICING_ALT = 9000;
@@ -163,9 +149,7 @@ export class FlightModel {
   airbrake = 0;
   /** 0–1: boots cut and dropping (Q), eased in and out. */
   freefall = 0;
-  /** The flight computer is flaring for a landing on its own. */
-  flare = false;
-  /** 0–1: the palms firing against the travel (X or the flare), eased. */
+  /** 0–1: the palms firing against the travel (X), eased. */
   palmBrake = 0;
   /** Last contact this step, and its impact speed (m/s). */
   contact: ContactKind = 'none';
@@ -195,8 +179,6 @@ export class FlightModel {
   private readonly _q = new THREE.Quaternion();
   private readonly _q2 = new THREE.Quaternion();
   private readonly _prevVel = new THREE.Vector3();
-  /** What the flare flies with instead of the pilot's input. */
-  private readonly flareIn: FlightInput = EMPTY_INPUT();
 
   constructor(readonly ground: GroundProbe) {}
 
@@ -215,7 +197,6 @@ export class FlightModel {
     this.grounded = true;
     this.crouch = 0;
     this.freefall = 0;
-    this.flare = false;
     this.palmBrake = 0;
     this.gait.attach(this.pos, heading, this.ground);
   }
@@ -260,9 +241,8 @@ export class FlightModel {
     return this.pos.y - this.hipHeight() - this.ground.surface(this.pos.x, this.pos.z);
   }
 
-  step(dt: number, pilot: FlightInput): void {
+  step(dt: number, input: FlightInput): void {
     this.contact = 'none';
-    let input = pilot;
     this.crouch = Math.max(0, this.crouch - dt);
     // On the ground the suit walks; only the climb command takes it up
     if (this.grounded) {
@@ -283,18 +263,6 @@ export class FlightModel {
     }
     this.airT += dt;
     if (!input.boost) this.boostLatch = false;
-    // ── Auto flare: the ground is coming too fast — the computer flies ──
-    // (once it's begun it lands; climbing out of it hands the stick back)
-    if (this.flare && pilot.vertical > 0.05) this.flare = false;
-    else if (!this.flare && pilot.vertical <= 0.05 && this.power > 0.5 && this.groundRush()) this.flare = true;
-    if (this.flare) {
-      const f = this.flareIn;
-      f.aim.copy(pilot.aim);
-      f.lateral = f.forward = f.vertical = f.throttle = 0;
-      f.boost = f.stance = false;
-      f.brake = true;
-      input = f;
-    }
     const falling = input.vertical < FALL_STICK && this.power > 0.5;
     this.freefall += ((falling ? 1 : 0) - this.freefall) * approach(dt, falling ? 0.25 : 0.4);
     this._prevVel.copy(this.vel);
@@ -315,7 +283,7 @@ export class FlightModel {
     // (a fall is not flight, however fast it gets)
     const wantFlight = !falling && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.brake && !input.stance));
     const flightGoal = wantFlight && !this.grounded ? 1 : 0;
-    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? 0.55 : this.flare ? 0.25 : 0.4);
+    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? 0.55 : 0.4);
     if (this.grounded) this.flightness = 0;
     const fl = smooth(0.05, 0.95, this.flightness);
 
@@ -415,22 +383,13 @@ export class FlightModel {
       .addScaledVector(fwdFlat, (input.forward + this.speedCmd / 30) * HOVER_SPEED)
       .addScaledVector(leftFlat, -input.lateral * HOVER_SPEED * 0.8);
     vWant.y = input.vertical * CLIMB_SPEED;
-    // The flare brakes onto the ground, not above it: the sink it can still
-    // stop from at this height, down to a hero's sink at the deck (so the
-    // burn ends as the boots arrive)
-    const flareSink = Math.sqrt(TOUCH_SINK * TOUCH_SINK + 2 * FLARE_DECEL * Math.max(0, this.clearance));
-    if (this.flare) vWant.y = -flareSink;
     // Just off the deck: keep climbing clear whatever the stick says
     if (this.airT < HOP_GUARD) vWant.y = Math.max(vWant.y, 4);
     // Height first, then what thrust is left goes to the horizontal (a real
     // VTOL computer never trades altitude for a stop)
-    const hoverMax = (this.flare ? FLARE_MAX : THRUST_MAX * 1.1) * ceilingK;
+    const hoverMax = THRUST_MAX * 1.1 * ceilingK;
     const hoverAcc = vWant.sub(this.vel).multiplyScalar(1.6);
-    // On the flare's braking curve the decel it plans on is fed forward
-    // (the loop alone would always run behind the curve)
-    // (only while it's falling at the curve, not when it's already slower)
-    const flareFF = this.flare ? FLARE_DECEL * smooth(TOUCH_SINK, TOUCH_SINK + 6, flareSink) * smooth(-6, 0, -this.vel.y - flareSink) : 0;
-    hoverAcc.y = clamp(hoverAcc.y + GRAVITY + flareFF, 0, hoverMax);
+    hoverAcc.y = clamp(hoverAcc.y + GRAVITY, 0, hoverMax);
     const side = Math.sqrt(Math.max(0, hoverMax * hoverMax - hoverAcc.y * hoverAcc.y));
     const hl = Math.hypot(hoverAcc.x, hoverAcc.z);
     if (hl > side) {
@@ -453,7 +412,7 @@ export class FlightModel {
     // Falling, the boots are cut
     const thrust = falling ? 0 : THREE.MathUtils.lerp(hoverThrust, flightThrust, fl);
     const grounded = this.grounded && thrust < GRAVITY * 1.02 && input.vertical <= 0;
-    this.thrust += ((grounded ? 0 : thrust * this.power) - this.thrust) * approach(dt, this.flare ? 0.06 : 0.12);
+    this.thrust += ((grounded ? 0 : thrust * this.power) - this.thrust) * approach(dt, 0.12);
     this.throttle = clamp(this.thrust / THRUST_BOOST, 0, 1);
     acc.addScaledVector(thrustDir, this.thrust);
 
@@ -471,7 +430,7 @@ export class FlightModel {
       this.trimPitch = clamp(ul.z * 3 + this.omega.x * 0.25, -1, 1);
     }
 
-    // Drag, thinner with height; the brakes and the flare add a lot. A
+    // Drag, thinner with height; the brakes add a lot. A
     // fall is the body's own drag: it settles on its terminal speed
     this.airbrake += ((input.brake ? 1 : 0) - this.airbrake) * approach(dt, 0.15);
     const dragK = rho * THREE.MathUtils.lerp(DRAG * (1 + this.airbrake * 5 + (1 - fl) * 3), FALL_DRAG, this.freefall);
@@ -483,10 +442,10 @@ export class FlightModel {
       const hl2 = Math.hypot(hx, hz);
       if (hl2 > 1e-3) acc.add(this._v.set(hx, 0, hz).multiplyScalar(Math.min(FALL_STEER, hl2 * 1.5) / hl2));
     }
-    // Palm jets against the travel: X, and the flare
+    // Palm jets against the travel: X
     const palmGoal = input.brake && !this.grounded ? smooth(2, 14, speed) : 0;
     this.palmBrake += (palmGoal - this.palmBrake) * approach(dt, 0.12);
-    // (along the ground: the boots and the flare hold the height)
+    // (along the ground: the boots hold the height)
     const hv = Math.hypot(this.vel.x, this.vel.z);
     if (this.palmBrake > 1e-3 && hv > 0.5) {
       const k = (-PALM_BRAKE * this.palmBrake * this.power * Math.min(1, hv / 3)) / hv;
@@ -524,33 +483,7 @@ export class FlightModel {
     this.gLoad += (felt.dot(liftAxis) / GRAVITY - this.gLoad) * approach(dt, 0.25);
 
     this.collide(input);
-    if (this.grounded) this.flare = false;
     this.syncGait(dt);
-  }
-
-  /**
-   * Will the ground arrive before the suit could stop for it? The sink
-   * against the stopping distance a flare needs (plus its reaction time),
-   * over the highest ground the suit will cross on the way down. Never over
-   * the sea (that's a splash, not a landing).
-   */
-  private groundRush(): boolean {
-    const sink = -this.vel.y;
-    if (sink < FLARE_ARM || sink < FLARE_SLOPE * this.speed) return false;
-    // Flat out it first has to swing upright out of the flying posture
-    const lag = FLARE_LAG + 0.18 * this.flightness;
-    const T = (sink - TOUCH_SINK) / FLARE_DECEL + lag;
-    const need = (sink * sink - TOUCH_SINK * TOUCH_SINK) / (2 * FLARE_DECEL) + sink * lag + 1;
-    const g = this.ground;
-    let top = -Infinity;
-    for (let k = 0; k <= 6; k++) {
-      // The horizontal bleeds off through the flare: it covers about 60 % of a straight run
-      const t = (T * k * 0.6) / 6;
-      top = Math.max(top, g.surface(this.pos.x + this.vel.x * t, this.pos.z + this.vel.z * t));
-    }
-    const t = T * 0.6;
-    if (g.isWater(this.pos.x + this.vel.x * t, this.pos.z + this.vel.z * t)) return false;
-    return this.pos.y - this.hipHeight() - top < need;
   }
 
   /** Keep the legs' contacts in step with the ground state. */
@@ -730,9 +663,7 @@ export class FlightModel {
     // (plus a beat clear of the deck), so the two can never trade places on
     // alternate steps
     const idle = input.vertical <= 0.05 && this.airT > HOP_GUARD;
-    // A flare always finishes in the hero landing, however soft it got
-    const hero = this.flare && into > 2;
-    if (gentle && idle && !hero) {
+    if (gentle && idle) {
       // Settled on the deck: boots down, weight on the legs
       if (!this.grounded) {
         this.contact = into > 3.5 ? 'touchdown' : 'landed';
@@ -748,7 +679,7 @@ export class FlightModel {
       return;
     }
     if (into <= 0.5) return;
-    if (!hero && (gentle || (into < 7 && tangential > 30))) {
+    if ((gentle || (into < 7 && tangential > 30))) {
       // Brushing the ground on the way up, or skimming it flat out: no
       // bounce, no event — the suit rides along the surface
       this.vel.addScaledVector(n, into);

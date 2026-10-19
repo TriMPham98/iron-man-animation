@@ -240,44 +240,23 @@ describe('FlightModel', () => {
     expect(-m.vel.y).toBeLessThan(80);
   });
 
-  it('flares at the last second out of a terminal fall into a hero landing', () => {
+  it('takes a terminal fall straight into the ground as a hero landing', () => {
     const m = new FlightModel(flat());
     m.pos.set(0, 400, 0);
     m.vel.set(0, -72, 0);
     m.grounded = false;
     m.airT = 5;
-    let flareAt = -1;
     let contact = 'none';
     let touch = 0;
     run(m, 10, (i) => {
-      i.vertical = -1; // still held: the flight computer overrides it
-      if (m.flare && flareAt < 0) flareAt = m.clearance;
+      i.vertical = -1;
       if (m.contact !== 'none' && contact === 'none') {
         contact = m.contact;
         touch = m.impactSpeed;
       }
     });
-    expect(flareAt).toBeGreaterThan(30);
-    expect(flareAt).toBeLessThan(80);
     expect(contact).toBe('heroLanding');
-    expect(touch).toBeGreaterThan(6);
-    expect(touch).toBeLessThan(20);
-  });
-
-  it('skims low over the ground without the flare taking over', () => {
-    const m = new FlightModel(flat());
-    m.pos.set(0, 12, 0);
-    m.vel.set(0, -4, 150);
-    m.grounded = false;
-    m.flightness = 1;
-    m.posture = 1.42;
-    m.speedCmd = 150;
-    let flared = false;
-    run(m, 3, (i) => {
-      i.aim.set(0, 0.02, 1).normalize();
-      flared ||= m.flare;
-    });
-    expect(flared).toBe(false);
+    expect(touch).toBeGreaterThan(40); // no flight computer braking it
   });
 
   it('flies an aileron roll at about 1 g: the meter swings +1 → −1, the path stays put', () => {
