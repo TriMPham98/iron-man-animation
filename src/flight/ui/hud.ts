@@ -43,20 +43,24 @@ export class Hud {
   private readonly _e = new THREE.Euler();
   /** HUD visibility 0–1 (eases in after take-off / boot). */
   alpha = 1;
+  /** A band along the bottom to keep clear (CSS px): the touch controls. */
+  bottomInset = 0;
+  /** Floor on the HUD's scale (a phone's short side would make it unreadable). */
+  minScale = 0;
   private killFlash = 0;
   private hitMarker = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
-    Object.assign(canvas.style, { position: 'fixed', inset: '0', width: '100%', height: '100%', pointerEvents: 'none', zIndex: '2' });
-    this.resize();
-    window.addEventListener('resize', () => this.resize());
+    Object.assign(canvas.style, { position: 'fixed', left: '0', top: '0', pointerEvents: 'none', zIndex: '2' });
+    this.resize(window.innerWidth, window.innerHeight);
   }
 
-  private resize(): void {
+  /** The view's size (CSS px), from the app (FlightApp.syncViewport); the canvas box is sized with it. */
+  resize(w: number, h: number): void {
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.w = window.innerWidth;
-    this.h = window.innerHeight;
+    this.w = w;
+    this.h = h;
     this.canvas.width = Math.round(this.w * this.dpr);
     this.canvas.height = Math.round(this.h * this.dpr);
   }
@@ -97,7 +101,7 @@ export class Hud {
 
     const cx = this.w / 2;
     const cy = this.h / 2;
-    const s = Math.min(this.w, this.h) / 900;
+    const s = Math.max(this.minScale, Math.min(this.w, this.h) / 900);
 
     if (helmet) this.drawVisor(g, s);
     this.drawLadder(g, cam, cx, cy, s);
@@ -553,7 +557,7 @@ export class Hud {
 
   private drawStatus(g: CanvasRenderingContext2D, m: FlightModel, c: Combat, s: number): void {
     const x = 40 * s;
-    const y = this.h - 120 * s;
+    const y = this.h - 120 * s - this.bottomInset;
     // Armour arc
     const r = 34 * s;
     const ax = x + r;
@@ -589,7 +593,7 @@ export class Hud {
   private drawWeapons(g: CanvasRenderingContext2D, c: Combat, s: number): void {
     const W = c.weapons;
     const x = this.w - 40 * s;
-    let y = this.h - 132 * s;
+    let y = this.h - 132 * s - this.bottomInset;
     const row = (label: string, value: string, color: string, extra?: (bx: number, by: number) => void) => {
       this.text(g, label, x - 150 * s, y, 8 * s, CYAN_DIM, 'left', JARVIS);
       this.text(g, value, x, y, 11 * s, color, 'right');
@@ -724,7 +728,9 @@ export class Hud {
 
   private drawLines(g: CanvasRenderingContext2D, s: number): void {
     const x = this.w / 2;
-    let y = this.h - 70 * s;
+    // The bottom band taken (touch controls): JARVIS speaks under the heading tape instead
+    const top = this.bottomInset > 0;
+    let y = top ? 80 * s + 24 : this.h - 70 * s;
     for (let i = this.lines.length - 1; i >= 0; i--) {
       const l = this.lines[i];
       const age = this.time - l.t;
@@ -733,7 +739,7 @@ export class Hud {
       const a = age > 6 ? 1 - (age - 6) : 1;
       g.globalAlpha = this.alpha * a * (i === this.lines.length - 1 ? 1 : 0.55);
       this.text(g, `J.A.R.V.I.S.  ${l.text.slice(0, shown)}`, x, y, 12 * s, i === this.lines.length - 1 ? WHITE : CYAN_DIM, 'center');
-      y -= 20 * s;
+      y += top ? 20 * s : -20 * s;
     }
     g.globalAlpha = this.alpha;
   }

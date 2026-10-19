@@ -241,3 +241,76 @@
   #flight-ui .fp-corner, #flight-ui .fp-reactor::before, #flight-ui .fp-reactor::after, #flight-ui .fp-pane.on,
   #flight-ui .pause:not(.hidden) .fp-head, #flight-ui .pause:not(.hidden) .fp-nav > *, #flight-ui .pause:not(.hidden) .fp-panes { animation: none !important; }
 }
+
+/* Touch screens: no keyboard reference on the title, no key hints in the menu */
+#flight-ui.touch .title .keys, #flight-ui.touch .fp-foot { display: none; }
+#flight-ui.touch .title .cta { padding: 16px 30px 16px 34px; }
+#flight-ui.touch .back { padding: 14px 12px; top: calc(12px + env(safe-area-inset-top, 0px)); left: calc(16px + env(safe-area-inset-left, 0px)); }
+
+/* Touch-first devices: no page scroll, zoom, selection or long-press menu */
+html.tc-touch,
+html.tc-touch body {
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Phones held upright: ask for landscape ── */
+.tc-rotate {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  background: rgba(5, 10, 18, 0.94);
+  color: rgba(232, 250, 255, 0.9);
+  font-family: Michroma, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  text-align: center;
+  padding: 24px;
+  touch-action: none;
+  pointer-events: auto;
+}
+.tc-phone {
+  width: 44px;
+  height: 76px;
+  border: 2px solid rgba(126, 232, 255, 0.85);
+  border-radius: 9px;
+  box-shadow: 0 0 18px rgba(126, 232, 255, 0.3);
+  animation: tc-turn 2.2s ease-in-out infinite;
+}
+@keyframes tc-turn {
+  0%, 25% { transform: rotate(0deg); }
+  55%, 100% { transform: rotate(-90deg); }
+}
+@media (orientation: portrait) and (max-width: 600px) {
+  .tc-rotate { display: flex; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tc-phone { animation: none; transform: rotate(-90deg); }
+}
+/* The workshop link sets its own pointer-events: keep it dead once the title fades (it sits over the pause button) */
+#flight-ui.touch .screen.hidden .back { pointer-events: none; }
+/* Touch: the menu's columns scroll on their own (the page itself never pans) */
+#flight-ui.touch .fp-body, #flight-ui.touch .fp-nav, #flight-ui.touch .fp-panes { touch-action: pan-y; overscroll-behavior: contain; }
+/* Phones in landscape: a compact head, the menu and its pane side by side */
+@media (max-height: 500px) and (orientation: landscape) {
+  #flight-ui.touch .pause { padding: 6px calc(10px + env(safe-area-inset-right, 0px)) 6px calc(10px + env(safe-area-inset-left, 0px)); align-items: center; }
+  #flight-ui.touch .fp-panel { max-height: calc(100dvh - 12px); }
+  #flight-ui.touch .fp-head { padding: 8px 16px 8px; gap: 10px; }
+  #flight-ui.touch .fp-reactor { width: 24px; height: 24px; }
+  #flight-ui.touch .fp-eyebrow { display: none; }
+  #flight-ui.touch .fp-head h2 { font-size: 14px; }
+  #flight-ui.touch .fp-body { grid-template-columns: 210px 1fr; overflow: hidden; }
+  #flight-ui.touch .fp-nav { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-bottom: 0; border-right: 1px solid rgba(var(--fc-rgb),0.12); overflow-y: auto; }
+  #flight-ui.touch .fp-btn { min-height: 44px; }
+  #flight-ui.touch .fp-panes { padding: 10px 16px; overflow-y: auto; }
+}
+#flight-ui.touch .fp-btn kbd { display: none; }

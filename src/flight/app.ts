@@ -4,11 +4,13 @@ import { createAdaptiveResolution } from '../scene/adaptiveResolution';
 import { GameAudio } from './audio/gameAudio';
 import { SFX, Soundscape } from './audio/soundscape';
 import { FlightPost, type LensState } from './render/post';
+import { viewportSize, wideZoom } from './render/viewport';
 import { Game } from './sim/game';
 import { DEFAULT_CAMERA } from './sim/cameraRig';
 import { Director } from './sim/director';
 import { Input, type Controls } from './sim/input';
 import { Hud } from './ui/hud';
+import { TouchControls } from './ui/touchControls';
 import type { Screens } from './ui/screens';
 import { bindFlightSettings } from './ui/flightSettings';
 import { SUN_DIR } from './world/config';
@@ -62,6 +64,10 @@ export class FlightApp {
    * while the sim is building behind it.
    */
   input: Input | null = null;
+  /** On-screen controls (touch-first devices only; created with the input). */
+  touch: TouchControls | null = null;
+  /** Opens the pause menu (wired by src/flight/ui/flightSettings.ts). */
+  pauseMenu: () => void = () => {};
   director: Director | null = null;
   lens!: LensState;
   /** The pilot has the stick (title / handoff are over). */
@@ -119,11 +125,40 @@ export class FlightApp {
     );
     this.maxDpr = Math.min(window.devicePixelRatio, opts.maxPixelRatio ?? 1.5);
     r.setPixelRatio(this.maxDpr);
-    r.setSize(window.innerWidth, window.innerHeight, false);
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
-    Object.assign(canvas.style, { position: 'fixed', inset: '0', width: '100%', height: '100%', display: 'block' });
-    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 150000);
+    Object.assign(canvas.style, { position: 'fixed', left: '0', top: '0', display: 'block' });
+    this.camera = new THREE.PerspectiveCamera(62, 1, 0.1, 150000);
+    this.syncViewport(true);
+    // Rotation, Chrome Android's toolbar and the keyboard move the visual
+    // viewport, not always with a window 'resize' (and rotation's can carry
+    // the old size): every frame checks too (syncViewport is a no-op then)
+    window.addEventListener('resize', () => this.syncViewport(true));
+    window.visualViewport?.addEventListener('resize', () => this.syncViewport());
+    window.addEventListener('orientationchange', () => this.syncViewport());
+  }
+
+  /** The size everything is drawn at (CSS px; src/flight/render/viewport.ts). */
+  private view = { w: 0, h: 0 };
+
+  /**
+   * Sizes the canvases, the drawing buffer, the camera and the HUD from the
+   * one measure of the visible viewport, so the picture is never stretched.
+   * `force`: the pixel ratio may have moved (the targets need a resize).
+   */
+  syncViewport(force = false): void {
+    const { w, h } = viewportSize();
+    if (!force && w === this.view.w && h === this.view.h) return;
+    this.view = { w, h };
+    for (const c of [this.opts.canvas, this.opts.hudCanvas]) Object.assign(c.style, { width: `${w}px`, height: `${h}px` });
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
+    // Ultra-wide phones: no wider across than 16:9 (desktop is left alone)
+    this.camera.zoom = this.opts.screens.touch ? wideZoom(this.camera.aspect) : 1;
+    this.camera.updateProjectionMatrix();
+    this.post?.resize();
+    this.hud?.resize(w, h);
+    this.touch?.fit(w, h);
   }
 
   private async step<T>(name: string, fn: () => T | Promise<T>): Promise<T> {
@@ -186,12 +221,7 @@ export class FlightApp {
     }
     game.rig.mode = this.engaged && !this.director ? DEFAULT_CAMERA : 'attract';
     hud.alpha = this.engaged ? 1 : 0;
-    window.addEventListener('resize', () => {
-      this.renderer.setSize(window.innerWidth, window.innerHeight, false);
-      this.camera.aspect = window.innerWidth / window.innerHeight;
-      this.camera.updateProjectionMatrix();
-      this.post.resize();
-    });
+    this.syncViewport(true);
   }
 
   /**
@@ -304,7 +334,15 @@ export class FlightApp {
 
   /** Creates the controls (once). */
   attachInput(): Input {
-    this.input ??= new Input(this.opts.canvas);
+    if (!this.input) {
+      this.input = new Input(this.opts.canvas);
+      if (this.opts.screens.touch) {
+        // Touch screens: no pointer lock, the overlay drives the touch source
+        this.input.touchMode = true;
+        this.touch = new TouchControls(this.input, this.opts.canvas.parentElement ?? document.body, () => this.pauseMenu());
+        this.syncViewport(true);
+      }
+    }
     this.applySettings();
     return this.input;
   }
@@ -315,6 +353,8 @@ export class FlightApp {
       this.input.invertY = s.invertY;
       this.input.sensitivity = s.sensitivity;
     }
+    this.touch?.setOpacity(s.touchOpacity);
+    this.touch?.setLeftHanded(s.leftHanded);
     this.audio.setVolume(s.volume * this.volumeScale);
   }
 
@@ -342,6 +382,14 @@ export class FlightApp {
   /** One frame of sim + render. */
   frame(dt: number): void {
     const { input, game, world, hud, director, camera } = this;
+    this.syncViewport();
+    if (input?.touchMode) {
+      // The touch take-off / hover-climb mapping reads what the suit is doing
+      const sim = input.touch.sim;
+      sim.grounded = game.model.grounded;
+      sim.hover = 1 - game.model.flightness;
+      sim.pitch = Math.asin(THREE.MathUtils.clamp(game.input.aim.y, -1, 1));
+    }
     const c = input ? input.read(dt) : this.idleControls();
     if (director) director.update(dt, c);
     else this.autopilot?.(game.time, c);
@@ -366,6 +414,11 @@ export class FlightApp {
     const cinematic = game.rig.mode === 'flyby';
     const hudGoal = director ? director.hud : cinematic ? 0 : this.engaged ? 1 : this.hudGoal;
     hud.alpha += (hudGoal - hud.alpha) * (1 - Math.exp(-dt / 0.6));
+    if (this.touch) {
+      this.touch.setActive(this.engaged && !this.paused && !director && !this.autopilot);
+      hud.bottomInset = this.touch.bottomInset;
+      hud.minScale = 0.55;
+    }
     hud.draw(dt, camera, game.model, game.combat, game.ground, game.rig.mode === 'helmet');
     this.sounds.update(dt, game.model, game.combat, camera, game.rig.mode === 'helmet', game.combat.weapons.unibeamOn);
     this.post.render(dt, this.lens);

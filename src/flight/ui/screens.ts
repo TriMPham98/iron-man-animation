@@ -1,4 +1,5 @@
 import './screens.css';
+import { isTouchDevice } from '../sim/touchMath';
 
 /**
  * Boot, title and pause screens over the sim: JARVIS-styled, quiet, and out
@@ -63,9 +64,26 @@ export interface Settings {
   /** Effects volume (0–1). */
   sfx: number;
   quality: Quality;
+  /** Touch screens: on-screen controls opacity (0.2–1). */
+  touchOpacity: number;
+  /** Touch screens: stick on the right, buttons on the left. */
+  leftHanded: boolean;
 }
 
-const DEFAULTS: Settings = { invertY: false, sensitivity: 1, volume: 0.9, sfx: 1, quality: 'ultra' };
+const DEFAULTS: Settings = { invertY: false, sensitivity: 1, volume: 0.9, sfx: 1, quality: 'ultra', touchOpacity: 0.75, leftHanded: false };
+
+/** The on-screen controls reference (touch screens, in place of the keys). */
+const TOUCH_ROWS: Row[] = [
+  ['L STICK', 'throttle · roll / strafe (walk on foot)'],
+  ['STICK TO RING', 'boost · take off (on foot)'],
+  ['DRAG', 'aim / steer · look'],
+  ['LOOK UP / DOWN', 'climb · descend and land (hover)'],
+  ['FIRE / MSL / BEAM', 'drag while held to aim'],
+  ['BRAKE', 'palm brake · flare to a hover'],
+  ['MSL', 'hold to paint, release to fire'],
+  ['FLR / POD', 'flares · forearm launchers'],
+  ['CAM / II', 'camera · pause'],
+];
 const STORE = 'mk3-flight-settings';
 
 /** What the pause menu's buttons do (wired by the app: src/flight/ui/flightSettings.ts). */
@@ -100,6 +118,8 @@ export class Screens {
   /** The app's settings hook (kept for the app; others use {@link addSettingsListener}). */
   onSettings: (s: Settings) => void = () => {};
   actions: PauseActions = {};
+  /** A touch-first device: tap copy, the touch settings and reference. */
+  readonly touch = isTouchDevice();
 
   /**
    * @param root The UI layer (defaults to #flight-ui).
@@ -116,6 +136,19 @@ export class Screens {
     })();
     this.settings = { ...DEFAULTS, ...(saved ?? {}) };
     if (!(this.settings.quality in QUALITY)) this.settings.quality = DEFAULTS.quality;
+    this.root.classList.toggle('touch', this.touch);
+    const touchFields = `
+                <div class="fp-h" style="margin-top:16px">TOUCH</div>
+                <div class="fp-field"><label for="fp-topa">OPACITY</label>
+                  <input class="fp-range" id="fp-topa" type="range" min="0.2" max="1" step="0.05" data-k="touchOpacity"><output for="fp-topa"></output></div>
+                <div class="fp-field toggle"><span class="lbl" id="fp-lh-l">LEFT-HANDED</span>
+                  <button class="fp-switch" role="switch" aria-labelledby="fp-lh-l" data-k="leftHanded"></button></div>`;
+    const keyRef = `
+                  <section><div class="fp-h">GROUND</div><div class="fp-rows" data-rows="ground">${rows(CONTROLS.ground)}</div></section>
+                  <section><div class="fp-h">FLIGHT</div><div class="fp-rows" data-rows="flight">${rows(CONTROLS.flight)}</div></section>
+                  <section class="wide"><div class="fp-h">ANY TIME</div><div class="fp-rows" data-rows="always">${rows(CONTROLS.always)}</div></section>`;
+    const touchRef = `
+                  <section class="wide"><div class="fp-h">TOUCH</div><div class="fp-rows" data-rows="touch">${rows(TOUCH_ROWS)}</div></section>`;
     const keyCell = ([k, v]: Row) => `<div><b>${esc(k)}</b>${esc(v)}</div>`;
     const titleKeys =
       `<div class="kh">GROUND</div>${CONTROLS.ground.map(keyCell).join('')}` +
@@ -127,7 +160,7 @@ export class Screens {
         <output for="${id}"></output></div>`;
     this.root.innerHTML = `
       <div class="screen boot"><div class="ring"><div class="core"></div></div><div class="lines"></div><div class="bar"><i></i></div></div>
-      <div class="screen title hidden"><a class="back" href="/" title="Back to the workshop">&#x2190; WORKSHOP</a><h1>MARK III</h1><div class="sub">FLIGHT · MALIBU · GOLDEN HOUR</div><div class="cta">CLICK TO ENGAGE</div><div class="keys">${titleKeys}</div></div>
+      <div class="screen title hidden"><a class="back" href="/" title="Back to the workshop">&#x2190; WORKSHOP</a><h1>MARK III</h1><div class="sub">FLIGHT · MALIBU · GOLDEN HOUR</div><div class="cta">${this.touch ? 'TAP TO ENGAGE' : 'CLICK TO ENGAGE'}</div><div class="keys">${titleKeys}</div></div>
       <div class="screen pause hidden" role="dialog" aria-modal="true" aria-labelledby="fp-title">
         <div class="fp-scrim" data-act="resume" title="Resume"></div>
         <div class="fp-panel">
@@ -159,11 +192,8 @@ export class Screens {
                 <div class="fp-field"><label for="fp-sens">SENSITIVITY</label>
                   <input class="fp-range" id="fp-sens" type="range" min="0.3" max="2.5" step="0.05" data-k="sensitivity"><output for="fp-sens"></output></div>
                 <div class="fp-field toggle"><span class="lbl" id="fp-inv-l">INVERT PITCH</span>
-                  <button class="fp-switch" role="switch" aria-labelledby="fp-inv-l" data-k="invertY"></button></div>
-                <div class="fp-ref" style="margin-top:16px">
-                  <section><div class="fp-h">GROUND</div><div class="fp-rows" data-rows="ground">${rows(CONTROLS.ground)}</div></section>
-                  <section><div class="fp-h">FLIGHT</div><div class="fp-rows" data-rows="flight">${rows(CONTROLS.flight)}</div></section>
-                  <section class="wide"><div class="fp-h">ANY TIME</div><div class="fp-rows" data-rows="always">${rows(CONTROLS.always)}</div></section>
+                  <button class="fp-switch" role="switch" aria-labelledby="fp-inv-l" data-k="invertY"></button></div>${this.touch ? touchFields : ''}
+                <div class="fp-ref" style="margin-top:16px">${this.touch ? touchRef : keyRef}
                   <section class="wide"><div class="fp-h">GAMEPAD</div><div class="fp-rows">${rows([
                     ['R STICK', 'aim'],
                     ['L STICK', 'move · strafe · roll'],
@@ -207,6 +237,12 @@ export class Screens {
       this.boot.style.transition = 'none';
       this.boot.classList.add('hidden');
     }
+    if (this.touch) {
+      // No page scroll, zoom, text selection or long-press menu; phones held upright are asked to turn
+      document.documentElement.classList.add('tc-touch');
+      for (const ev of ['gesturestart', 'gesturechange', 'dblclick']) document.addEventListener(ev, (e) => e.preventDefault());
+      this.root.insertAdjacentHTML('beforeend', '<div class="tc-rotate"><div class="tc-phone"></div><div>ROTATE TO LANDSCAPE</div></div>');
+    }
     this.bindPause();
     this.syncInputs();
   }
@@ -236,7 +272,7 @@ export class Screens {
   private syncInputs(): void {
     const s = this.settings;
     for (const input of this.pause.querySelectorAll<HTMLInputElement>('input.fp-range')) {
-      const k = input.dataset.k as 'volume' | 'sfx' | 'sensitivity';
+      const k = input.dataset.k as 'volume' | 'sfx' | 'sensitivity' | 'touchOpacity';
       input.value = String(s[k]);
       const p = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min));
       input.style.setProperty('--v', `${(p * 100).toFixed(1)}%`);
@@ -244,7 +280,9 @@ export class Screens {
       out.textContent = k === 'sensitivity' ? `${s[k].toFixed(2)}×` : `${Math.round(s[k] * 100)}%`;
       input.setAttribute('aria-valuetext', out.textContent);
     }
-    this.pause.querySelector('.fp-switch')!.setAttribute('aria-checked', String(s.invertY));
+    for (const sw of this.pause.querySelectorAll<HTMLElement>('.fp-switch')) {
+      sw.setAttribute('aria-checked', String(s[sw.dataset.k as 'invertY' | 'leftHanded']));
+    }
     for (const b of this.pause.querySelectorAll<HTMLElement>('[data-q]')) {
       const on = b.dataset.q === s.quality;
       b.setAttribute('aria-checked', String(on));
@@ -257,7 +295,10 @@ export class Screens {
     for (const input of p.querySelectorAll<HTMLInputElement>('input.fp-range')) {
       input.addEventListener('input', () => this.set(input.dataset.k as 'volume', Number(input.value)));
     }
-    p.querySelector('.fp-switch')!.addEventListener('click', () => this.set('invertY', !this.settings.invertY));
+    for (const sw of p.querySelectorAll<HTMLElement>('.fp-switch')) {
+      const k = sw.dataset.k as 'invertY' | 'leftHanded';
+      sw.addEventListener('click', () => this.set(k, !this.settings[k]));
+    }
     for (const b of p.querySelectorAll<HTMLElement>('[data-q]')) b.addEventListener('click', () => this.set('quality', b.dataset.q as Quality));
     for (const b of p.querySelectorAll<HTMLElement>('[data-tab]')) {
       b.addEventListener('click', () => this.showTab(b.dataset.tab!));
@@ -356,8 +397,9 @@ export class Screens {
       return true;
     }
     if (cur.classList.contains('fp-switch')) {
-      if (dir < 0 && !this.settings.invertY) return this.toNav(pad);
-      this.set('invertY', dir > 0);
+      const k = cur.dataset.k as 'invertY' | 'leftHanded';
+      if (dir < 0 && !this.settings[k]) return this.toNav(pad);
+      this.set(k, dir > 0);
       return true;
     }
     if (cur.dataset.act === 'camera') {
@@ -466,7 +508,7 @@ export class Screens {
     if (opts.handoff) {
       // Arrived from the workshop: a lighter card over the hovering suit
       this.title.classList.add('handoff');
-      this.title.querySelector('.cta')!.textContent = 'CLICK TO TAKE CONTROL';
+      this.title.querySelector('.cta')!.textContent = this.touch ? 'TAP TO TAKE CONTROL' : 'CLICK TO TAKE CONTROL';
     }
     this.title.classList.remove('hidden');
     const go = (e: Event) => {

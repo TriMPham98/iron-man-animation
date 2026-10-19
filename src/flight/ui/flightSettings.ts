@@ -66,8 +66,11 @@ export function bindFlightSettings(app: FlightApp): void {
     app.paused = true;
     audio.setPaused(true);
     app.input?.releaseLock();
-    screens.setPaused(true, () => app.input?.requestLock());
+    // Touch: nothing to re-lock, so Resume resumes at once
+    screens.setPaused(true, () => (app.touch ? screens.actions.forceResume?.() : app.input?.requestLock()));
   };
+  // The on-screen pause button
+  app.pauseMenu = pause;
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape' && !e.repeat && !document.pointerLockElement) pause();
   });
