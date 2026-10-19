@@ -38,7 +38,15 @@ function glowTexture(): THREE.Texture {
   return t;
 }
 
-function plumeMaterial(color: number, falloff: number): THREE.ShaderMaterial {
+/**
+ * One additive shell of a plume. Cheap per fragment (two value-noise taps,
+ * no loops): a white-hot throat cooling to the jet's colour and then a dim
+ * blue tail; a train of discrete shock diamonds (`uCells` of them, spaced
+ * by the nozzle, not stretched with the flame) that fade downstream; and
+ * turbulence that only starts once the flow leaves the potential core,
+ * eating the outer edge into ragged, racing streaks.
+ */
+function plumeMaterial(color: number, falloff: number, turbulence: number): THREE.ShaderMaterial {
   return withLogDepth(
     new THREE.ShaderMaterial({
       transparent: true,
@@ -51,15 +59,18 @@ function plumeMaterial(color: number, falloff: number): THREE.ShaderMaterial {
         uTime: { value: 0 },
         uSeed: { value: Math.random() * 100 },
         uPower: { value: 0 },
+        uCells: { value: 4 },
       },
       vertexShader: /* glsl */ `
         uniform float uTime;
         uniform float uSeed;
         varying float vH;
+        varying float vA;
         varying vec3 vN;
         varying vec3 vV;
         void main() {
           vH = -position.y;
+          vA = uv.x;
           vec3 p = position;
           float h = clamp(vH, 0.0, 1.0);
           float a = uTime * 7.0 + uSeed;
@@ -77,17 +88,39 @@ function plumeMaterial(color: number, falloff: number): THREE.ShaderMaterial {
         uniform float uTime;
         uniform float uSeed;
         uniform float uPower;
+        uniform float uCells;
         varying float vH;
+        varying float vA;
         varying vec3 vN;
         varying vec3 vV;
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float vnoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+        }
         void main() {
-          float along = pow(1.0 - clamp(vH, 0.0, 1.0), ${falloff.toFixed(1)} * (1.5 - uPower));
-          float freq = 16.0 + 26.0 * uPower;
-          float diamonds = 0.8 + (0.15 + 0.5 * uPower) * pow(0.5 + 0.5 * cos(vH * freq), 6.0) * (1.0 - vH);
-          float race = 0.97 + 0.03 * sin(vH * 34.0 - uTime * 14.0 + uSeed);
+          float h = clamp(vH, 0.0, 1.0);
+          float along = pow(1.0 - h, ${falloff.toFixed(1)} * (1.5 - 0.6 * uPower));
+          // Shock diamonds: sharp nodes, weaker and softer as the flow mixes out
+          float cell = fract(h * uCells - 0.15);
+          float node = exp(-pow((cell - 0.5) * (5.0 - 2.0 * h), 2.0) * 4.0);
+          float diamonds = 0.7 + (0.25 + 0.95 * uPower) * node * (1.0 - h) * (1.0 - h);
+          // Turbulent mixing past the core: angular streaks flowing out
+          // (the angle wraps: 16 cells round the shell)
+          vec2 q = vec2(vA * 16.0, h * 7.0 - uTime * (14.0 + 10.0 * uPower) + uSeed);
+          float n = vnoise(q) * 0.65 + vnoise(q * 2.7 + 3.1) * 0.35;
+          float mixK = smoothstep(0.12, 0.75, h) * ${turbulence.toFixed(2)};
+          float turb = mix(1.0, 0.25 + 1.3 * n, mixK);
+          // Throat to tail: white-hot, the jet's own colour, then a dim blue
+          vec3 hot = mix(uColor, vec3(1.0), 0.75);
+          vec3 tail = uColor * vec3(0.4, 0.55, 1.0);
+          vec3 col = mix(hot, uColor, smoothstep(0.0, 0.18 + 0.25 * uPower, h));
+          col = mix(col, tail, smoothstep(0.35, 1.0, h));
+          col *= 2.4 + 0.8 * uPower;
           float edge = pow(abs(dot(vN, vV)), 0.8);
-          vec3 col = mix(uColor * vec3(0.45, 0.65, 1.0), mix(uColor, vec3(1.0), 0.6), uPower) * 3.0;
-          gl_FragColor = vec4(col * diamonds * race, along * edge * uOpacity);
+          float race = 0.96 + 0.04 * sin(vH * 34.0 - uTime * 14.0 + uSeed);
+          gl_FragColor = vec4(col * diamonds * race, along * edge * turb * uOpacity);
         }
       `,
     }),
@@ -107,7 +140,7 @@ export interface JetState {
   bootR: number;
   palmL: number;
   palmR: number;
-  /** 0–1: palms drawn as full thrusters (as long and wide as the boots). */
+  /** 0–1: palms burning as full thrusters (a little longer and wider, still hand-sized). */
   palmBoost?: number;
 }
 
@@ -131,11 +164,12 @@ export class Jets {
 
   constructor() {
     const tex = glowTexture();
-    const sheathGeo = new THREE.CylinderGeometry(0.06, 0.022, 1, 24, 8, true).translate(0, -0.5, 0);
-    const coreGeo = new THREE.CylinderGeometry(0.026, 0.006, 1, 16, 6, true).translate(0, -0.5, 0);
+    // (few rings: the detail is in the shader, the length in uCells)
+    const sheathGeo = new THREE.CylinderGeometry(0.06, 0.022, 1, 20, 6, true).translate(0, -0.5, 0);
+    const coreGeo = new THREE.CylinderGeometry(0.026, 0.006, 1, 12, 4, true).translate(0, -0.5, 0);
     const make = (sheathColor: number, coreColor: number): Jet => {
-      const sheath = new THREE.Mesh(sheathGeo, plumeMaterial(sheathColor, 1.6));
-      const core = new THREE.Mesh(coreGeo, plumeMaterial(coreColor, 2.4));
+      const sheath = new THREE.Mesh(sheathGeo, plumeMaterial(sheathColor, 1.6, 1));
+      const core = new THREE.Mesh(coreGeo, plumeMaterial(coreColor, 2.4, 0.35));
       const glow = new THREE.Sprite(
         new THREE.SpriteMaterial({ map: tex, color: 0xcfefff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }),
       );
@@ -214,11 +248,13 @@ export class Jets {
       lightSum += k;
       lightPos.addScaledVector(j.pos, k).addScaledVector(j.dir, 0.8 * k);
     });
+    // Palms: a hand-sized nozzle makes a hand-sized flame — a short, hard
+    // cone (≤ ~0.5 m even on boost), not a boot's column
     const pb = state.palmBoost ?? 0;
     this.palms.forEach((j, i) => {
       const k = palmPowers[i];
-      const len = THREE.MathUtils.lerp(0.18 + 0.6 * Math.pow(k, 1.3), 0.6 + 1.6 * Math.pow(k, 1.3), pb);
-      this.drawJet(j, k, len, THREE.MathUtils.lerp(0.7 + 0.4 * k, 0.85 + 0.6 * k, pb), t, i + 7);
+      const len = 0.1 + (0.24 + 0.14 * pb) * Math.pow(k, 1.2);
+      this.drawJet(j, k, len, THREE.MathUtils.lerp(0.7 + 0.35 * k, 0.8 + 0.45 * k, pb), t, i + 7);
     });
     // It's there to wash the ground at take-off: up high it only scorched
     // the boot plates white
@@ -278,6 +314,8 @@ export class Jets {
       m.scale.set(w, l * fl, w);
       const u = m.material.uniforms;
       u.uPower.value = k;
+      // Diamonds sit a nozzle-width or so apart: their count follows the length
+      u.uCells.value = THREE.MathUtils.clamp(1.5 + l * 2.6, 1.5, 7);
       u.uOpacity.value = (0.35 + 0.65 * k) * k * fl * op;
       u.uTime.value = t;
     }

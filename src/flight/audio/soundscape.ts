@@ -182,18 +182,16 @@ export class Soundscape {
   }
 
   /**
-   * The double boom: a real recording of the N-wave hitting the ground —
-   * the bow shock's crack, then ~0.11 s on the tail shock's — with a sub
-   * slam under each crack and the whole thing thrown back off the hills.
-   * `ui` = the pilot's own (the shock leaves from round him); otherwise
-   * placed at `at`, `arriving` = the front is at the ear now (no travel time
-   * left to add).
+   * The double boom, as an outside ear gets it the moment the Mach cone
+   * sweeps over it: a real recording of the N-wave — the bow shock's
+   * crack, then ~0.11 s on the tail shock's — with a sub slam under each
+   * crack and the whole thing thrown back off the hills.
    */
-  private doubleBoom(at: THREE.Vector3 | undefined, arriving: boolean): void {
+  private doubleBoom(at: THREE.Vector3): void {
     const A = this.audio;
     if (this.now - this.lastBoom < 1.5) return;
     this.lastBoom = this.now;
-    const o = at ? { at, ref: 60, propagate: !arriving } : { ui: true };
+    const o = { at, ref: 60, propagate: false };
     // The cracks land 0.07 s and 0.18 s into the file
     A.play(SFX.sonicNwave, { ...o, gain: 1.5, echo: 0.6 });
     A.play(SFX.sonicNwave, { ...o, gain: 0.6, rate: 0.82, lowpass: 900, delay: 0.012 });
@@ -254,19 +252,9 @@ export class Soundscape {
         if (at) this.splash(at, e.value ?? 5);
         break;
       case 'sonicBoom':
-        if (this.outside && at) {
-          // From outside, the shock has to reach the camera: already in
-          // the cone behind it, it's on its way from the crossing point;
-          // still ahead of it, it lands when the cone sweeps over
-          const r = this._w.copy(this.ear).sub(m.pos);
-          const ahead = -r.dot(m.vel) / (r.length() * m.speed + 1e-6);
-          const mach = Math.max(1.001, m.mach);
-          if (ahead <= Math.sqrt(1 - 1 / (mach * mach))) this.coneArmed = true;
-          else this.doubleBoom(at, false);
-          break;
-        }
-        // The pilot breaks it
-        this.doubleBoom(undefined, true);
+        // DCS-style: breaking the barrier is silent in the suit (the pilot
+        // flies ahead of his own noise, he never hears a boom); an outside
+        // ear hears it only when the Mach cone sweeps over it (update())
         break;
       case 'boostStart':
         A.play(SFX.rocket1, { at, gain: 0.8, rate: 0.7, ref: 10 });
@@ -299,7 +287,7 @@ export class Soundscape {
         A.play(SFX.lockFull, { ui: true, gain: 0.6 });
         break;
       case 'missileLaunch':
-        A.play(this.rocketSide++ % 2 ? SFX.rocket1 : SFX.rocket2, { at, gain: 0.85, vary: 0.08, ref: 10 });
+        A.play(this.rocketSide++ % 2 ? SFX.rocket1 : SFX.rocket2, { at, gain: 1.1, vary: 0.08, ref: 10 });
         break;
       case 'launcherFire':
         A.play(SFX.weaponLock, { at, gain: 0.7, ref: 6 });
@@ -416,7 +404,7 @@ export class Soundscape {
       const cone = Math.sqrt(1 - 1 / (m.mach * m.mach));
       const inCone = ahead > cone;
       if (!inCone) this.coneArmed = true;
-      if (inCone && this.coneArmed && this.outside) this.doubleBoom(m.pos, true);
+      if (inCone && this.coneArmed && this.outside) this.doubleBoom(m.pos);
       if (inCone) this.coneArmed = false;
       gate = inCone ? 1 : 0;
     } else {

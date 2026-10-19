@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MINI_ROCKETS } from '../../animation/flightCheck';
 import type { Combat } from '../combat/combat';
-import { LAUNCHER_PER_ARM } from '../combat/playerWeapons';
+import { ASSIST_RANGE, LAUNCHER_PER_ARM } from '../combat/playerWeapons';
 import type { FlightModel } from '../sim/flightModel';
 import { BOOST_SPEED, CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
 import type { GroundProbe } from '../sim/flightModel';
@@ -109,7 +109,7 @@ export class Hud {
     this.drawStatus(g, m, combat, s);
     this.drawWeapons(g, combat, s);
     this.drawRadar(g, cam, m, combat, s);
-    this.drawWarnings(g, cam, m, combat, ground, s);
+    this.drawWarnings(g, cam, m, combat, s);
     this.drawLines(g, s);
     g.globalAlpha = 1;
   }
@@ -443,14 +443,36 @@ export class Hud {
         g.restore();
         this.text(g, `${n}`, x - size - 6 * s, y - size + 6 * s, 9 * s, WHITE, 'right');
       }
-      // Lead pip for the repulsors on the assisted target
-      if (W.assist === h) {
-        const lead = this.project(this._v.copy(h.pos).addScaledVector(h.vel, dist / 780), cam);
+      // Lead pip (repulsors, or the unibeam's short sweep lag) on every
+      // target in gun range, tied to it by a line: put the sight on the pip.
+      // The assisted one is bold, with a dot at its centre
+      if (dist < ASSIST_RANGE) {
+        const lead = this.project(W.leadPoint(h, this._v), cam);
         if (lead) {
-          g.strokeStyle = WHITE;
+          const on = W.assist === h;
+          const r = (on ? 7 : 5) * s;
+          const dx = lead.x - x;
+          const dy = lead.y - y;
+          const dl = Math.hypot(dx, dy);
+          g.strokeStyle = on ? WHITE : CYAN;
+          g.lineWidth = on ? 1.8 : 1.1;
+          if (dl > r + 2 * s) {
+            g.setLineDash([3 * s, 3 * s]);
+            g.beginPath();
+            g.moveTo(x + (dx / dl) * Math.min(dl, size * 0.5), y + (dy / dl) * Math.min(dl, size * 0.5));
+            g.lineTo(lead.x - (dx / dl) * r, lead.y - (dy / dl) * r);
+            g.stroke();
+            g.setLineDash([]);
+          }
           g.beginPath();
-          g.arc(lead.x, lead.y, 4 * s, 0, Math.PI * 2);
+          g.arc(lead.x, lead.y, r, 0, Math.PI * 2);
           g.stroke();
+          if (on) {
+            g.fillStyle = WHITE;
+            g.beginPath();
+            g.arc(lead.x, lead.y, 1.6 * s, 0, Math.PI * 2);
+            g.fill();
+          }
         }
       }
       const at = atOrder.get(h.id);
@@ -670,7 +692,7 @@ export class Hud {
     if (alive) this.text(g, `HOSTILES ${alive}`, x, y + R + 42 * s, 10 * s, RED, 'center');
   }
 
-  private drawWarnings(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, m: FlightModel, c: Combat, ground: GroundProbe, s: number): void {
+  private drawWarnings(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, m: FlightModel, c: Combat, s: number): void {
     const cx = this.w / 2;
     const cy = this.h / 2;
     const blink = Math.sin(this.time * 14) > 0;
@@ -695,21 +717,6 @@ export class Hud {
         g.stroke();
         g.restore();
       }
-    }
-    // Ground proximity: time to impact along the velocity
-    if (!m.grounded && m.speed > 40) {
-      const dir = this._v.copy(m.vel).normalize();
-      const look = Math.min(1200, m.speed * 4);
-      const p = new THREE.Vector3();
-      let hit = -1;
-      for (let d = 30; d < look; d += 30) {
-        p.copy(m.pos).addScaledVector(dir, d);
-        if (p.y < ground.surface(p.x, p.z) + 5) {
-          hit = d;
-          break;
-        }
-      }
-      if (hit > 0 && hit / m.speed < 3.2 && blink) this.text(g, 'PULL UP', cx, cy - 84 * s, 18 * s, RED, 'center', JARVIS);
     }
     if (m.pos.y > ICING_ALT && blink) this.text(g, 'ICE ON THE AIRFOILS', cx, cy - 64 * s, 11 * s, AMBER, 'center', JARVIS);
     if (c.down > 0) this.text(g, 'POWER FAILURE — REBOOTING', cx, cy - 40 * s, 14 * s, RED, 'center', JARVIS);

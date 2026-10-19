@@ -280,6 +280,29 @@ describe('FlightModel', () => {
     expect(flared).toBe(false);
   });
 
+  it('flies an aileron roll at about 1 g: the meter swings +1 → −1, the path stays put', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 1000, 0);
+    m.vel.set(0, 0, 200);
+    m.grounded = false;
+    m.flightness = 1;
+    m.posture = 1.42;
+    m.speedCmd = 200;
+    run(m, 1.5, (i) => i.aim.set(0, 0, 1));
+    let gMax = -Infinity;
+    let gMin = Infinity;
+    const y0 = m.pos.y;
+    run(m, 1.9, (i) => {
+      i.aim.set(0, 0, 1);
+      i.lateral = 1;
+      gMax = Math.max(gMax, m.gLoad);
+      gMin = Math.min(gMin, m.gLoad);
+    });
+    expect(gMax).toBeLessThan(1.6);
+    expect(gMin).toBeLessThan(-0.3);
+    expect(Math.abs(m.pos.y - y0)).toBeLessThan(15);
+  });
+
   it('rolls out of inverted flight instead of dithering on the ±π seam', () => {
     const m = new FlightModel(flat(true));
     m.pos.set(0, 300, 0);

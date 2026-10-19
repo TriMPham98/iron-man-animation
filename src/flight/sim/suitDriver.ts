@@ -79,6 +79,8 @@ const COM = new THREE.Vector3(0, 1.0, 0);
 const AIM_TWIST = -Math.PI / 2;
 /** Turn assist: the arm rolled so the palm faces forward (into the hand's sweep). */
 const ASSIST_TWIST = Math.PI / 2;
+/** Forearm roll for the braking arms (palms to the travel, elbows soft). */
+const BRAKE_TWIST = -0.5;
 /** Hover yaw limits from the flight model (rad/s, rad/s²): turn channels are normalised by them. */
 const HOVER_YAW_RATE = 3.2;
 const HOVER_YAW_ACC = HOVER_YAW_RATE / 0.22;
@@ -225,9 +227,9 @@ const N_SPRINGS = LIMB_KEYS.length + 2 + 10;
 // ── Hero landing ─────────────────────────────────────────────────────
 /** Timeline (s from touchdown): slam into the three-point, hold, rise. */
 const LAND_IN = 0.16;
-const LAND_LOOK_UP = 0.8;
-const LAND_RISE = 1.3;
-const LAND_UP = 2.15;
+const LAND_LOOK_UP = 0.5;
+const LAND_RISE = 0.85;
+const LAND_UP = 1.45;
 /** Forward lean of the whole body (rad) and the torso channels in the three-point. */
 const LAND_LEAN = 0.4;
 const LAND_TORSO = { twist: -0.2, bend: 0.8, side: 0.4 };
@@ -258,7 +260,7 @@ export interface SuitOutputs {
   bootR: number;
   palmL: number;
   palmR: number;
-  /** 0–1: the palms burning as full thrusters (boost), drawn as big as the boots. */
+  /** 0–1: the palms burning as full thrusters (boost). */
   palmBoost: number;
 }
 
@@ -571,8 +573,10 @@ export class SuitDriver {
         limbs[`knee${s}`] = lerp(limbs[`knee${s}`], 0.55 + 0.25 * ahead, bk);
         limbs[`ankle${s}`] = lerp(limbs[`ankle${s}`], 0.05, bk);
       }
-      pitch = lerp(pitch, -0.22 * ahead, bk);
-      spineBend = lerp(spineBend, -0.18 * ahead + 0.12 * (1 - ahead), bk);
+      // The hips rear back; the chest stays over them (a backward arch put
+      // the arms above the shoulders' line and hunched them)
+      pitch = lerp(pitch, -0.2 * ahead, bk);
+      spineBend = lerp(spineBend, 0.06 * ahead + 0.12 * (1 - ahead), bk);
     }
 
     // Repulsor aim: the arm punches out onto the aim line, palm flat to it.
@@ -622,24 +626,30 @@ export class SuitDriver {
       }
     }
 
-    // Braking arms: each palm laid flat onto the travel (its jet then fires
-    // straight ahead of the suit, against the motion), splayed a little to
-    // its own side so the two hands make a wide V. A raised repulsor arm
-    // keeps its shot
+    // Braking arms: thrown out low and wide like a skydiver's flare — each
+    // arm down and out from the shoulder and forward into the travel, never
+    // up at shoulder height (that shrugged the pauldrons into the helmet),
+    // elbows soft, palms flat to the oncoming air so their jets fire
+    // against the motion. A raised repulsor arm keeps its shot
     if (bk > 1e-3) {
+      const down = this._v.set(0, -1, 0).applyQuaternion(this._qi.copy(bodyQ).invert()).applyQuaternion(chestQ);
       for (const side of ['L', 'R'] as const) {
         const k = bk * (1 - (side === 'L' ? arms.aimL : arms.aimR));
         if (k <= 1e-3) continue;
         const s = side === 'L' ? 1 : -1;
         const tc = _tgt.copy(this.travel).applyQuaternion(chestQ);
-        const tgt = clampReach(tc.set(s * tc.x + 0.35, tc.y, tc.z).normalize());
+        tc.x *= s;
+        tc.multiplyScalar(0.8).addScaledVector(down, 0.8);
+        const tgt = clampReach(tc.set(tc.x + 0.3, Math.min(tc.y, -0.6), tc.z).normalize());
         const palm = suit.palms[0] ?? { at: [0.35, 0.96, 0.03], normal: [-0.94, -0.34, -0.04] };
-        const [abd, flex, w] = aimArm(palm.at, palm.normal, tgt, AIM_TWIST, 0.2, 1.4);
+        // Only half the aim's forearm roll: the full roll bent the elbow
+        // across the body and the solver hiked the shoulder to make up for it
+        const [abd, flex, w] = aimArm(palm.at, palm.normal, tgt, BRAKE_TWIST, 0.15, 1.4);
         const hand = [-0.05, -0.1, -0.05, 0, 0.05];
         limbs[`arm${side}`] = lerp(limbs[`arm${side}`], abd, k);
         limbs[`armFlex${side}`] = lerp(limbs[`armFlex${side}`], flex, k);
-        limbs[`armTwist${side}`] = lerp(limbs[`armTwist${side}`], AIM_TWIST, k);
-        limbs[`elbow${side}`] = lerp(limbs[`elbow${side}`], 0.2, k);
+        limbs[`armTwist${side}`] = lerp(limbs[`armTwist${side}`], BRAKE_TWIST, k);
+        limbs[`elbow${side}`] = lerp(limbs[`elbow${side}`], 0.15, k);
         if (side === 'L') {
           wristL = lerp(wristL, w, k);
           fingersL = fingersL.map((f, i) => lerp(f, hand[i], k));

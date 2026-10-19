@@ -105,7 +105,7 @@ export class Director {
         // Planted ahead and to the side: the suit streaks past it
         const side = new THREE.Vector3().crossVectors(m.vel, UP).normalize();
         // Ahead and low on the water, looking back up the line: the suit comes
-        // straight at the lens and past it, the boom ring in its wake
+        // straight at the lens and past it, its Mach cone sweeping the lens (the boom)
         const at = m.pos.clone().addScaledVector(m.vel, 1.6).addScaledVector(side, 20);
         at.y = g.ground.surface(at.x, at.z) + 3;
         g.rig.plant(at);

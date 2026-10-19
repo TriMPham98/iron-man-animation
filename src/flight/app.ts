@@ -159,7 +159,7 @@ export class FlightApp {
       this.sounds.on(e, game.model);
       if (e.kind === 'jarvis' && e.text) hud.say(e.text);
       if (e.kind === 'kill') hud.kill();
-      if (e.kind === 'repulsorHit') hud.hit();
+      if (e.kind === 'repulsorHit' && e.value) hud.hit();
     });
     screens.onSettings = () => this.applySettings();
     this.applySettings();

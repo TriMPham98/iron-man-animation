@@ -61,10 +61,18 @@ interface Flare extends Decoy {
 type Shot = { kind: 'bolt'; side: 'L' | 'R' } | { kind: 'rocket'; target: Hostile | null } | { kind: 'launcher'; side: 0 | 1; target: Hostile | null };
 
 const BOLT_SPEED = 780;
+/** The aim snaps to a target this close to the sight line or its lead pip (deg), keeps it out to ASSIST_KEEP, within ASSIST_RANGE (m). */
+const ASSIST_CONE = 4.5;
+const ASSIST_KEEP = 8;
+export const ASSIST_RANGE = 1800;
+/** How far behind a target the unibeam's sweep runs (s): its lead. */
+const BEAM_LAG = 0.07;
 const REPULSOR_DAMAGE = 50;
 const REPULSOR_INTERVAL = 0.17;
 /** Recoil of one shot on the suit (m/s) and the shove it gives what it hits (m/s). */
-const REPULSOR_RECOIL = 0.9;
+const REPULSOR_RECOIL = 0.4;
+/** Share of a weapon's recoil that reaches a suit standing on its legs (it braces). */
+const BRACED = 0.1;
 const REPULSOR_KNOCK = 9;
 const MISSILE_CONE = Math.cos(THREE.MathUtils.degToRad(19));
 const MISSILE_RANGE = 3200;
@@ -197,6 +205,7 @@ export class PlayerWeapons {
   private readonly _a = new THREE.Vector3();
   private readonly _b = new THREE.Vector3();
   private readonly _n = new THREE.Vector3();
+  private readonly _l = new THREE.Vector3();
 
   constructor(
     private readonly suit: Suit,
@@ -519,16 +528,42 @@ export class PlayerWeapons {
     this.drawStreaks();
   }
 
-  /** Aim point: the first thing along the pilot's line of sight; snaps to a target near it. */
+  /**
+   * Where to aim at `h` so the shot meets it: for a bolt, ahead along its
+   * motion relative to the suit (bolts carry the suit's own velocity) by
+   * the flight time; for the unibeam (all but instant) just the sweep's lag.
+   */
+  leadPoint(h: Hostile, out: THREE.Vector3, beam = this.unibeamHold > 0 || this.unibeamOn): THREE.Vector3 {
+    if (beam) return out.copy(h.pos).addScaledVector(h.vel, BEAM_LAG);
+    const rel = this._l.copy(h.vel).sub(this.model.vel);
+    // Two rounds settle the flight time onto the moving point
+    out.copy(h.pos);
+    for (let i = 0; i < 2; i++) {
+      const t = out.distanceTo(this.model.pos) / BOLT_SPEED;
+      out.copy(h.pos).addScaledVector(rel, t);
+    }
+    return out;
+  }
+
+  /**
+   * Aim point: the first thing along the pilot's line of sight; snaps to a
+   * target near it — near the target itself *or* its lead point, so aiming
+   * ahead of a crossing drone (what the pip asks for) keeps it — and holds
+   * on to the one it has through a wider cone.
+   */
   private findAim(aim: THREE.Vector3, eye: THREE.Vector3, hostiles: readonly Hostile[]): void {
     let best: Hostile | null = null;
-    let bestDot = Math.cos(THREE.MathUtils.degToRad(2.6));
+    let bestDot = Math.cos(THREE.MathUtils.degToRad(ASSIST_CONE));
+    const keep = Math.cos(THREE.MathUtils.degToRad(ASSIST_KEEP));
     for (const h of hostiles) {
       if (!h.alive) continue;
       const d = this._v.copy(h.pos).sub(eye);
       const dist = d.length();
-      if (dist > 1800) continue;
-      const dot = d.dot(aim) / dist;
+      if (dist > ASSIST_RANGE) continue;
+      const lead = this.leadPoint(h, this._w).sub(eye);
+      let dot = Math.max(d.dot(aim) / dist, lead.dot(aim) / Math.max(1e-6, lead.length()));
+      // The current target wins anything inside the wider cone
+      if (h === this.assist && dot > keep) dot = Math.max(dot, bestDot + 1e-6);
       if (dot > bestDot) {
         bestDot = dot;
         best = h;
@@ -555,11 +590,8 @@ export class PlayerWeapons {
   private fireBolt(side: 'L' | 'R', aim: THREE.Vector3): void {
     const from = this.palmMuzzle(side, new THREE.Vector3());
     let target = this.aimPoint;
-    if (this.assist) {
-      // Lead the target
-      const d = from.distanceTo(this.assist.pos);
-      target = this._w.copy(this.assist.pos).addScaledVector(this.assist.vel, d / BOLT_SPEED);
-    }
+    // Lead the target (the pip on the HUD is this same point)
+    if (this.assist) target = this.leadPoint(this.assist, this._w, false);
     const dir = target.clone().sub(from).normalize();
     // Never fire backward through the suit
     if (dir.dot(aim) < 0.5) dir.copy(aim);
@@ -571,8 +603,9 @@ export class PlayerWeapons {
       const v = this._w.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(5).addScaledVector(dir, 10 + Math.random() * 26).add(this.model.vel);
       this.particles.emit('plasma', from, v, { scale: 0.9 + Math.random() * 0.6 });
     }
-    // The kick goes back up the arm into the suit
-    this.model.vel.addScaledVector(dir, -REPULSOR_RECOIL);
+    // The kick goes back up the arm into the suit (on foot the legs take it:
+    // walking into your own fire must still carry you forward)
+    this.model.vel.addScaledVector(dir, -REPULSOR_RECOIL * (this.model.grounded ? BRACED : 1));
     // The bolt leaves the palm at its own speed on top of the suit's, so a
     // shot fired flat out still pulls ahead of the hand, never falls behind it
     const vs = this.model.vel.clone();
@@ -599,6 +632,7 @@ export class PlayerWeapons {
         this.particles.emit('plasma', at, undefined, { scale: 0.55, life: 0.22 });
       }
       let hit: THREE.Vector3 | null = null;
+      let struck = false;
       // Against hostiles (segment vs sphere)
       const seg = this._v.copy(b.p).sub(prev);
       const len2 = seg.lengthSq();
@@ -610,6 +644,7 @@ export class PlayerWeapons {
           hit = c.clone();
           // A repulsor hits like a ram: the target is shoved off its line
           h.vel.addScaledVector(seg, REPULSOR_KNOCK / Math.sqrt(Math.max(len2, 1e-6)));
+          struck = true;
           const killed = h.damage(REPULSOR_DAMAGE, hit, 'repulsor');
           if (killed) this.onKill(h);
           break;
@@ -628,7 +663,8 @@ export class PlayerWeapons {
           const water = this.field.heightAt(hit.x, hit.z) < 0 && hit.y < 1;
           if (water) this.particles.burst('spray', hit, 10, 6, new THREE.Vector3(0, 1.4, 0), 0.6);
           else if (hit.y < surf + 1) this.particles.burst('dust', hit, 5, 4, new THREE.Vector3(0, 0.8, 0), 0.8, { scale: 0.8 });
-          this.events.emit('repulsorHit', { at: hit });
+          // value marks an enemy hit: the HUD cross is for that, not the ground
+          this.events.emit('repulsorHit', { at: hit, value: struck ? 1 : 0 });
         }
         this.bolts.splice(i, 1);
       }
@@ -716,7 +752,7 @@ export class PlayerWeapons {
     if (power > 0) {
       // Aim: the assisted target, else the point under the sight; the beam
       // sweeps onto it (heavy, never twitchy)
-      const goal = this._a.copy(this.assist ? this.assist.pos : this.aimPoint).sub(from).normalize();
+      const goal = (this.assist ? this.leadPoint(this.assist, this._a, true) : this._a.copy(this.aimPoint)).sub(from).normalize();
       if (goal.dot(this.aimDir) < 0.6) goal.copy(this.aimDir);
       this.beamDir.lerp(goal, 1 - Math.exp(-dt / 0.07)).normalize();
       const dir = this.beamDir;
@@ -756,7 +792,7 @@ export class PlayerWeapons {
           if (Math.random() < 0.3) P.burst('dust', end, 2, 5, this._n, 0.8, { scale: 0.8 });
         }
       }
-      this.model.vel.addScaledVector(dir, -14 * dt * power);
+      this.model.vel.addScaledVector(dir, -8 * dt * power * (this.model.grounded ? BRACED : 1));
     } else {
       this.beamEnd.copy(from).addScaledVector(this.aimDir, 1);
     }

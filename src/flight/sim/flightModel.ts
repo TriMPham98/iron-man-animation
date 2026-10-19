@@ -97,17 +97,17 @@ const FALL_STICK = -0.5;
 const FALL_STEER = 4;
 /**
  * Auto flare — a last-second burn, not a cautious descent: the thrust it
- * may use (m/s², ~7.5 g), the decel it plans on (net), its reaction time
+ * may use (m/s², ~9 g), the decel it plans on (net), its reaction time
  * (s), and the sink it slams down at (m/s). Only a real plunge arms it: a
- * sink past FLARE_ARM, steeper than FLARE_SLOPE (sink / speed), so skimming
- * low over rolling ground never trips it.
+ * sink past FLARE_ARM, steeper than FLARE_SLOPE (sink / speed, ~30°), so
+ * a shallow dive or skimming low over rolling ground never trips it.
  */
-const FLARE_MAX = 75;
-const FLARE_DECEL = 52;
-const FLARE_LAG = 0.12;
+const FLARE_MAX = 90;
+const FLARE_DECEL = 64;
+const FLARE_LAG = 0.08;
 export const TOUCH_SINK = 12;
-const FLARE_ARM = 15;
-const FLARE_SLOPE = 0.25;
+const FLARE_ARM = 22;
+const FLARE_SLOPE = 0.5;
 /** Palm jets braking (X / flare) against the travel (m/s²). */
 const PALM_BRAKE = 9;
 /** Above this, the air is too thin and the suit starts icing (m). */
@@ -321,8 +321,11 @@ export class FlightModel {
 
     // ── Attitude: mouse aim ──────────────────────────────────────────
     const aim = this._a.copy(input.aim).normalize();
-    // Aim in the flight frame
-    this._q.copy(this.q).invert();
+    // Aim in the flight frame — in full flight, measured off the suit's long
+    // axis (the line it flies along), not the frame's nose a few degrees
+    // below it: the nose held on the aim left the path climbing off it
+    const lean = (this.posture - Math.PI / 2) * smooth(0.85 * FLIGHT_POSTURE, FLIGHT_POSTURE, this.posture) * fl;
+    this._q.copy(this.q).multiply(this._q2.setFromAxisAngle(this._n.set(1, 0, 0), lean)).invert();
     const al = this._t.copy(aim).applyQuaternion(this._q);
     const yawErr = Math.atan2(al.x, al.z);
     const pitchErr = Math.atan2(al.y, Math.hypot(al.x, al.z)); // + = aim above the nose
@@ -363,11 +366,16 @@ export class FlightModel {
     const rates = this._v.set(-wantPitch, this.omega.y, wantRoll);
     this.omega.lerp(rates, approach(dt, THREE.MathUtils.lerp(0.09, 0.14, fl)));
     this.omega.y += this.yawAcc * dt;
-    // Integrate the rates in the body frame
+    // Integrate the rates in the body frame. In flight the roll goes round
+    // the suit's long axis (where the velocity sits), not the frame's nose:
+    // rolled round the nose, the few degrees between the two swung the
+    // flight path about and an aileron roll pulled 7–9 g sideways
     const w = this.omega;
-    const ang = w.length() * dt;
+    const ra = this._t.set(0, Math.cos(this.posture), Math.sin(this.posture)).lerp(this._n.set(0, 0, 1), 1 - fl).normalize();
+    const wEff = this._n.set(w.x, w.y, 0).addScaledVector(ra, w.z);
+    const ang = wEff.length() * dt;
     if (ang > 1e-7) {
-      this._q2.setFromAxisAngle(this._n.copy(w).normalize(), ang);
+      this._q2.setFromAxisAngle(wEff.normalize(), ang);
       this.q.multiply(this._q2).normalize();
     }
 
@@ -505,10 +513,15 @@ export class FlightModel {
 
     this.vel.addScaledVector(acc, dt);
     this.pos.addScaledVector(this.vel, dt);
-    // Felt load: acceleration minus gravity, along the body's "up" (out of the back in flight)
+    // Felt load, as a G meter reads it: the normal load factor — the
+    // acceleration minus gravity along the lift axis (out of the back in
+    // flight, square to the long axis; up the thrust line in a hover).
+    // Thrust, drag and the brakes along the path don't count, and inverted
+    // it reads negative (an aileron roll swings it +1 → −1 → +1)
     const felt = this._v.copy(this.vel).sub(this._prevVel).divideScalar(Math.max(dt, 1e-4));
     felt.y += GRAVITY;
-    this.gLoad += (felt.length() / GRAVITY - this.gLoad) * approach(dt, 0.2);
+    const liftAxis = this._t.set(0, 1, 0).applyAxisAngle(this._n.set(1, 0, 0), lean).applyQuaternion(this.q);
+    this.gLoad += (felt.dot(liftAxis) / GRAVITY - this.gLoad) * approach(dt, 0.25);
 
     this.collide(input);
     if (this.grounded) this.flare = false;
@@ -525,7 +538,7 @@ export class FlightModel {
     const sink = -this.vel.y;
     if (sink < FLARE_ARM || sink < FLARE_SLOPE * this.speed) return false;
     // Flat out it first has to swing upright out of the flying posture
-    const lag = FLARE_LAG + 0.35 * this.flightness;
+    const lag = FLARE_LAG + 0.18 * this.flightness;
     const T = (sink - TOUCH_SINK) / FLARE_DECEL + lag;
     const need = (sink * sink - TOUCH_SINK * TOUCH_SINK) / (2 * FLARE_DECEL) + sink * lag + 1;
     const g = this.ground;
@@ -747,7 +760,7 @@ export class FlightModel {
     this.impactSpeed = Math.min(into, 45);
     this.vel.set(0, 0, 0);
     this.grounded = true;
-    this.crouch = 1.4;
+    this.crouch = 0.95;
     this.flightness = 0;
     this.speedCmd = 0;
     this.freefall = 0;

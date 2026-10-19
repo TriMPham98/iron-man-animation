@@ -2,16 +2,19 @@ import * as THREE from 'three';
 import { withLogDepth } from '../render/depth';
 
 /**
- * Breaking the sound barrier, as you'd see it: the Prandtl–Glauert vapour
- * cone (air expanding round the body drops below its dew point and fogs,
- * right up to the shock, where it snaps clear — a bell of cloud with a
- * soft, streaming front and a knife-sharp rim at the back), and the shock
- * front itself left hanging in the air where the suit went through,
- * opening out as a thin ring of disturbed air.
+ * The sound barrier the way DCS draws it: no explosion at Mach 1, no
+ * blast ring — just the transonic vapour cone (Prandtl–Glauert
+ * condensation: air expanding round the body drops below its dew point
+ * and fogs up to the shock, where it snaps clear). It flickers in and out
+ * with every few knots through ~M 0.93–1.0, is thickest in the wet air
+ * down low and all but absent up high, slides aft as the shock does, and
+ * is gone once the suit is properly supersonic. The boom itself is only
+ * ever heard from outside, when the Mach cone sweeps over the ear (see
+ * Soundscape).
  *
- * Also owns *when* that happens: Mach 1 with hysteresis, so a suit
- * hovering on the barrier doesn't boom again every time the needle
- * wobbles across it.
+ * Also owns *when* the barrier is crossed: Mach 1 with hysteresis, so a
+ * suit hovering on it doesn't report a crossing every time the needle
+ * wobbles.
  */
 
 const CONE_VERT = /* glsl */ `
@@ -86,40 +89,6 @@ void main() {
 }
 `;
 
-const RING_VERT = /* glsl */ `
-varying vec2 vP;
-varying vec3 vPosW;
-void main() {
-  vP = position.xy;
-  vec4 w = modelMatrix * vec4(position, 1.0);
-  vPosW = w.xyz;
-  gl_Position = projectionMatrix * viewMatrix * w;
-}
-`;
-
-const RING_FRAG = /* glsl */ `
-uniform float uAge;
-uniform float uAlpha;
-uniform vec3 uSunDir;
-varying vec2 vP;
-varying vec3 vPosW;
-float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-void main() {
-  // Unit quad: r = 1 is the front's current radius
-  float r = length(vP);
-  float ang = atan(vP.y, vP.x);
-  float jag = h(vec2(floor(ang * 40.0), 3.0)) * 0.02;
-  float w = 0.035 + 0.05 * uAge;
-  float ring = exp(-pow((r - 0.96 + jag) / w, 2.0));
-  // A faint wake of fogged air inside it, thinning as it opens
-  float wake = smoothstep(1.0, 0.2, r) * 0.18 * (1.0 - uAge);
-  float a = (ring + wake) * uAlpha;
-  if (a < 0.003) discard;
-  float lit = 0.75 + 0.25 * uSunDir.y;
-  gl_FragColor = vec4(vec3(0.92, 0.94, 0.97) * lit, clamp(a, 0.0, 0.7));
-}
-`;
-
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** Least time between two booms (s). */
@@ -127,28 +96,17 @@ const REARM_TIME = 4;
 /** Mach number the suit must drop back under before it can boom again. */
 const REARM_MACH = 0.94;
 
-interface Ring {
-  mesh: THREE.Mesh;
-  mat: THREE.ShaderMaterial;
-  age: number;
-}
-
 export class SonicBoomFx {
   readonly group = new THREE.Group();
   private readonly cone: THREE.Mesh;
   private readonly coneMat: THREE.ShaderMaterial;
-  private readonly rings: Ring[] = [];
-  private readonly ringGeo = new THREE.PlaneGeometry(2, 2);
   private armed = true;
   private sinceBoom = 99;
-  /** The vapour burst at the crossing (1 → 0). */
-  private burst = 0;
   private time = 0;
   private readonly dir = new THREE.Vector3(0, 0, 1);
   private readonly _q = new THREE.Quaternion();
-  private readonly _v = new THREE.Vector3();
 
-  constructor(private readonly atmo: Record<string, THREE.IUniform>) {
+  constructor(atmo: Record<string, THREE.IUniform>) {
     // A bell: narrow at the chest, flaring back to the shock rim
     const pts: THREE.Vector2[] = [];
     const L = 3.6;
@@ -186,70 +144,32 @@ export class SonicBoomFx {
     return false;
   }
 
-  /** The shock goes off here, the suit flying along `vel`. */
-  boom(at: THREE.Vector3, vel: THREE.Vector3): void {
-    this.burst = 1;
-    const mat = withLogDepth(
-      new THREE.ShaderMaterial({
-        vertexShader: RING_VERT,
-        fragmentShader: RING_FRAG,
-        uniforms: { uAge: { value: 0 }, uAlpha: { value: 1 }, uSunDir: this.atmo.uSunDir ?? { value: new THREE.Vector3(0, 1, 0) } },
-        transparent: true,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
-    const mesh = new THREE.Mesh(this.ringGeo, mat);
-    mesh.frustumCulled = false;
-    mesh.renderOrder = 2;
-    mesh.position.copy(at);
-    // Facing along the flight path: the front opens across it
-    const d = this._v.copy(vel).normalize();
-    if (d.lengthSq() < 0.5) d.set(0, 0, 1);
-    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), d);
-    this.group.add(mesh);
-    this.rings.push({ mesh, mat, age: 0 });
-  }
-
-  /** Follow the suit (drawn position) and age everything. */
+  /** Follow the suit (drawn position): the cone comes and goes with the Mach number. */
   update(dt: number, at: THREE.Vector3, vel: THREE.Vector3, mach: number): void {
     this.time += dt;
-    // The cone hangs on while the suit sits in the transonic band, and
-    // blooms for a moment as it goes through
-    const band = Math.exp(-Math.pow((mach - 1.0) / 0.035, 2));
-    this.burst = Math.max(0, this.burst - dt / 1.1);
-    const flash = this.burst > 0.8 ? 1 : Math.pow(this.burst / 0.8, 1.6);
-    const alpha = Math.max(band * 0.7, flash);
+    const t = this.time;
+    // On just short of the barrier, gone just past it
+    const band = THREE.MathUtils.smoothstep(mach, 0.925, 0.97) * (1 - THREE.MathUtils.smoothstep(mach, 0.995, 1.035));
+    // Wet sea air fogs readily; the dry air up high hardly at all
+    const humid = Math.exp(-Math.max(0, at.y) / 3500);
+    // It never sits still: the fog pops in and out as the flow round the
+    // body hunts about the dew point
+    const flutter = 0.6 + 0.25 * Math.sin(t * 23.0) * Math.sin(t * 7.3 + 1.1) + 0.15 * Math.sin(t * 41.0 + 2.3);
+    const alpha = band * humid * flutter;
     const speed = vel.length();
     this.cone.visible = alpha > 0.01 && speed > 50;
     if (this.cone.visible) {
-      // Lathe +Y runs back from the chest along the wake
+      // Lathe +Y runs back from the chest along the wake; the shock (and
+      // the cloud's sharp back edge) creeps aft as the speed builds
       this.dir.copy(vel).multiplyScalar(-1 / speed);
       this._q.setFromUnitVectors(UP, this.dir);
       this.cone.quaternion.copy(this._q);
-      this.cone.position.copy(at).addScaledVector(this.dir, -0.75);
-      this.coneMat.uniforms.uAlpha.value = alpha * 1.15;
-      this.coneMat.uniforms.uTime.value = this.time;
-      // As it fades the cloud loosens and spreads
-      this.coneMat.uniforms.uSpread.value = (1 - flash) * this.burst * 0.6;
-    }
-    for (const r of this.rings) {
-      r.age += dt;
-      const T = 0.9;
-      const k = r.age / T;
-      // Fast, then slowing as it weakens
-      const R = 2 + 70 * (1 - Math.pow(1 - Math.min(1, k), 2.2));
-      r.mesh.scale.setScalar(R);
-      r.mat.uniforms.uAge.value = Math.min(1, k);
-      r.mat.uniforms.uAlpha.value = Math.pow(Math.max(0, 1 - k), 1.5) * 0.8;
-    }
-    for (let i = this.rings.length - 1; i >= 0; i--) {
-      const r = this.rings[i];
-      if (r.age > 0.9) {
-        this.group.remove(r.mesh);
-        r.mat.dispose();
-        this.rings.splice(i, 1);
-      }
+      const aft = THREE.MathUtils.clamp((mach - 0.93) / 0.07, 0, 1);
+      this.cone.position.copy(at).addScaledVector(this.dir, -0.9 + 0.7 * aft);
+      this.coneMat.uniforms.uAlpha.value = alpha * 1.1;
+      this.coneMat.uniforms.uTime.value = t;
+      // Past the barrier it loosens and thins before it lets go
+      this.coneMat.uniforms.uSpread.value = 0.25 * THREE.MathUtils.smoothstep(mach, 0.99, 1.03);
     }
   }
 }

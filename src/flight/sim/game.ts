@@ -3,6 +3,7 @@ import { Suit } from '../../suit/Suit';
 import { Jets } from '../fx/jets';
 import { Particles } from '../fx/particles';
 import { SonicBoomFx } from '../fx/sonicBoom';
+import { GVaporFx } from '../fx/gVapor';
 import { patchLogDepth } from '../render/depth';
 import { PAD } from '../world/house';
 import { hazeAll } from '../render/haze';
@@ -41,6 +42,7 @@ export class Game {
   private wasGrounded = true;
   /** Vapour cone and shock ring at Mach 1 (and when, with hysteresis). */
   readonly sonic: SonicBoomFx;
+  readonly gVapor: GVaporFx;
   private wasBoosting = false;
   private frameDt = 0;
 
@@ -56,6 +58,8 @@ export class Game {
     this.particles = new Particles(world.atmosphere.uniforms);
     this.sonic = new SonicBoomFx(world.atmosphere.uniforms);
     scene.add(this.sonic.group);
+    this.gVapor = new GVaporFx(suit, world.atmosphere.uniforms);
+    scene.add(this.gVapor.group);
     this.combat = new Combat(world.field, this.ground, this.model, suit, this.particles, this.events, (amount, at) => {
       this.rig.shake += amount > 15 ? 1.4 : 0.25;
       this.particles.burst('spark', at, 6, 10, undefined, 1);
@@ -155,6 +159,8 @@ export class Game {
     this.jets.update(dt, this.suit, { bootL: o.bootL, bootR: o.bootR, palmL: o.palmL, palmR: o.palmR, palmBoost: o.palmBoost }, this.ground, this.particles, this.model.vel);
     this.particles.update(dt, this.rig.camera);
     this.sonic.update(dt, this.model.pos, this.model.vel, this.model.speed / SPEED_OF_SOUND);
+    this.gVapor.group.visible = this.suit.group.visible;
+    this.gVapor.update(dt, this.suit, this.rig.camera, this.model.gLoad, this.model.speed, this.model.flightness, this.model.pos.y);
     this.model.pos.addScaledVector(this.model.vel, -owed);
   }
 
@@ -166,32 +172,13 @@ export class Game {
     if (m.boosting !== this.wasBoosting) this.events.emit(m.boosting ? 'boostStart' : 'boostEnd', { at: m.pos });
     this.wasBoosting = m.boosting;
     if (this.sonic.crossed(m.speed / SPEED_OF_SOUND, this.frameDt)) {
+      // (DCS-style: nothing goes off at the suit — no flash, no jolt; the
+      // vapour cone fades, and only an outside ear hears the boom)
       this.events.emit('sonicBoom', { at: m.pos, value: m.speed });
-      // Two shock fronts, the bow's and the tail's (the double boom you hear)
-      const f = m.vel.clone().normalize();
-      this.sonic.boom(m.pos, m.vel);
-      this.sonic.boom(m.pos.clone().addScaledVector(f, -7), m.vel);
-      // The shock slams through the suit: a hard jolt, not a rumble
-      this.rig.shake += 2.6;
-      // Shock collars: rings of vapour snapping off the suit, the second
-      // a beat behind the first
-      const a = new THREE.Vector3(0, 1, 0).cross(f).normalize();
-      const b = new THREE.Vector3().crossVectors(f, a);
-      for (const [back, k] of [
-        [0, 1],
-        [5, 0.7],
-      ]) {
-        for (let i = 0; i < 64; i++) {
-          const t = (i / 64) * Math.PI * 2;
-          const r = a.clone().multiplyScalar(Math.cos(t)).addScaledVector(b, Math.sin(t));
-          const at = m.pos.clone().addScaledVector(r, 1.4).addScaledVector(f, -back);
-          this.particles.emit('vapor', at, r.multiplyScalar(30 * k).addScaledVector(m.vel, 0.85), { scale: 3.4 * k, life: 2.4 });
-        }
-      }
     }
     // Transonic: the vapour cone (SonicBoomFx) clings to the suit; a few
     // wisps tear off its rim
-    const trans = Math.exp(-Math.pow((m.mach - 1) / 0.05, 2));
+    const trans = Math.exp(-Math.pow((m.mach - 0.975) / 0.035, 2)) * Math.exp(-Math.max(0, m.pos.y) / 3500);
     if (trans > 0.15 && Math.random() < trans * 0.3) {
       const f = m.vel.clone().normalize();
       const a = new THREE.Vector3(0, 1, 0).cross(f).normalize();
@@ -202,13 +189,7 @@ export class Game {
         this.particles.emit('vapor', m.pos.clone().addScaledVector(r, 0.9 + Math.random() * 0.6).addScaledVector(f, -0.3), m.vel.clone().multiplyScalar(0.92), { scale: 1.6 * trans });
       }
     }
-    // High g: wingtip-like vortices off the hands and feet
-    if (m.gLoad > 4.5 && m.speed > 120) {
-      for (const p of this.suit.palms) {
-        const at = this.suit.boneWorldPoint(p.bone, p.at, new THREE.Vector3());
-        this.particles.emit('vapor', at, m.vel.clone().multiplyScalar(0.9), { scale: 0.5, life: 1.2 });
-      }
-    }
+    // (high-g vapour off the back and the tips: GVaporFx)
   }
 
   private onContact(): void {
