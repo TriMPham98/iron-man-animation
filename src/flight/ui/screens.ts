@@ -75,10 +75,11 @@ const DEFAULTS: Settings = { invertY: false, sensitivity: 1, volume: 0.9, sfx: 1
 /** The on-screen controls reference (touch screens, in place of the keys). */
 const TOUCH_ROWS: Row[] = [
   ['L STICK', 'throttle · roll / strafe (walk on foot)'],
+  ['STICK TO RING', 'boost · take off (on foot)'],
   ['DRAG', 'aim / steer · look'],
+  ['LOOK UP / DOWN', 'climb · descend and land (hover)'],
   ['FIRE / MSL / BEAM', 'drag while held to aim'],
-  ['UP / DROP', 'climb (take off) · free fall'],
-  ['BOOST / BRAKE', 'boost (run on foot) · palm brake'],
+  ['BRAKE', 'palm brake · flare to a hover'],
   ['MSL', 'hold to paint, release to fire'],
   ['FLR / POD', 'flares · forearm launchers'],
   ['CAM / II', 'camera · pause'],

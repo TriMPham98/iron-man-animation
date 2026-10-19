@@ -1,10 +1,11 @@
 import './touchControls.css';
 import type { Input } from '../sim/input';
-import { sideRole, stickOrigin, stickVector, TOUCH_BINDINGS, type TouchAction } from '../sim/touchMath';
+import { inBoostRing, sideRole, stickOrigin, stickVector, TOUCH_BINDINGS, type TouchAction } from '../sim/touchMath';
 
 /**
  * On-screen controls for touch-first devices, laid over the flight view:
- * a floating stick under one thumb (throttle · roll / strafe), a cluster of
+ * a floating stick under one thumb (throttle · roll / strafe; shoved out
+ * to its forward ring it boosts, or launches from the ground), a cluster of
  * buttons under the other, and drag-to-aim anywhere else. Everything lands
  * in the Input's touch source (src/flight/sim/touchMath.ts), read through
  * the same path as the keyboard. Each finger is tracked by its pointerId,
@@ -20,15 +21,12 @@ interface Button {
   hold?: boolean;
 }
 
-/** The cluster, in grid order (two rows of four, the fire button beside them). */
+/** The cluster (placed on a 3 × 2 grid by the CSS, the fire button beside it). */
 const CLUSTER: Button[] = [
   { act: 'flares', label: 'FLR', hold: true },
-  { act: 'boost', label: 'BOOST', hold: true },
-  { act: 'climb', label: 'UP', hold: true },
   { act: 'unibeam', label: 'BEAM', hold: true, aims: true },
   { act: 'launcher', label: 'POD', hold: true },
   { act: 'brake', label: 'BRAKE', hold: true },
-  { act: 'dive', label: 'DROP', hold: true },
   { act: 'missile', label: 'MSL', hold: true, aims: true },
   { act: 'fire', label: 'FIRE', hold: true, aims: true },
 ];
@@ -61,7 +59,7 @@ export class TouchControls {
     this.root = document.createElement('div');
     this.root.className = 'tc-layer tc-off';
     this.root.innerHTML = `
-      <div class="tc-stick"><i class="tc-knob"></i></div>
+      <div class="tc-stick"><i class="tc-ring"></i><i class="tc-knob"></i></div>
       <div class="tc-top">${TOP.map(btn).join('')}</div>
       <div class="tc-cluster">${CLUSTER.map(btn).join('')}</div>`;
     this.stick = this.root.querySelector('.tc-stick')!;
@@ -75,7 +73,6 @@ export class TouchControls {
     this.root.addEventListener('pointerdown', (e) => this.down(e));
     this.root.addEventListener('pointermove', (e) => this.move(e));
     for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) this.root.addEventListener(ev, (e) => this.up(e));
-    window.addEventListener('resize', () => this.measure());
     window.addEventListener('blur', () => this.releaseAll());
   }
 
@@ -105,9 +102,15 @@ export class TouchControls {
     return this.active ? this.inset : 0;
   }
 
+  /** Fits the layer to the view (CSS px, FlightApp.syncViewport), so the thumbs sit on what's visible. */
+  fit(w: number, h: number): void {
+    Object.assign(this.root.style, { right: 'auto', bottom: 'auto', width: `${w}px`, height: `${h}px` });
+    this.measure();
+  }
+
   private measure(): void {
     requestAnimationFrame(() => {
-      const h = window.innerHeight;
+      const h = this.root.clientHeight || window.innerHeight;
       const tops = [this.stick, this.root.querySelector('.tc-cluster')!].map((el) => el.getBoundingClientRect().top);
       this.inset = Math.max(0, h - Math.min(...tops) + 8);
     });
@@ -136,11 +139,12 @@ export class TouchControls {
       this.fingers.set(e.pointerId, { kind: 'button', act: b.act, el, x: e.clientX, y: e.clientY, aims: !!b.aims });
       return;
     }
-    const side = e.clientX < window.innerWidth * 0.4 ? 'left' : e.clientX > window.innerWidth * 0.6 ? 'right' : null;
+    const w = this.root.clientWidth || window.innerWidth;
+    const side = e.clientX < w * 0.4 ? 'left' : e.clientX > w * 0.6 ? 'right' : null;
     if (side && sideRole(side, this.leftHanded) === 'stick' && ![...this.fingers.values()].some((f) => f.kind === 'stick')) {
       // Floating stick: the base comes to the thumb
       const r = this.stick.offsetWidth / 2;
-      const o = stickOrigin(e.clientX, e.clientY, r + 6, window.innerWidth, window.innerHeight);
+      const o = stickOrigin(e.clientX, e.clientY, r + 6, w, this.root.clientHeight || window.innerHeight);
       this.fingers.set(e.pointerId, { kind: 'stick', ox: o.x, oy: o.y });
       this.stick.classList.add('on');
       this.stick.style.transform = `translate(${o.x - this.stickRest().x}px, ${o.y - this.stickRest().y}px)`;
@@ -170,6 +174,7 @@ export class TouchControls {
     this.fingers.delete(e.pointerId);
     if (f.kind === 'stick') {
       this.input.touch.stickX = this.input.touch.stickY = 0;
+      this.setBoost(false);
       this.stick.classList.remove('on');
       this.stick.style.transform = '';
       this.knob.style.transform = '';
@@ -183,11 +188,27 @@ export class TouchControls {
   }
 
   private updateStick(dx: number, dy: number): void {
-    const v = stickVector(dx, dy, this.stick.offsetWidth / 2, 0.15);
+    const r = this.stick.offsetWidth / 2;
+    const v = stickVector(dx, dy, r, 0.15);
     this.input.touch.stickX = v.x;
     this.input.touch.stickY = v.y;
+    this.setBoost(inBoostRing(dx, dy, r, this.input.touch.boost));
     // The knob stops with its rim on the ring
     this.knob.style.transform = `translate(${v.knobX * 0.77}px, ${v.knobY * 0.77}px)`;
+  }
+
+  /** The stick's ring: holds boost (Left Shift), lights the ring, ticks on the way in. */
+  private setBoost(on: boolean): void {
+    const t = this.input.touch;
+    if (on === t.boost) return;
+    t.boost = on;
+    if (on) {
+      t.press('boost');
+      buzz(18);
+    } else {
+      t.release('boost');
+    }
+    this.stick.classList.toggle('tc-boosting', on);
   }
 
   /** The stick's resting centre (its laid-out place, untransformed). */
@@ -202,6 +223,7 @@ export class TouchControls {
     this.fingers.clear();
     this.input.touch.clear();
     for (const el of this.root.querySelectorAll('.on')) el.classList.remove('on');
+    this.stick.classList.remove('tc-boosting');
     this.stick.style.transform = this.knob.style.transform = '';
   }
 }

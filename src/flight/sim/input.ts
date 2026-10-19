@@ -15,8 +15,9 @@ import { applyTouch, TouchState } from './touchMath';
  * hover), triggers are throttle and brake, A/X climb/descend, L3 boost,
  * RB repulsors, LB missiles, Y unibeam, B flares, R3 camera.
  * On a touch screen the on-screen buttons hold the same key codes, the
- * stick is analog throttle and roll / strafe, and a drag aims
- * (src/flight/sim/touchMath.ts, src/flight/ui/touchControls.ts).
+ * stick is analog throttle and roll / strafe (its outer ring boosts, and
+ * launches from the ground), a drag aims, and in a hover the look's pitch
+ * climbs / descends (src/flight/sim/touchMath.ts, src/flight/ui/touchControls.ts).
  */
 export interface Controls {
   /** Aim deltas this frame (rad). */
@@ -157,7 +158,7 @@ export class Input {
     this.keyVertical = rampTo(this.keyVertical, c.vertical, dt);
     c.lateral = ease(this.keyLateral);
     c.vertical = ease(this.keyVertical);
-    if (this.touchMode) applyTouch(c, this.touch, this.sensitivity, this.invertY);
+    if (this.touchMode) applyTouch(c, this.touch, this.sensitivity, this.invertY, dt);
     this.readPad(c, dt);
     return c;
   }

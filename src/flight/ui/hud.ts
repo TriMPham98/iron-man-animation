@@ -52,15 +52,15 @@ export class Hud {
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
-    Object.assign(canvas.style, { position: 'fixed', inset: '0', width: '100%', height: '100%', pointerEvents: 'none', zIndex: '2' });
-    this.resize();
-    window.addEventListener('resize', () => this.resize());
+    Object.assign(canvas.style, { position: 'fixed', left: '0', top: '0', pointerEvents: 'none', zIndex: '2' });
+    this.resize(window.innerWidth, window.innerHeight);
   }
 
-  private resize(): void {
+  /** The view's size (CSS px), from the app (FlightApp.syncViewport); the canvas box is sized with it. */
+  resize(w: number, h: number): void {
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.w = window.innerWidth;
-    this.h = window.innerHeight;
+    this.w = w;
+    this.h = h;
     this.canvas.width = Math.round(this.w * this.dpr);
     this.canvas.height = Math.round(this.h * this.dpr);
   }
