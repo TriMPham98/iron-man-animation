@@ -9,6 +9,7 @@ import { DEFAULT_CAMERA } from './sim/cameraRig';
 import { Director } from './sim/director';
 import { Input, type Controls } from './sim/input';
 import { Hud } from './ui/hud';
+import { TouchControls } from './ui/touchControls';
 import type { Screens } from './ui/screens';
 import { bindFlightSettings } from './ui/flightSettings';
 import { SUN_DIR } from './world/config';
@@ -62,6 +63,10 @@ export class FlightApp {
    * while the sim is building behind it.
    */
   input: Input | null = null;
+  /** On-screen controls (touch-first devices only; created with the input). */
+  touch: TouchControls | null = null;
+  /** Opens the pause menu (wired by src/flight/ui/flightSettings.ts). */
+  pauseMenu: () => void = () => {};
   director: Director | null = null;
   lens!: LensState;
   /** The pilot has the stick (title / handoff are over). */
@@ -304,7 +309,14 @@ export class FlightApp {
 
   /** Creates the controls (once). */
   attachInput(): Input {
-    this.input ??= new Input(this.opts.canvas);
+    if (!this.input) {
+      this.input = new Input(this.opts.canvas);
+      if (this.opts.screens.touch) {
+        // Touch screens: no pointer lock, the overlay drives the touch source
+        this.input.touchMode = true;
+        this.touch = new TouchControls(this.input, this.opts.canvas.parentElement ?? document.body, () => this.pauseMenu());
+      }
+    }
     this.applySettings();
     return this.input;
   }
@@ -315,6 +327,8 @@ export class FlightApp {
       this.input.invertY = s.invertY;
       this.input.sensitivity = s.sensitivity;
     }
+    this.touch?.setOpacity(s.touchOpacity);
+    this.touch?.setLeftHanded(s.leftHanded);
     this.audio.setVolume(s.volume * this.volumeScale);
   }
 
@@ -366,6 +380,11 @@ export class FlightApp {
     const cinematic = game.rig.mode === 'flyby';
     const hudGoal = director ? director.hud : cinematic ? 0 : this.engaged ? 1 : this.hudGoal;
     hud.alpha += (hudGoal - hud.alpha) * (1 - Math.exp(-dt / 0.6));
+    if (this.touch) {
+      this.touch.setActive(this.engaged && !this.paused && !director && !this.autopilot);
+      hud.bottomInset = this.touch.bottomInset;
+      hud.minScale = 0.55;
+    }
     hud.draw(dt, camera, game.model, game.combat, game.ground, game.rig.mode === 'helmet');
     this.sounds.update(dt, game.model, game.combat, camera, game.rig.mode === 'helmet', game.combat.weapons.unibeamOn);
     this.post.render(dt, this.lens);

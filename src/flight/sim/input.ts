@@ -1,5 +1,8 @@
+import { applyTouch, TouchState } from './touchMath';
+
 /**
- * Keyboard + mouse (pointer lock) + gamepad, read as one control state.
+ * Keyboard + mouse (pointer lock) + gamepad + touch screen, read as one
+ * control state.
  *
  * The same keys mean two things (the flight model reads them by mode):
  * on foot, W/S walk forward and back and A/D sidestep relative to the
@@ -11,6 +14,9 @@
  * On a pad: right stick aims, left stick strafes / rolls (and moves in a
  * hover), triggers are throttle and brake, A/X climb/descend, L3 boost,
  * RB repulsors, LB missiles, Y unibeam, B flares, R3 camera.
+ * On a touch screen the on-screen buttons hold the same key codes, the
+ * stick is analog throttle and roll / strafe, and a drag aims
+ * (src/flight/sim/touchMath.ts, src/flight/ui/touchControls.ts).
  */
 export interface Controls {
   /** Aim deltas this frame (rad). */
@@ -56,6 +62,10 @@ export class Input {
   /** Invert mouse pitch (flight-sim style). */
   invertY = false;
   sensitivity = 1;
+  /** Touch-screen source (filled in by the touch overlay). */
+  readonly touch = new TouchState();
+  /** Touch-first device: no pointer lock, and the touch source is read. */
+  touchMode = false;
 
   constructor(private readonly target: HTMLElement) {
     window.addEventListener('keydown', (e) => {
@@ -68,6 +78,7 @@ export class Input {
     window.addEventListener('blur', () => {
       this.keys.clear();
       this.buttons = 0;
+      this.touch.clear();
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.locked) return;
@@ -98,15 +109,20 @@ export class Input {
   }
 
   requestLock(): void {
-    if (!this.locked) void this.target.requestPointerLock?.();
+    if (!this.locked && !this.touchMode) void this.target.requestPointerLock?.();
   }
 
   releaseLock(): void {
     if (this.locked) document.exitPointerLock();
   }
 
+  /** A one-frame press from a source that isn't the keyboard (an on-screen button). */
+  queuePress(code: string): void {
+    this.pressedQueue.add(code);
+  }
+
   private key(...codes: string[]): boolean {
-    return codes.some((c) => this.keys.has(c));
+    return codes.some((c) => this.keys.has(c) || this.touch.held.has(c));
   }
 
   read(dt: number): Controls {
@@ -131,6 +147,8 @@ export class Input {
     };
     // Right button is the missile lock (hold, release to fire)
     c.missile = c.missile || (this.buttons & 2) !== 0;
+    c.fire ||= this.touch.held.has('Mouse0');
+    c.missile ||= this.touch.held.has('Mouse2');
     this.mouseDX = this.mouseDY = 0;
     this.wheel = 0;
     this.pressedQueue.clear();
@@ -139,6 +157,7 @@ export class Input {
     this.keyVertical = rampTo(this.keyVertical, c.vertical, dt);
     c.lateral = ease(this.keyLateral);
     c.vertical = ease(this.keyVertical);
+    if (this.touchMode) applyTouch(c, this.touch, this.sensitivity, this.invertY);
     this.readPad(c, dt);
     return c;
   }
