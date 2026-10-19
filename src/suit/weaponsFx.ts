@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FLARE_POPS, FLARE_PORTS, FLARE_RELOAD, MINI_ROCKETS, type FlightCheckFrame } from '../animation/flightCheck';
+import { FLARE_POPS, FLARE_PORTS, FLARE_RELOAD, MINI_ROCKETS, ROCKETS_PER_POD, type FlightCheckFrame } from '../animation/flightCheck';
 import { boneSpec, type BoneName } from './rig';
 import type { SuitRig } from './rigPose';
 import {
@@ -419,8 +419,9 @@ export class WeaponsFx {
   /**
    * Mini-missile pod in a well under the trap plate, as in the film: the
    * plate hinges back out of the way (it is the only moving armor), and the
-   * pod — a gunmetal launcher block with a 4 × 2 bank of tubes, one per
-   * mini rocket ({@link MINI_ROCKETS}) — elevates
+   * pod — a gunmetal launcher block with a 2 × 2 bank of tubes, one per
+   * mini rocket ({@link ROCKETS_PER_POD} a pod, {@link MINI_ROCKETS} in
+   * all) — elevates
    * about its own back edge so its muzzles aim forward and up. The pivot
    * sits inside the well, so the pod never floats free of the shoulder.
    * Frame: bind axes, origin at the lid's mid height.
@@ -488,13 +489,13 @@ export class WeaponsFx {
     // Front bezel and the tube bank: gold rims, dark bores, warheads seated in them
     const front = fz1;
     pod.add(box(W * 0.94, H * 0.9, 0.003, m.gun, cx, top - H / 2, front + 0.0015));
-    // The tubes shrink to fit the bank in the pod's face (never the pod
-    // past the lid)
+    // The tubes fill the pod's face (never the pod past the lid): the
+    // two rows nearly touch, the columns spread across the width
     const rows = 2;
-    const cols = MINI_ROCKETS / rows;
+    const cols = ROCKETS_PER_POD / rows;
     const pitchX = (W * 0.9) / cols;
     const pitchY = (H * 0.8) / rows;
-    const rimR = Math.min(pitchX, pitchY) * 0.42;
+    const rimR = Math.min(pitchX * 0.42, pitchY * 0.47);
     const rockets: THREE.Object3D[] = [];
     const cells: THREE.MeshBasicMaterial[] = [];
     const bore = new THREE.MeshStandardMaterial({ color: 0x07080a, metalness: 0.6, roughness: 0.7 });
@@ -686,14 +687,17 @@ export class WeaponsFx {
       // as the silo sinks
       const home = ease(0.85, 1, k);
       const loaded = this.loadout ? this.loadout.silo[mt.side > 0 ? 0 : 1] : mt.rockets.length;
+      // Rockets arm alternating pods: cell i of this pod is rocket 2i (+1 on the right)
+      const podIx = mt.side > 0 ? 0 : 1;
       mt.rockets.forEach((r, i) => {
         // A cell that has fired stands empty until the pod is reloaded
         r.visible = i < loaded;
-        const out = Math.min(ease(0, 1, f.siloArmed - i), home);
+        const k = f.siloArmed - (i * 2 + podIx);
+        const out = Math.min(ease(0, 1, k), home);
         r.position.z = mt.front + 0.006 * out;
         const led = mt.cells[i].color;
         if (home < 0.98 || i >= loaded) led.copy(CELL_OFF);
-        else led.copy(f.siloArmed - i >= 1 ? CELL_ARMED : CELL_ARMING);
+        else led.copy(k >= 1 ? CELL_ARMED : CELL_ARMING);
       });
     }
     for (const mt of this.dispensers) {

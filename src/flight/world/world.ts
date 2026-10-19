@@ -30,7 +30,7 @@ export class World {
     console.info(`[flight] sky ${Math.round(t1 - t0)} ms, heightfield ${Math.round(t2 - t1)} ms`);
     this.terrain = new Terrain(this.field, this.atmosphere.uniforms, this.field.texels);
     this.ocean = new Ocean(this.field, this.atmosphere.uniforms, renderer);
-    this.vegetation = new Vegetation(this.field, this.atmosphere.uniforms);
+    this.vegetation = new Vegetation(this.field, this.atmosphere.uniforms, renderer);
     const house = buildHouse(this.field);
     hazeAll(house, this.atmosphere.uniforms);
     this.clouds = new Clouds(this.atmosphere.uniforms);

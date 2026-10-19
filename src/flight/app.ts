@@ -365,7 +365,9 @@ export class FlightApp {
     this.cameraOverride?.(camera, dt);
     world.update(dt, camera);
     this.updateLens(dt);
-    const hudGoal = director ? director.hud : this.engaged ? 1 : this.hudGoal;
+    // Cinematic shots are seen from outside the suit: no helmet HUD over them
+    const cinematic = game.rig.mode === 'flyby';
+    const hudGoal = director ? director.hud : cinematic ? 0 : this.engaged ? 1 : this.hudGoal;
     hud.alpha += (hudGoal - hud.alpha) * (1 - Math.exp(-dt / 0.6));
     hud.draw(dt, camera, game.model, game.combat, game.ground, game.rig.mode === 'helmet');
     this.sounds.update(dt, game.model, game.combat, camera, game.rig.mode === 'helmet', game.combat.weapons.unibeamOn);

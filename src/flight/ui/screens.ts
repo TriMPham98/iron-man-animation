@@ -20,7 +20,7 @@ type Row = [key: string, action: string];
 export const CONTROLS: { ground: Row[]; flight: Row[]; always: Row[] } = {
   ground: [
     ['MOUSE', 'look · turn'],
-    ['W A S D', 'walk'],
+    ['W A S D', 'walk · sidestep'],
     ['SHIFT', 'run'],
     ['SPACE', 'take off'],
   ],

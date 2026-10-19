@@ -270,10 +270,13 @@ const LAUNCH_L = at(W, [0.6, 1.3, 5.4, 6.0]);
 const LAUNCH_R = at(W, [1.0, 1.7, 5.5, 6.1]);
 const SILOS = at(W, [1.8, 2.6, 5.1, 5.9]);
 /**
- * Mini rockets in each trapezius silo's tube bank (4 × 2), and the suit's
- * load in flight: one cell per rocket, armed in the same order.
+ * Mini rockets the suit carries, in all: half in each trapezius silo's
+ * 2 × 2 tube bank ({@link ROCKETS_PER_POD}), one tube per rocket. They arm
+ * (and in flight fire) alternating pods: rocket k sits in pod k % 2, cell
+ * ⌊k / 2⌋.
  */
 export const MINI_ROCKETS = 8;
+export const ROCKETS_PER_POD = MINI_ROCKETS / 2;
 // Flare dispensers: hip drums push out, spin through a salvo, slide home
 const FLARE_DRUMS = at(W, [2.9, 3.4, 4.9, 5.4]);
 /** Flare ports round each drum's rim. */

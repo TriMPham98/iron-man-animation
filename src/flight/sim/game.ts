@@ -133,6 +133,14 @@ export class Game {
     const owed = this.acc;
     this.model.pos.addScaledVector(this.model.vel, owed);
     this.driver.update(dt, this.suit, this.model, aim, this.combat.weapons.arms);
+    // Hero landing: the fist hits the ground a beat after the boots
+    const strike = this.driver.strike;
+    if (strike) {
+      this.driver.strike = null;
+      this.rig.shake += 0.7;
+      this.particles.burst('dust', strike.at, 12, 6, new THREE.Vector3(0, 0.6, 0), 1, { scale: 0.9 });
+      this.particles.burst('spark', strike.at, 14, 6, new THREE.Vector3(0, 1, 0), 1);
+    }
     this.suit.update(dt);
     // Shots leave the suit's hardware where it is drawn this frame
     if (this.controls) this.combat.afterPose();

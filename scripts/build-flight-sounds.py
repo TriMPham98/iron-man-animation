@@ -101,11 +101,20 @@ def main():
         ])
         os.remove(tmp)
         credits.append(f"- `{name}.mp3` (looped) — {credit_of_search(rel)}")
-    with open(os.path.join(OUT, 'CREDITS.md'), 'w') as f:
+    # Hand-written sections (## headings, e.g. the JARVIS voice) are kept as they are
+    path = os.path.join(OUT, 'CREDITS.md')
+    kept = ''
+    if os.path.exists(path):
+        with open(path) as f:
+            old = f.read()
+        at = old.find('\n## ')
+        if at >= 0:
+            kept = '\n' + old[at + 1:].rstrip('\n') + '\n'
+    with open(path, 'w') as f:
         f.write('# Flight sim sound credits\n\nAll recordings are CC0 (public domain). Picked with the sound-layer kit\n'
                 '(https://github.com/Bodila51/opus-sound-layer); cut, looped and level-matched by\n'
                 '`scripts/build-flight-sounds.py`. The suit\'s own sounds (thrusters, servos, repulsor, weapon\n'
-                'deploy) come from the project library in `public/sounds/`.\n\n' + '\n'.join(credits) + '\n')
+                'deploy) come from the project library in `public/sounds/`.\n\n' + '\n'.join(credits) + '\n' + kept)
     print(len(credits), 'files')
 
 

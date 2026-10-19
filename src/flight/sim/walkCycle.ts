@@ -47,6 +47,8 @@ const REACH = 0.975;
 /** Toe → ankle (bind): the heel rises about the toe on push-off. */
 const TOE_TO_ANKLE = new THREE.Vector3(0, ANKLE.y - 0.02, ANKLE.z - TOE.z);
 
+/** Most a boot steps up or down from the ground under the body (m). */
+const FOOT_STEP = 0.85;
 /** Walking speeds (m/s). */
 export const WALK_SPEED = 1.5;
 export const RUN_SPEED = 3.8;
@@ -90,6 +92,7 @@ export interface GroundSurface {
 const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _c = new THREE.Vector3();
+const _d = new THREE.Vector3();
 const _X = new THREE.Vector3(1, 0, 0);
 const _Y = new THREE.Vector3(0, 1, 0);
 const _Z = new THREE.Vector3(0, 0, 1);
@@ -104,6 +107,28 @@ function rotY(v: THREE.Vector3, heading: number, out: THREE.Vector3): THREE.Vect
   const c = Math.cos(heading);
   const s = Math.sin(heading);
   return out.set(v.x * c + v.z * s, v.y, -v.x * s + v.z * c);
+}
+
+/**
+ * Keep a boot target off wall tops and out of drops: if the ground there is
+ * more than a step from the ground under the body, pull it back toward its
+ * rest spot, then (hugging a wall, the rest spot can be on it) in under the
+ * body itself, which is always good footing.
+ */
+function footing(to: THREE.Vector3, pos: THREE.Vector3, heading: number, side: number, ground: GroundSurface): void {
+  const base = ground.surface(pos.x, pos.z);
+  if (Math.abs(to.y - base) <= FOOT_STEP) return;
+  const rest = rotY(restOffset(side, 0, _a), heading, _b).add(_c.set(pos.x, 0, pos.z));
+  const from = _a.copy(to);
+  for (const goal of [rest, _c.set(pos.x, 0, pos.z).addScaledVector(rotY(_d.set(side, 0, 0), heading, _d), 0.04)]) {
+    for (let k = 1; k <= 8; k++) {
+      to.lerpVectors(from, goal, k / 8);
+      to.y = ground.surface(to.x, to.z);
+      if (Math.abs(to.y - base) <= FOOT_STEP) return;
+    }
+    from.copy(goal);
+  }
+  to.y = base;
 }
 
 // ── Leg kinematics (the same composition rigPose.applyPose uses) ──────
@@ -228,6 +253,7 @@ export class Gait {
     for (const f of this.feet) {
       rotY(restOffset(f.side, 0, _a), heading, f.pos).add(_b.set(pos.x, 0, pos.z));
       f.pos.y = ground.surface(f.pos.x, f.pos.z);
+      footing(f.pos, pos, heading, f.side, ground);
       f.yaw = heading;
       f.swinging = false;
       f.heel = 0;
@@ -311,6 +337,10 @@ export class Gait {
         rotY(restOffset(f.side, 0, _a), yawTo, f.to).add(_b.set(pos.x, 0, pos.z));
         f.to.addScaledVector(_c.set(vel.x, 0, vel.z), remain + (moving ? stance * 0.5 : 0));
         f.to.y = ground.surface(f.to.x, f.to.z);
+        // Never onto a wall top or out over a drop the body isn't on: pull
+        // the boot back toward its rest spot until the ground there is
+        // within a step of the ground under the body
+        footing(f.to, pos, heading, f.side, ground);
         f.toYaw = yawTo;
         if (!inWindow || f.t >= 1) {
           // Boot down

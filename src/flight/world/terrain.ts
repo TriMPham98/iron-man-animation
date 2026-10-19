@@ -70,7 +70,15 @@ uniform vec3 uEye;
 uniform float uRange0;
 varying vec3 vTerrainPos;
 varying float vMorph;
+varying vec3 vMacro;
 ${TERRAIN_SAMPLE_GLSL}
+// The broad cover tones (scales of 430 m and up) per vertex rather than per
+// pixel, prefiltered to the patch's vertex pitch: three texture reads off
+// every terrain pixel
+float macroTone(vec2 xz, float scale, float spacing) {
+  float lod = max(0.0, log2(spacing * 256.0 / scale));
+  return textureLod(uDetail, xz / scale, lod).r * 0.5 + 0.5;
+}
 `;
 
 const VERT_BODY = /* glsl */ `
@@ -85,14 +93,17 @@ const VERT_BODY = /* glsl */ `
   vec2 odd = fract(grid * 0.5) * 2.0;
   world -= odd * morph * spacing;
   vMorph = morph;
-  float h = terrainHeight(world);
+  // Most vertices don't morph: skip the second height lookup for them
+  float h = morph > 0.0 ? terrainHeight(world) : h0;
   vTerrainPos = vec3(world.x, h, world.y);
+  vMacro = vec3(macroTone(world, 2900.0, spacing), macroTone(world + 517.0, 1130.0, spacing), macroTone(world - 211.0, 430.0, spacing));
   vec3 transformed = vTerrainPos;
 `;
 
 const FRAG_PARS = /* glsl */ `
 varying vec3 vTerrainPos;
 varying float vMorph;
+varying vec3 vMacro;
 uniform float uTexel;
 uniform float uTime;
 ${TERRAIN_SAMPLE_GLSL}
@@ -109,35 +120,63 @@ const ALBEDO = /* glsl */ `
   float hgt = vTerrainPos.y;
   float slopeDetail;
   vec3 wN = terrainNormal(xz, hgt, slopeDetail);
-  // Small-scale surface relief (texture, not geometry): rock grain, scrub clumps
   float viewD = length(vTerrainPos - cameraPosition);
+  // Close-up detail (grain, micro relief, triplanar cliffs) fades out with
+  // distance and is skipped outright beyond it: far pixels stay cheap
   float near = 1.0 - smoothstep(150.0, 900.0, viewD);
+  float micro = 1.0 - smoothstep(30.0, 260.0, viewD);
   vec4 bake = texture2D(uBake, xz / uWorld + 0.5);
   tSunVis = bake.r;
   tAo = mix(0.55, 1.0, bake.g);
 
   float slope = 1.0 - wN.y;
-  float m1 = tone(xz, 2900.0);
-  float m2 = tone(xz + 517.0, 1130.0);
-  float m3 = tone(xz - 211.0, 430.0);
+  float m1 = vMacro.x;
+  float m2 = vMacro.y;
+  float m3 = vMacro.z;
   float mid = tone(xz, 160.0);
-  float fine = mix(0.6, tone(xz, 23.0), near);
-  float grain = mix(0.6, tone(xz, 6.1), near);
+  float fine = 0.6;
+  float grain = 0.6;
+  if (near > 0.0) {
+    fine = mix(0.6, tone(xz, 23.0), near);
+    grain = mix(0.6, tone(xz, 6.1), near);
+  }
+  // Rock faces: the detail projected side-on as well (triplanar), so cliffs
+  // carry grain and strata instead of streaks smeared down the slope
+  float steep = smoothstep(0.3, 0.6, slope);
+  vec3 tw = vec3(0.0, 1.0, 0.0);
+  if (near > 0.0 && steep > 0.0) {
+    tw = pow(abs(wN), vec3(4.0));
+    tw /= tw.x + tw.y + tw.z;
+    float gx = tone(vTerrainPos.zy, 6.1);
+    float gz = tone(vTerrainPos.xy, 6.1);
+    grain = mix(grain, mix(0.6, tw.x * gx + tw.z * gz + tw.y * grain, near), steep);
+  }
 
   // Cover: golden grass on the open slopes, olive chaparral in broad
-  // patches, dark oak woodland down the folds where the hills shelter it
+  // patches, grey-green sage on the dry sun-facing (seaward) slopes, dark
+  // oak woodland down the folds where the hills shelter it
   float scrubK = smoothstep(0.5, 0.66, m2 * 0.5 + m3 * 0.35 + mid * 0.15 + slope * 0.35);
   float oakK = smoothstep(0.82, 0.52, bake.g) * smoothstep(0.38, 0.16, slope) * (0.45 + 0.55 * m3);
+  float dry = smoothstep(0.05, 0.6, wN.z * 3.0 + (mid - 0.5)) * (1.0 - oakK);
   vec3 grass = mix(vec3(0.4, 0.29, 0.13), vec3(0.56, 0.43, 0.21), m1 * 0.45 + m3 * 0.55) * (0.92 + 0.16 * fine);
+  // Burnt-out patches and paler dry grass break the gold up
+  grass = mix(grass, vec3(0.6, 0.5, 0.33), smoothstep(0.55, 0.75, mid + (fine - 0.5) * 0.4) * 0.5);
+  grass = mix(grass, grass * vec3(0.78, 0.74, 0.66), smoothstep(0.62, 0.8, m2 + (grain - 0.5) * 0.3) * 0.6);
   vec3 scrub = mix(vec3(0.085, 0.095, 0.05), vec3(0.17, 0.155, 0.085), m1) * (0.82 + 0.36 * fine);
+  vec3 sage = mix(vec3(0.17, 0.18, 0.13), vec3(0.24, 0.24, 0.18), m3) * (0.85 + 0.3 * fine);
+  scrub = mix(scrub, sage, dry * 0.7);
   vec3 oak = vec3(0.05, 0.07, 0.035) * (0.8 + 0.4 * fine);
   vec3 veg = mix(grass, scrub, scrubK);
   veg = mix(veg, oak, oakK * 0.85);
+  // Brush stipple close up: the cover is clumps, not paint
+  veg *= mix(1.0, 0.75 + 0.5 * grain, near * (0.4 + 0.6 * scrubK));
 
   // Rock: grey-brown with strata in the cliffs, lighter sandstone on the coast
   float strata = 0.5 + 0.5 * sin(hgt * 0.42 + mid * 9.0 + m1 * 14.0);
   vec3 rock = mix(vec3(0.17, 0.15, 0.13), vec3(0.33, 0.28, 0.23), strata * 0.65 + grain * 0.35);
   rock = mix(rock, vec3(0.44, 0.36, 0.27), smoothstep(110.0, 20.0, hgt) * 0.75);
+  // Dark streaks of seepage and lichen down the faces
+  if (steep > 0.0) rock *= 1.0 - 0.25 * smoothstep(0.55, 0.8, tone(vec2(xz.x * 3.0 + xz.y, hgt * 0.15), 90.0)) * steep;
   // Higher up the range the cover thins to rock and dust
   veg = mix(veg, mix(rock, grass, 0.45), smoothstep(700.0, 1250.0, hgt + mid * 160.0));
 
@@ -153,6 +192,22 @@ const ALBEDO = /* glsl */ `
   col = mix(col, sand * 0.48, tWet);
   // Sea floor: sand and weed, dimmed (the water shades it from above)
   col = mix(col, mix(vec3(0.32, 0.28, 0.2), vec3(0.08, 0.1, 0.06), mid), smoothstep(0.0, -3.0, hgt));
+
+  // Micro relief (normal detail, not geometry) near the eye: rough rock,
+  // lumpy brush, smoother sand. Triplanar on the faces
+  if (micro > 0.0) {
+    float amp = mix(mix(0.5, 0.22, beach), 1.1, rockK) * micro;
+    vec2 gA = texture2D(uDetailGrad, xz / (uDetailSpan * 0.032)).rg / 0.032;
+    vec2 gB = texture2D(uDetailGrad, xz / (uDetailSpan * 0.011) + 0.37).rg / 0.011;
+    vec2 gT = (gA * 0.05 + gB * 0.012) * amp;
+    vec3 p = vec3(gT.x, 0.0, gT.y) * tw.y;
+    if (steep > 0.0) {
+      vec2 sx = texture2D(uDetailGrad, vTerrainPos.zy / (uDetailSpan * 0.032)).rg / 0.032 * 0.05 * amp;
+      vec2 sz = texture2D(uDetailGrad, vTerrainPos.xy / (uDetailSpan * 0.032)).rg / 0.032 * 0.05 * amp;
+      p += vec3(0.0, sx.y, sx.x) * tw.x + vec3(sz.x, sz.y, 0.0) * tw.z;
+    }
+    wN = normalize(wN - p);
+  }
 
   diffuseColor.rgb = col;
 `;

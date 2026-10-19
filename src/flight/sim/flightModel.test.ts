@@ -101,7 +101,13 @@ describe('FlightModel', () => {
     const wall: GroundProbe = { ...flat(), surface: (_x, z) => (z > 3 ? 3 : z > 1.5 ? 0.4 : 0) };
     const m = new FlightModel(wall);
     m.placeOnGround(0, 0, 0);
-    run(m, 6, (i) => (i.throttle = 1));
+    let highestBoot = 0;
+    run(m, 6, (i) => {
+      i.throttle = 1;
+      i.boost = true; // jogging into it: long strides reach past the wall face
+      for (const f of m.gait.feet) highestBoot = Math.max(highestBoot, f.pos.y);
+    });
+    expect(highestBoot).toBeLessThan(0.5); // never a boot on the wall top
     expect(m.grounded).toBe(true);
     expect(m.pos.z).toBeGreaterThan(1.6);
     expect(m.pos.z).toBeLessThan(3);

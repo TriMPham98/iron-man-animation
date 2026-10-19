@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MINI_ROCKETS } from '../../animation/flightCheck';
+import { MINI_ROCKETS, ROCKETS_PER_POD } from '../../animation/flightCheck';
 import { flareDrum } from '../../suit/flightFlaps';
 import type { Suit } from '../../suit/Suit';
 import type { Particles } from '../fx/particles';
@@ -59,8 +59,8 @@ const REPULSOR_INTERVAL = 0.17;
 const MISSILE_CONE = Math.cos(THREE.MathUtils.degToRad(19));
 const MISSILE_RANGE = 3200;
 const LOCK_TIME = 0.24;
-/** Rockets per pod (one per tube) and the most targets one paint takes. */
-export const POD_ROUNDS = MINI_ROCKETS;
+/** Rockets per pod (one per tube; {@link MINI_ROCKETS} in all) and the most targets one paint takes. */
+export const POD_ROUNDS = ROCKETS_PER_POD;
 const SALVO_MAX = MINI_ROCKETS;
 const SALVO_INTERVAL = 0.1;
 /** Rocket kick off the rail along its tube (m/s), and how long it coasts unguided. */
@@ -154,7 +154,6 @@ export class PlayerWeapons {
   private lockT = 0;
   private salvo: Array<Hostile | null> = [];
   private salvoT = 0;
-  private salvoSide = 0;
   private siloOpen = 0;
   private siloHold = 0;
   private siloArming = 0;
@@ -317,8 +316,8 @@ export class PlayerWeapons {
     if (siloGoal === 0 && this.siloOpen > 0.99) this.events.emit('siloClose');
     this.siloOpen += THREE.MathUtils.clamp(siloGoal - this.siloOpen, -dt / 0.4, dt / 0.35);
     A.silos = this.siloOpen;
-    // Cells arm one after another once the pods are up
-    this.siloArming = A.silos > 0.98 ? Math.min(POD_ROUNDS, this.siloArming + dt * 16) : 0;
+    // Cells arm one after another (alternating pods) once the pods are up
+    this.siloArming = A.silos > 0.98 ? Math.min(MINI_ROCKETS, this.siloArming + dt * 16) : 0;
     A.siloArmed = this.siloArming;
     if (this.rockets < this.rocketCapacity && this.siloOpen < 0.05) {
       this.reloadT += dt;
@@ -605,9 +604,9 @@ export class PlayerWeapons {
   }
 
   private fireRocket(target: Hostile | null): void {
-    // Alternate pods, each firing its last-armed cell first
-    let side = (this.salvoSide++ % 2) as 0 | 1;
-    if (this.pods[side] <= 0) side = side === 0 ? 1 : 0;
+    // Reverse of the arming order: alternating pods (the fuller one first,
+    // the right on a tie), each firing its last-armed cell
+    const side: 0 | 1 = this.pods[0] > this.pods[1] ? 0 : 1;
     if (this.pods[side] <= 0) return;
     const cell = this.pods[side] - 1;
     this.pods[side]--;
@@ -631,7 +630,7 @@ export class PlayerWeapons {
       caliber,
       length: caliber * 14,
     });
-    this.explosions.muzzle(from, dir, 0.2);
+    this.explosions.muzzle(from, dir, 0.1);
     this.events.emit('missileLaunch', { at: from, side: SIDES[side] });
   }
 
@@ -709,7 +708,7 @@ export class PlayerWeapons {
           if (Math.random() < 0.5) P.emit('mist', end, new THREE.Vector3(0, 4, 0), { scale: 1.2 });
         } else {
           this.field.normalAt(end.x, end.z, this._n);
-          this.beam.scorchAt(end, this._n, 4.5);
+          this.beam.scorchAt(end, this._n, 6);
           if (Math.random() < 0.35) P.emit('smoke', end, new THREE.Vector3(0, 3, 0), { scale: 0.7 });
           if (Math.random() < 0.3) P.emit('fire', end, new THREE.Vector3(0, 2, 0), { scale: 0.5 });
           if (Math.random() < 0.3) P.burst('dust', end, 2, 5, this._n, 0.8, { scale: 0.8 });

@@ -230,7 +230,7 @@ const LAND_RISE = 1.3;
 const LAND_UP = 2.15;
 /** Forward lean of the whole body (rad) and the torso channels in the three-point. */
 const LAND_LEAN = 0.4;
-const LAND_TORSO = { twist: -0.2, bend: 0.7, side: 0.22 };
+const LAND_TORSO = { twist: -0.2, bend: 0.8, side: 0.4 };
 /** Bind-space contact points: kneecap (right knee goes down), sole heel / toe, fist. */
 const KNEE_R: Array<[BoneName, [number, number, number]]> = [
   ['shin.R', [-0.14, 0.5, 0.075]],
@@ -628,8 +628,6 @@ export class SuitDriver {
       const c = lt < 0 ? 0 : lt < LAND_IN + 0.04 ? smooth01((lt - LAND_IN + 0.06) / 0.1) : Math.exp(-(lt - LAND_IN - 0.04) / 0.12) * Math.cos((lt - LAND_IN - 0.04) * 13);
       const comp = this.landImpact * c;
       for (const k of LIMB_KEYS) limbs[k] = lerp(limbs[k], L.limbs[k], w);
-      limbs.elbowR += 0.4 * comp * w;
-      limbs.armFlexR -= 0.12 * comp * w;
       wristL = lerp(wristL, L.wristL, w);
       wristR = lerp(wristR, L.wristR, w);
       fingersL = fingersL.map((f, i) => lerp(f, L.fingersL[i], w));
@@ -642,7 +640,7 @@ export class SuitDriver {
       roll = lerp(roll, levelRoll, w);
       yaw = lerp(yaw, 0, w);
       spineYaw = lerp(spineYaw, LAND_TORSO.twist, w);
-      spineBend = lerp(spineBend, this.landBend + 0.22 * comp, w);
+      spineBend = lerp(spineBend, this.landBend + 0.12 * comp, w);
       spineSide = lerp(spineSide, LAND_TORSO.side, w);
       // Head down through the impact, then it comes up to look ahead
       const look = smooth01((lt - LAND_LOOK_UP) / 0.35);
@@ -825,21 +823,21 @@ export class SuitDriver {
       armFlexL: 0.95,
       armFlexR: 0.4,
       armTwistL: 0.5,
-      armTwistR: 0.15,
+      armTwistR: 0.6,
       elbowL: 0.3,
-      elbowR: 0.18,
+      elbowR: 0.02,
       // Forward lean swings the legs back: the hip flexion carries it.
       // Left: lunged out to the side and forward, knee well bent (its hip
       // bend is solved to plant the boot). Right: the thigh back and
       // out, the knee on the ground, the shin trailing
       hipL: 1.9 + LAND_LEAN,
-      hipR: -0.7 + LAND_LEAN,
+      hipR: -1.0 + LAND_LEAN,
       hipOutL: 0.5,
       hipOutR: 0.3,
       kneeL: 1.55,
-      kneeR: 1.65,
+      kneeR: 1.0,
       ankleL: 0,
-      ankleR: 0.9,
+      ankleR: 0.5,
       footRollL: -0.35,
       footRollR: 0.15,
     };
@@ -918,13 +916,17 @@ export class SuitDriver {
     limbs.ankleL = -LAND_LEAN;
     solve((x) => (limbs.kneeL = x), 1.0, 2.6, 2.1, () => at(SOLE('L')).y - kneeY());
     // Toes of the kneeling leg tucked onto the ground
-    solve((x) => (limbs.ankleR = x), -0.6, 1.8, 0.9, () => at(TOE_R).y - kneeY());
+    solve((x) => (limbs.kneeR = x), 0.4, 1.8, 1.0, () => at(TOE_R).y - kneeY());
     // Fist down: the arm swings onto the ground; if it can't reach, the
     // torso folds further over it
-    for (let i = 0; i < 6; i++) {
-      const miss = solve((x) => (limbs.armFlexR = x), -1.4, 1.2, 0.2, () => at(FIST_R).y - KNUCKLE_PAD - kneeY());
-      if (miss < 0.005) break;
-      L.bend += 0.08;
+    fist: for (let i = 0; i < 10; i++) {
+      // The shoulder may bring the arm in under the chest or out a little
+      for (const abd of [0.05, -0.15, -0.35, 0.25]) {
+        limbs.armR = abd;
+        const miss = solve((x) => (limbs.armFlexR = x), -2.2, 1.2, 0.2, () => at(FIST_R).y - KNUCKLE_PAD - kneeY());
+        if (miss < 0.004) break fist;
+      }
+      L.bend += 0.06;
     }
     this.landBend = L.bend;
     return L;

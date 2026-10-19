@@ -22,7 +22,7 @@ import { CASCADES, N } from './spectrum';
 const SHORE_GLSL = /* glsl */ `
 // Wave amplitude over the shelf (depth below sea level, m): the swell lies
 // down toward the beach instead of climbing the sand
-float shoreAmp(float depth) { return mix(0.12, 1.0, smoothstep(0.0, 18.0, depth)); }
+float shoreAmp(float depth) { return mix(0.25, 1.0, smoothstep(0.0, 12.0, depth)); }
 `;
 
 export const SURFACE_VERT = /* glsl */ `
@@ -248,9 +248,9 @@ void main() {
   // Surf: swell crests spill over the outer shelf, and lines of wash surge
   // up the last metre of the beach
   float seaD = max(-ground, 0.0);
-  float breaker = smoothstep(1.6, 2.6, seaD) * (1.0 - smoothstep(4.0, 6.5, seaD)) * smoothstep(0.45, 1.0, vHeight);
+  float breaker = smoothstep(1.2, 2.2, seaD) * (1.0 - smoothstep(4.0, 6.5, seaD)) * smoothstep(0.25, 0.8, vHeight);
   float surge = 0.5 + 0.5 * sin(uTime * 0.8 - seaD * 2.2 + pat * 1.5);
-  float wash = (1.0 - smoothstep(0.1, 1.3, seaD)) * smoothstep(0.5, 0.95, surge * 0.65 + pat * 0.45);
+  float wash = (1.0 - smoothstep(0.2, 2.2, seaD)) * smoothstep(0.38, 0.85, surge * 0.65 + pat * 0.45);
   float surf = clamp(max(breaker * (0.5 + 0.7 * pat), wash) * step(0.02, seaD), 0.0, 1.0);
   cover = max(cover, surf);
   freshK = max(freshK, surf);

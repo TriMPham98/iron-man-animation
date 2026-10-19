@@ -578,9 +578,9 @@ export class Hud {
     // Pods L | R: one pip per tube
     row('MICRO-MISSILES', `${W.rockets}/${W.rocketCapacity}`, W.rockets ? CYAN : AMBER, (bx, by) => {
       for (let p = 0; p < 2; p++) {
-        for (let i = 0; i < MINI_ROCKETS; i++) {
+        for (let i = 0; i < MINI_ROCKETS / 2; i++) {
           g.fillStyle = i < W.pods[p] ? CYAN : CYAN_FAINT;
-          g.fillRect(bx + p * 78 * s + i * 9 * s, by, 6 * s, 3 * s);
+          g.fillRect(bx + p * 78 * s + i * 16 * s, by, 12 * s, 3 * s);
         }
       }
     });

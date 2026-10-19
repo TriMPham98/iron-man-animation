@@ -44,9 +44,9 @@ export interface PlayOptions {
 
 /**
  * A moving source heard from where the camera stands: whatever is fed into
- * {@link input} reaches the ear through the air — a delay line held at the
- * light-to-ear lag (so a fast source's pitch bends exactly as the path
- * shortens and stretches: real Doppler, not a guessed rate), air
+ * {@link input} reaches the ear through the air — a delay line held at (a share
+ * of) the sound's flight time, so a fast source's pitch bends as the path
+ * shortens and stretches — Doppler from the geometry, not a guessed rate, air
  * absorption over the distance, and an HRTF panner placed where the sound
  * was *emitted*, not where the source is now.
  */
@@ -68,6 +68,8 @@ export interface Loop {
 const MAX_VOICES = 8;
 /** Longest flight time an emitter path holds (s, ~2 km). */
 const MAX_LAG = 6;
+/** Share of the true flight time an emitter path delays by (see {@link GameAudio.emitter}). */
+const LAG_SHARE = 0.6;
 
 export class GameAudio {
   ctx: AudioContext | null = null;
@@ -376,13 +378,13 @@ export class GameAudio {
         const t = c.currentTime;
         const dt = lastNow < 0 ? 0 : Math.max(0, now - lastNow);
         lastNow = now;
-        // Retarded time: the sound reaching the ear now left the source
-        // `lag` seconds ago, from where it was then (a few fixed-point steps)
-        let goal = lag;
-        for (let i = 0; i < 4; i++) {
-          src.at(now - goal, emitted);
-          goal = Math.min(MAX_LAG, emitted.distanceTo(ear) / SPEED_OF_SOUND);
-        }
+        // Flight time, scaled the way film sound does it: the true retarded
+        // time of a suit closing at Mach 0.6 is seconds (you'd hear it go by
+        // a second after you saw it, at 2.8x pitch going in). A share of the
+        // distance keeps the lag and the Doppler bend (here ±~40 %) without
+        // the roar of the pass arriving after the picture of it
+        src.at(now, emitted);
+        const goal = Math.min(MAX_LAG, (LAG_SHARE * emitted.distanceTo(ear)) / SPEED_OF_SOUND);
         const audible = m * gate > 1e-3;
         // A cut (or the path coming back from silence) re-lays the line in
         // one go under a 40 ms duck; otherwise it may only slide at a rate
@@ -391,6 +393,8 @@ export class GameAudio {
         // the line falls behind instead and catches up once it's gone by)
         const moved = lastEar.distanceToSquared(ear) > 20 * 20;
         lastEar.copy(ear);
+        // The sound heard now left the suit `lag` ago: pan from there
+        src.at(now - lag, emitted);
         const cut = moved || silent || dt === 0 || Math.abs(goal - lag) > 1.5;
         if (cut) {
           lag = goal;

@@ -17,10 +17,11 @@ export const DEFAULT_CAMERA: CameraMode = 'shoulder';
 const UP = new THREE.Vector3(0, 1, 0);
 /** Kinds of cinematic set-up the flyby camera cuts between. */
 type Shot = 'side' | 'low' | 'high' | 'close' | 'orbit';
-/** How tall the suit reads in a shot (m, flying it's about its own length). */
+/** The suit's length and breadth (m): side-on it reads its length, nose-on its shoulders. */
 const SUIT_SIZE = 1.9;
+const SUIT_BREADTH = 0.8;
 /** The longest lens the operator has (vertical FOV, deg), and the widest. */
-const FOV_TELE = 4.5;
+const FOV_TELE = 3;
 const FOV_WIDE = 58;
 const IDENTITY = new THREE.Quaternion();
 /** Most the chase camera trails its ideal spot round the suit (rad). */
@@ -262,7 +263,7 @@ export class CameraRig {
       const closing = this._v.dot(m.vel) < 0;
       const hover = speed < 12;
       if (this.passedAt < 0 && !closing && !hover && this.shotAge > 0.15) this.passedAt = this.shotAge;
-      const frac = SUIT_SIZE / (2 * dist * Math.tan(THREE.MathUtils.degToRad(this.fov) / 2));
+      const frac = this.apparentSize(m) / (2 * dist * Math.tan(THREE.MathUtils.degToRad(this.fov) / 2));
       const since = this.passedAt < 0 ? 0 : this.shotAge - this.passedAt;
       // Let it go: hold while it tears away and shrinks, cut once it's a speck
       const gone = this.passedAt >= 0 && (since > this.holdAfter || (since > 1.2 && frac < 0.02));
@@ -292,18 +293,19 @@ export class CameraRig {
       }
     }
     // Zoom: the lens that keeps the suit at `frac` of the frame. Judged a
-    // beat ahead (the nearer of now and 0.2 s on), so on a fast close pass
+    // beat ahead (the nearer of now and 0.35 s on), so on a fast close pass
     // the lens is already opening as it arrives; eased in log space (a
     // focal length change feels even that way), slower once it's gone by —
     // the operator lets it shrink away rather than chasing it to a dot
-    const d = Math.max(1, Math.min(m.pos.distanceTo(this.pos), this._s.copy(m.pos).addScaledVector(m.vel, 0.2).distanceTo(this.pos)));
+    const d = Math.max(1, Math.min(m.pos.distanceTo(this.pos), this._s.copy(m.pos).addScaledVector(m.vel, 0.35).distanceTo(this.pos)));
+    const size = this.apparentSize(m);
     const passed = this.passedAt >= 0;
-    const want = passed ? this.frac * 0.5 : this.frac;
+    const want = passed ? this.frac * 0.7 : this.frac;
     const tele = this.planted ? 12 : FOV_TELE;
-    const goal = THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(2 * Math.atan(SUIT_SIZE / (2 * d * want))), tele, FOV_WIDE);
+    const goal = THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(2 * Math.atan(size / (2 * d * want))), tele, FOV_WIDE);
     if (snap) this.fov = goal;
     else {
-      const tau = passed ? 0.8 : goal > this.fov ? 0.1 : 0.25;
+      const tau = passed ? 0.45 : goal > this.fov ? 0.16 : 0.25;
       this.fov = Math.exp(Math.log(this.fov) + (Math.log(goal) - Math.log(this.fov)) * (1 - Math.exp(-dt / tau)));
     }
     this.cut = false;
@@ -313,7 +315,14 @@ export class CameraRig {
     info.passed = this.passedAt;
     info.dist = m.pos.distanceTo(this.pos);
     info.fov = this.fov;
-    info.frac = SUIT_SIZE / (2 * info.dist * Math.tan(THREE.MathUtils.degToRad(this.fov) / 2));
+    info.frac = size / (2 * info.dist * Math.tan(THREE.MathUtils.degToRad(this.fov) / 2));
+  }
+
+  /** How big the flying suit reads from the camera (m): its length side-on, its shoulders nose- or tail-on. */
+  private apparentSize(m: FlightModel): number {
+    if (m.speed < 12) return SUIT_SIZE;
+    const c = Math.abs(this._s.copy(m.pos).sub(this.pos).normalize().dot(this._v.copy(m.vel).normalize()));
+    return Math.max(SUIT_BREADTH, SUIT_SIZE * Math.sqrt(1 - c * c) + SUIT_BREADTH * c);
   }
 
   /** Pick and place the next set-up ahead of the suit: a cut. */
@@ -326,7 +335,7 @@ export class CameraRig {
     side.normalize();
     // Where the suit will be when the shot pays off: far enough out for an
     // approach on the long lens, not so far it's a speck
-    const lead = THREE.MathUtils.clamp(260 / Math.max(speed, 20), 1.6, 4.5);
+    const lead = THREE.MathUtils.clamp(240 / Math.max(speed, 20), 1.5, 4.5);
     const p = this._w2.copy(m.pos).addScaledVector(m.vel, hover ? 0 : lead);
     const floorAt = (x: number, z: number) => Math.max(ground.surface(x, z), 0);
     const agl = p.y - floorAt(p.x, p.z);

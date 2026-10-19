@@ -12,8 +12,8 @@
  * narrow long-crested swell, split over cascades of nested patch sizes.
  */
 
-export const N = 256;
-export const LOG_N = 8;
+export const N = 128;
+export const LOG_N = 7;
 /** Patch sizes (m), coarse to fine. */
 export const CASCADE_L = [1103.0, 211.3, 39.7, 7.43] as const;
 export const CASCADES = CASCADE_L.length;

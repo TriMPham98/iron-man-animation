@@ -72,12 +72,12 @@ void main() {
   float sheath = exp(-pow(x / sw, 2.0) * 2.2);
   float edge = smoothstep(sw * 1.1, sw * 0.5, x) * smoothstep(sw * 0.25, sw * 0.8, x);
   float haze = exp(-x * x * 3.0) * (0.35 + 0.65 * shimmer) * 0.22;
-  vec3 col = vec3(1.0) * core * 6.0
-           + vec3(0.35, 0.85, 1.0) * sheath * (1.6 + 0.9 * mix(0.5, ripple, near))
+  vec3 col = vec3(1.0) * core * 4.0
+           + vec3(0.3, 0.8, 1.0) * sheath * (1.0 + 0.7 * mix(0.5, ripple, near))
            + vec3(0.6, 0.95, 1.0) * edge * 0.9 * mix(0.4, ripple, near)
            + vec3(0.3, 0.6, 1.0) * haze;
   // Hottest at the reactor, settling down the beam
-  col *= 1.0 + 0.8 * exp(-vLen / 4.0);
+  col *= 1.0 + 0.5 * exp(-vLen / 4.0);
   gl_FragColor = vec4(col * uPower, 1.0);
 }
 `;
@@ -287,8 +287,8 @@ export class UnibeamFx {
       this.glare.scale.setScalar((0.12 + 0.3 * glow * pulse + 0.25 * power) * seen);
       this.glare.material.color.setRGB(4, 4, 4).multiplyScalar(glow * flick);
       this.halo.position.copy(from);
-      this.halo.scale.setScalar((0.5 + 1.1 * glow + 1.4 * power) * pulse * seen);
-      this.halo.material.color.setRGB(0.6, 1.5, 2.4).multiplyScalar(glow * (0.6 + 0.4 * flick));
+      this.halo.scale.setScalar((0.3 + 0.6 * glow + 0.6 * power) * pulse * seen);
+      this.halo.material.color.setRGB(0.45, 1.1, 1.8).multiplyScalar(glow * (0.6 + 0.4 * flick));
       this.streak.position.copy(from);
       this.streak.scale.set(5 * power * seen, 0.16 * power * seen, 1);
       this.streak.material.color.setRGB(1, 2, 3).multiplyScalar(power * flick);
@@ -302,7 +302,7 @@ export class UnibeamFx {
       (u.uB.value as THREE.Vector3).copy(to);
       const len = from.distanceTo(to);
       // A little wider down range so it still reads as a bar of light far off
-      (u.uWidth.value as THREE.Vector2).set(0.55 * power, (0.55 + len * 0.0012) * power);
+      (u.uWidth.value as THREE.Vector2).set(0.4 * power, (0.4 + len * 0.0012) * power);
       u.uTime.value = T;
       u.uPower.value = power * flick;
     }

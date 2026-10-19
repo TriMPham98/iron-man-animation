@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateFlightCheck, FLIGHT_CHECK_END, FLIGHT_CHECK_STEPS, FLIGHT_EVENTS, HOVER_HEIGHT, MINI_ROCKETS } from './flightCheck';
+import { evaluateFlightCheck, FLIGHT_CHECK_END, FLIGHT_CHECK_STEPS, FLIGHT_EVENTS, HOVER_HEIGHT, MINI_ROCKETS, ROCKETS_PER_POD } from './flightCheck';
 
 describe('flight-control check', () => {
   it('is idle before it starts and after it ends', () => {
@@ -96,7 +96,9 @@ describe('flight-control check', () => {
   });
 
   it('arms every mini-rocket cell while the silos are up', () => {
+    // Eight in all, four per trapezius pod
     expect(MINI_ROCKETS).toBe(8);
+    expect(ROCKETS_PER_POD * 2).toBe(MINI_ROCKETS);
     let max = 0;
     for (let t = 0; t < FLIGHT_CHECK_END; t += 1 / 60) max = Math.max(max, evaluateFlightCheck(t).siloArmed);
     expect(max).toBe(MINI_ROCKETS);
