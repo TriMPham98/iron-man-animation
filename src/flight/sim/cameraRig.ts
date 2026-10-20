@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { FlightModel } from './flightModel';
+import { GRAVITY } from '../world/config';
 
 /**
  * The pilot's eye. The mouse moves an aim frame freely (through loops and
@@ -44,6 +45,9 @@ export class CameraRig {
   /** Camera bank into the suit's yaw (rad), and its rate. */
   private bank = 0;
   private bankVel = 0;
+  /** Chase distance the operator gives up to the suit's surge (m), and its rate. */
+  private surgeLag = 0;
+  private surgeLagVel = 0;
   /** Cinematic look target (smoothed suit position) and its velocity. */
   private readonly look = new THREE.Vector3();
   private readonly lookVel = new THREE.Vector3();
@@ -165,7 +169,14 @@ export class CameraRig {
     } else {
       const close = this.mode === 'shoulder';
       const pull = Math.min(1, speed / 300);
-      const dist = (close ? 3.2 : 7 + 4 * pull) * this.zoom;
+      // The operator rides the surge a beat behind: a boost's kick pulls
+      // the suit away down the lens, a hard bleed closes on it, and it
+      // drifts back to station with a hair of overshoot
+      const surgeG = THREE.MathUtils.clamp(m.surge / GRAVITY, -6, 7);
+      const sw = 3.2;
+      this.surgeLagVel += (sw * sw * (surgeG * 0.28 - this.surgeLag) - 2 * 0.7 * sw * this.surgeLagVel) * Math.min(dt, 0.05);
+      this.surgeLag += this.surgeLagVel * Math.min(dt, 0.05);
+      const dist = (close ? 3.2 : 7 + 4 * pull) * this.zoom + this.surgeLag * (close ? 0.35 : 1);
       const height = close ? 0.75 : 2.1 + 1.2 * pull;
       const side = close ? 0.85 : 0;
       const right = this._v.set(1, 0, 0).applyQuaternion(this.aimQ);
@@ -198,7 +209,8 @@ export class CameraRig {
         this.offset.applyQuaternion(this._q.slerp(IDENTITY, MAX_SWING / lag));
       }
       this.pos.copy(m.pos).add(this.offset);
-      fovGoal = 62 + 14 * pull + (m.boosting ? 6 : 0);
+      // (and the lens punches wide on the kick, a touch tight on a bleed)
+      fovGoal = 62 + 14 * pull + (m.boosting ? 3 : 0) + surgeG * (surgeG > 0 ? 1.1 : 0.4);
     }
 
     // Never under the ground or the sea

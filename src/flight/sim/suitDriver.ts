@@ -4,6 +4,7 @@ import { applyPose, createRig, type FlightPose, type LimbOffsets, type SuitRig }
 import { boneSpec, type BoneName } from '../../suit/rig';
 import type { Suit } from '../../suit/Suit';
 import { FLIGHT_POSTURE, type FlightModel } from './flightModel';
+import { GRAVITY } from '../world/config';
 
 /**
  * Turns the flight state into the suit's body language, one frame at a
@@ -319,6 +320,8 @@ export class SuitDriver {
   private readonly brakeK = new THREE.Vector2();
   private readonly swingK = new THREE.Vector2();
   private readonly fallK = new THREE.Vector2();
+  /** Riding the surge in flight (+ speeding up, − slowing), sprung loose for follow-through. */
+  private readonly surgeK = new THREE.Vector2();
   /** Travel direction in the body frame, smoothed (what the braking palms push against). */
   private readonly travel = new THREE.Vector3(0, -1, 0);
   readonly outputs: SuitOutputs = { bootL: 0, bootR: 0, palmL: 0, palmR: 0, palmBoost: 0 };
@@ -411,6 +414,12 @@ export class SuitDriver {
     springTo(this.armOut, clamp01(0.4 * Math.abs(wN) + 0.75 * brakeAmt) * hoverish, 8, 0.5, dt);
     springTo(this.spread, clamp01(1.1 * brakeAmt) * hoverish, 7, 0.45, dt);
     springTo(this.bend, lerp(0.22 * this.tuck.x, aimBend, aimK), 8, 0.6, dt);
+    // Flat out the body rides the surge: a boost's kick streamlines it (arms
+    // in tight, chin down), a bleed off the boost lets the limbs float
+    // forward and the head come up. The brakes have their own pose
+    springTo(this.surgeK, clamp(m.surge / (5 * GRAVITY), -1, 1.2) * prone * (1 - m.airbrake), 7, 0.45, dt);
+    const surgeOn = Math.max(0, this.surgeK.x);
+    const surgeOff = Math.max(0, -this.surgeK.x);
 
     // ── Head: look where we're going / aiming ─────────────────────────
     // The head leads every turn: it snaps round onto the new line first (a
@@ -420,7 +429,7 @@ export class SuitDriver {
     const bodyYaw = this.hipYaw.x + this.twist.x;
     const aimYaw = Math.atan2(a.x, a.z < 0 && Math.abs(a.y) < 0.8 ? a.z : Math.hypot(a.y, a.z));
     const wantYaw = clamp(aimYaw - bodyYaw, -0.85, 0.85);
-    const wantPitch = clamp(-Math.atan2(a.y, Math.max(0.05, a.z)) - this.bend.x * 0.6, -1.05, 0.45);
+    const wantPitch = clamp(-Math.atan2(a.y, Math.max(0.05, a.z)) - this.bend.x * 0.6 + 0.12 * this.surgeK.x, -1.05, 0.45);
     spring(this.head, this.headVel, wantYaw, wantPitch, 13, 0.72, dt);
     // Boots vector against each other to drive the yaw (toes down on the
     // outside boot push that side round); eased off the yaw acceleration
@@ -442,21 +451,21 @@ export class SuitDriver {
     const inside = clamp(wN * 2.5, -1, 1);
     const limbs: Required<LimbOffsets> = {
       // Trailing arms in flight; the low wing's arm reaches out to steer
-      armL: lerp(0.1, 0.16, prone) + clamp(-rollRate * 0.18, 0, 0.35) * prone + sway(0.015, 0.4) + 0.8 * armOut,
-      armR: lerp(0.1, 0.16, prone) + clamp(rollRate * 0.18, 0, 0.35) * prone + sway(0.015, 1.4) + 0.8 * armOut,
+      armL: lerp(0.1, 0.16, prone) + clamp(-rollRate * 0.18, 0, 0.35) * prone + sway(0.015, 0.4) + 0.8 * armOut - 0.07 * surgeOn + 0.14 * surgeOff,
+      armR: lerp(0.1, 0.16, prone) + clamp(rollRate * 0.18, 0, 0.35) * prone + sway(0.015, 1.4) + 0.8 * armOut - 0.07 * surgeOn + 0.14 * surgeOff,
       armFlexL: 0.05 * prone + this.armSwing.x - 0.15 * armOut,
       armFlexR: 0.05 * prone - this.armSwing.x - 0.15 * armOut,
       armTwistL: 0,
       armTwistR: 0,
-      elbowL: lerp(0.18, 0.08, prone) * this.dangle + sway(0.03, 2) + 0.4 * armOut,
-      elbowR: lerp(0.18, 0.08, prone) * this.dangle + sway(0.03, 3) + 0.4 * armOut,
+      elbowL: lerp(0.18, 0.08, prone) * this.dangle + sway(0.03, 2) + 0.4 * armOut + 0.14 * surgeOff,
+      elbowR: lerp(0.18, 0.08, prone) * this.dangle + sway(0.03, 3) + 0.4 * armOut + 0.14 * surgeOff,
       // Legs: soft knees dangling in a hover, straight and toes pointed in flight
-      hipL: (0.08 + sway(0.02, 1.1)) * this.dangle * (1 - prone) + 0.08 * m.airbrake + 0.6 * tuck * (1 + 0.45 * inside),
-      hipR: (0.08 + sway(0.02, 2.3)) * this.dangle * (1 - prone) + 0.08 * m.airbrake + 0.6 * tuck * (1 - 0.45 * inside),
+      hipL: (0.08 + sway(0.02, 1.1)) * this.dangle * (1 - prone) + 0.08 * m.airbrake + 0.6 * tuck * (1 + 0.45 * inside) + 0.08 * surgeOff,
+      hipR: (0.08 + sway(0.02, 2.3)) * this.dangle * (1 - prone) + 0.08 * m.airbrake + 0.6 * tuck * (1 - 0.45 * inside) + 0.08 * surgeOff,
       hipOutL: -0.3 * m.trimRoll * 0.2 + this.legSwing.x + 0.32 * spread + 0.1 * tuck * Math.max(0, -inside),
       hipOutR: 0.3 * m.trimRoll * 0.2 - this.legSwing.x + 0.32 * spread + 0.1 * tuck * Math.max(0, inside),
-      kneeL: (lerp(0.16, 0.05, prone) + sway(0.03, 0)) * this.dangle + 0.15 * m.airbrake + 1.05 * tuck * (1 + 0.4 * inside) + 0.3 * spread,
-      kneeR: (lerp(0.16, 0.05, prone) + sway(0.03, 0.7)) * this.dangle + 0.15 * m.airbrake + 1.05 * tuck * (1 - 0.4 * inside) + 0.3 * spread,
+      kneeL: (lerp(0.16, 0.05, prone) + sway(0.03, 0)) * this.dangle + 0.15 * m.airbrake + 1.05 * tuck * (1 + 0.4 * inside) + 0.3 * spread + 0.18 * surgeOff,
+      kneeR: (lerp(0.16, 0.05, prone) + sway(0.03, 0.7)) * this.dangle + 0.15 * m.airbrake + 1.05 * tuck * (1 - 0.4 * inside) + 0.3 * spread + 0.18 * surgeOff,
       ankleL: lerp(0.14 + 0.25 * m.trimPitch, 0.55, prone) * this.dangle - yawVector + 0.3 * tuck,
       ankleR: lerp(0.14 + 0.25 * m.trimPitch, 0.55, prone) * this.dangle + yawVector + 0.3 * tuck,
       footRollL: 0.2 * m.trimRoll * this.dangle * (1 - prone),

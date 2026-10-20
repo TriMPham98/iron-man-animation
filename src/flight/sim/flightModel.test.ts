@@ -242,6 +242,64 @@ describe('FlightModel', () => {
     expect(peak / 9.81).toBeGreaterThan(4.5);
   });
 
+  it('brakes from cruise at an even pull and settles the last few m/s, not drifts them', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 1000, 0);
+    m.vel.set(0, 0, 120);
+    m.grounded = false;
+    m.flightness = 1;
+    m.posture = 1.42;
+    m.speedCmd = 120;
+    m.airT = 5;
+    let prev = m.speed;
+    let lo = Infinity;
+    let hi = 0;
+    let t10 = 0;
+    let tStop = 0;
+    run(m, 8, (i, t) => {
+      i.aim.set(0, 0, 1);
+      i.brake = true;
+      const d = (prev - m.speed) * 120;
+      prev = m.speed;
+      // Between 80 and 15 m/s: no second bite as the boots take over
+      if (m.speed < 80 && m.speed > 15) {
+        lo = Math.min(lo, d);
+        hi = Math.max(hi, d);
+      }
+      if (!t10 && m.speed < 10) t10 = t;
+      if (!tStop && m.speed < 0.5) tStop = t;
+    });
+    expect(hi - lo).toBeLessThan(0.6 * 9.81);
+    expect(tStop - t10).toBeLessThan(1.6);
+  });
+
+  it('cracks the flaps as speed brakes on S well over the setting', () => {
+    const fly = (s: number) => {
+      const m = new FlightModel(flat());
+      m.pos.set(0, 1000, 0);
+      m.vel.set(0, 0, 270);
+      m.grounded = false;
+      m.flightness = 1;
+      m.posture = 1.42;
+      m.speedCmd = 270;
+      m.airT = 5;
+      let flaps = 0;
+      run(m, 3, (i) => {
+        i.aim.set(0, 0, 1);
+        i.throttle = s;
+        flaps = Math.max(flaps, m.airbrake);
+      });
+      return { m, flaps };
+    };
+    const held = fly(-1);
+    expect(held.flaps).toBeGreaterThan(0.4);
+    expect(held.flaps).toBeLessThan(0.6);
+    expect(held.m.flightness).toBeGreaterThan(0.9);
+    expect(held.m.surge).toBeLessThan(-1.2 * 9.81);
+    expect(held.m.surge).toBeGreaterThan(-3 * 9.81);
+    expect(fly(0).flaps).toBeLessThan(0.01);
+  });
+
   it('keeps its height while braking hard into a hover', () => {
     const m = new FlightModel(flat());
     m.pos.set(0, 200, 0);

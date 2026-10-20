@@ -122,6 +122,8 @@ const BRAKE_DECEL_MAX = 6 * GRAVITY;
 const BOOST_BLEED = 2 * GRAVITY;
 /** Flap share S cracks open as speed brakes (the full flare is 1). */
 const SPEED_BRAKE = 0.5;
+/** Hover computer's horizontal gain while braking (1/s; 1.6 otherwise): how firmly a stop settles. */
+const BRAKE_SETTLE = 2.4;
 /** Horizontal pull the hover computer gets well above hover speed (m/s²). */
 const HOVER_BRAKE_FAST = 14;
 /**
@@ -470,8 +472,11 @@ export class FlightModel {
     // Hover computer: desired velocity → acceleration → tilted thrust
     const fwdFlat = this._n.set(f.x, 0, f.z).normalize();
     const leftFlat = this._v.set(fwdFlat.z, 0, -fwdFlat.x);
+    // (braking, it flies to a stop: the throttle riding the airspeed down
+    // left it wanting most of the speed it was shedding, and the last few
+    // m/s crept out over seconds)
     const vWant = new THREE.Vector3()
-      .addScaledVector(fwdFlat, (input.forward + this.speedCmd / 30) * HOVER_SPEED)
+      .addScaledVector(fwdFlat, (input.forward + (input.brake ? 0 : this.speedCmd / 30)) * HOVER_SPEED)
       .addScaledVector(leftFlat, -input.lateral * HOVER_SPEED * 0.8);
     vWant.y = input.vertical * CLIMB_SPEED;
     // Just off the deck: keep climbing clear whatever the stick says
@@ -480,6 +485,11 @@ export class FlightModel {
     // VTOL computer never trades altitude for a stop)
     const hoverMax = THRUST_MAX * 1.1 * ceilingK;
     const hoverAcc = vWant.sub(this.vel).multiplyScalar(1.6);
+    // Braking, a firmer hold on the horizontal: the stop settles, not drifts
+    if (input.brake) {
+      hoverAcc.x *= BRAKE_SETTLE / 1.6;
+      hoverAcc.z *= BRAKE_SETTLE / 1.6;
+    }
     hoverAcc.y = clamp(hoverAcc.y + GRAVITY, 0, hoverMax);
     // Well over hover speed (flaring out of flight) the boots only lean back
     // so far: the stop is a long, heavy bleed, not the VTOL's crisp one. And
@@ -489,9 +499,13 @@ export class FlightModel {
     const hvNow = Math.hypot(this.vel.x, this.vel.z);
     const against = hoverAcc.x * this.vel.x + hoverAcc.z * this.vel.z < 0;
     const fastPull = against ? HOVER_BRAKE_FAST * Math.max(this.airbrake, input.stance ? 1 : 0) : HOVER_BRAKE_FAST;
+    // (braking, the palms already pull against the travel: the boots leave
+    // them room, or the stop bit harder again as the boots got their full
+    // authority back at the slow end)
+    const slowPull = input.brake ? hoverMax - PALM_BRAKE * this.palmBrake : hoverMax;
     const side = Math.min(
       Math.sqrt(Math.max(0, hoverMax * hoverMax - hoverAcc.y * hoverAcc.y)),
-      THREE.MathUtils.lerp(hoverMax, fastPull, smooth(HOVER_SPEED * 1.5, HOVER_SPEED * 4, hvNow)),
+      THREE.MathUtils.lerp(slowPull, fastPull, smooth(HOVER_SPEED * 1.5, HOVER_SPEED * 4, hvNow)),
     );
     const hl = Math.hypot(hoverAcc.x, hoverAcc.z);
     if (hl > side) {
