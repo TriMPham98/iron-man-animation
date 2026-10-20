@@ -124,6 +124,8 @@ const BRAKE_DECEL_MAX = 6 * GRAVITY;
 const BOOST_BLEED = 2 * GRAVITY;
 /** Flap share S cracks open as speed brakes (the full flare is 1). */
 const SPEED_BRAKE = 0.5;
+/** Under this airspeed (m/s) the brakes leave the throttle at idle, not on what's left. */
+const BRAKE_IDLE = 5;
 /** Hover computer's horizontal gain while braking (1/s; 1.6 otherwise): how firmly a stop settles. */
 const BRAKE_SETTLE = 2.4;
 /** Horizontal pull the hover computer gets well above hover speed (m/s²). */
@@ -360,7 +362,9 @@ export class FlightModel {
     } else if (input.brake) {
       // The throttle rides the airspeed down with the brakes: let go and the
       // suit holds what it has left instead of coasting on down to idle
-      this.speedCmd = Math.min(this.speedCmd, speed);
+      // (all but stopped, it's idle: a let-go at a crawl held the crawl, and
+      // the hover crept on forever at a few m/s)
+      this.speedCmd = speed < BRAKE_IDLE ? 0 : Math.min(this.speedCmd, speed);
     } else if (this.airT > HOP_THROTTLE) {
       // (a W held through the hop waits for it to clear the deck; pushed up
       // from under the airspeed, it picks up from there, not from the idle)
@@ -401,13 +405,28 @@ export class FlightModel {
     const al = this._t.copy(aim).applyQuaternion(this._q);
     const yawErr = Math.atan2(al.x, al.z);
     const pitchErr = Math.atan2(al.y, Math.hypot(al.x, al.z)); // + = aim above the nose
+    // The body only lifts with the nose held a little above its path, so a
+    // nose on the aim left the path sagging under it — 0.3° at cruise, 2° at
+    // 100 m/s, a steady sink below wherever the pilot looked. Fly the path
+    // onto the aim instead: carry the nose the angle of attack the wing needs
+    // to hold the path against gravity (as the lift below is reckoned)
+    const fallK = input.vertical < 0 ? 1 + input.vertical : 1;
+    const liftK = fl * (1 - 0.95 * this.liftSpill) * (1 - this.swing) * fallK;
+    let aoa = 0;
+    if (liftK > 0.2 && speed > 20) {
+      const upL = this._v.copy(UP).applyQuaternion(this._q).y;
+      const velL = this._n.copy(this.vel).applyQuaternion(this._q).y / speed;
+      const need = GRAVITY * (upL - (this.vel.y / speed) * velL);
+      const rhoNow = Math.exp(-Math.max(0, this.pos.y) / 8500);
+      aoa = Math.asin(clamp(need / (LIFT * rhoNow * liftK * speed * speed), -0.12, 0.12)) * smooth(0.2, 0.5, liftK);
+    }
     // Turn limits: quick in a hover; in flight the g limit caps the rate at speed
     const gRate = (G_LIMIT * GRAVITY) / Math.max(60, speed);
     // (mid-swing the body isn't flying the path: it whips round with it)
     const flTurn = fl * (1 - this.swing);
     const maxPitch = THREE.MathUtils.lerp(2.6, Math.min(2.4, gRate), flTurn);
     const maxYaw = THREE.MathUtils.lerp(3.2, Math.min(1.6, gRate * 0.8), flTurn);
-    const wantPitch = clamp(pitchErr * 5.5, -maxPitch, maxPitch) * THREE.MathUtils.lerp(0.25, 1, fl);
+    const wantPitch = clamp((pitchErr + aoa) * 5.5, -maxPitch, maxPitch) * THREE.MathUtils.lerp(0.25, 1, fl);
     // Yaw is flown like a body with inertia, not a rate dial: the suit
     // builds into a turn over ~¼ s (the boots vector, then it swings),
     // carries it, and brakes smoothly onto the heading — a time-optimal

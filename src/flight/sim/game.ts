@@ -45,6 +45,10 @@ export class Game {
   readonly gVapor: GVaporFx;
   private wasBoosting = false;
   private frameDt = 0;
+  /** 0–1: how cleanly the air runs head-to-toe down the body (the vapour only forms then). */
+  private cleanFlow = 1;
+  private readonly _owed = new THREE.Vector3();
+  private readonly _axis = new THREE.Vector3();
 
   constructor(
     readonly world: World,
@@ -134,8 +138,11 @@ export class Game {
     // couple of metres at speed. Draw the frame at the render clock instead:
     // carry the body on by the time the physics still owes it (< 1 step),
     // then hand the true state back to the physics
-    const owed = this.acc;
-    this.model.pos.addScaledVector(this.model.vel, owed);
+    // (the shift is kept, not re-derived from the velocity on the way back:
+    // a shot's recoil lands in between, and undoing it at the new velocity
+    // left the suit a few mm off every time — a creep under sustained fire)
+    const owed = this._owed.copy(this.model.vel).multiplyScalar(this.acc);
+    this.model.pos.add(owed);
     this.driver.update(dt, this.suit, this.model, aim, this.combat.weapons.arms);
     // Hero landing: the fist hits the ground a beat after the boots
     const strike = this.driver.strike;
@@ -158,10 +165,10 @@ export class Game {
     const o = this.driver.outputs;
     this.jets.update(dt, this.suit, { bootL: o.bootL, bootR: o.bootR, palmL: o.palmL, palmR: o.palmR, palmBoost: o.palmBoost }, this.ground, this.particles, this.model.vel);
     this.particles.update(dt, this.rig.camera);
-    this.sonic.update(dt, this.model.pos, this.model.vel, this.model.speed / SPEED_OF_SOUND);
+    this.sonic.update(dt, this.model.pos, this.model.vel, this.model.speed / SPEED_OF_SOUND, this.cleanFlow);
     this.gVapor.group.visible = this.suit.group.visible;
     this.gVapor.update(dt, this.suit, this.rig.camera, this.model.gLoad, this.model.speed, this.model.flightness, this.model.pos.y);
-    this.model.pos.addScaledVector(this.model.vel, -owed);
+    this.model.pos.sub(owed);
   }
 
   /** Take-off, boost and the sound barrier. */
@@ -178,8 +185,13 @@ export class Game {
       this.rig.shake += 1.6;
     }
     // Transonic: the vapour cone (SonicBoomFx) clings to the suit; a few
-    // wisps tear off its rim
-    const trans = Math.exp(-Math.pow((m.mach - 0.975) / 0.035, 2)) * Math.exp(-Math.max(0, m.pos.y) / 3500);
+    // wisps tear off its rim. Only with the body flying head first into the
+    // air: a reversal swings it broadside and tail first while the speed it
+    // spends on the turn bleeds back through the barrier, and a cone and
+    // wisps laid along the travel then stood off the suit like a parachute
+    const align = m.speed > 1 ? m.thrustAxis(this._axis).dot(m.vel) / m.speed : 1;
+    this.cleanFlow = THREE.MathUtils.smoothstep(align, 0.8, 0.95);
+    const trans = Math.exp(-Math.pow((m.mach - 0.975) / 0.035, 2)) * Math.exp(-Math.max(0, m.pos.y) / 3500) * this.cleanFlow;
     if (trans > 0.15 && Math.random() < trans * 0.3) {
       const f = m.vel.clone().normalize();
       const a = new THREE.Vector3(0, 1, 0).cross(f).normalize();

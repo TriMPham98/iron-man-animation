@@ -341,6 +341,8 @@ export class SuitDriver {
   private landAbort = false;
   private prevCrouch = 0;
   private struck = false;
+  /** The boots have been handed to the walk where the landing left them. */
+  private stood = false;
   private landImpact = 0;
   private landPose: { limbs: Required<LimbOffsets>; wristL: number; wristR: number; fingersL: number[]; fingersR: number[] } | null = null;
   private landBend = LAND_TORSO.bend;
@@ -360,6 +362,15 @@ export class SuitDriver {
     this.dangle += (air - this.dangle) * (1 - Math.exp(-dt / 0.35));
     this.updateLanding(dt, m);
     const crouch = this.landW;
+    // Coming up out of a landing the boots stay where they hit: the walk
+    // takes them from there (rising off the lunge, then stepping in square)
+    if (this.landT >= LAND_RISE - 0.1 && !this.stood && !this.landAbort && m.grounded) {
+      this.stood = true;
+      for (const [i, s] of [[0, 'L'], [1, 'R']] as const) {
+        const bone = `foot.${s}` as const;
+        m.gait.plant(i, suit.boneWorldPoint(bone, boneSpec(bone).head, this._v), m.heading, m.ground);
+      }
+    }
 
     // Carrier: world ← body orientation about the centre of mass
     const bodyQ = m.bodyQuaternion(this._q);
@@ -475,8 +486,10 @@ export class SuitDriver {
     const palmsDown = this.dangle;
     let wristL = 1.45 * palmsDown;
     let wristR = 1.45 * palmsDown;
-    // (on the ground: a loose, half-curled hand)
-    let fingersL: number[] = [0.22, 0.35, 0.45, 0.5, 0.55].map((r) => lerp(r, -0.25, palmsDown));
+    // (on the ground: a loose, half-curled hand, closing to a fist on the
+    // move — tight at a run)
+    const fist = m.gait.weight * m.gait.active * lerp(0.6, 1, m.gait.run);
+    let fingersL: number[] = [0.3, 0.5, 0.6, 0.65, 0.7].map((r, i) => lerp(lerp(r, i === 0 ? 0.65 : 1, fist), -0.25, palmsDown));
     let fingersR = fingersL.slice();
 
     // Coming in hot for a hero landing: knees come up and the right fist
@@ -941,6 +954,7 @@ export class SuitDriver {
       this.landT = 0;
       this.landAbort = false;
       this.struck = false;
+      this.stood = false;
       this.landImpact = clamp01((m.impactSpeed - 5) / 20) * 0.6 + 0.4;
       this.landPose ??= this.solveLanding();
     }
@@ -978,14 +992,14 @@ export class SuitDriver {
    */
   private solveLanding(): NonNullable<SuitDriver['landPose']> {
     const limbs: Required<LimbOffsets> = {
-      // Left arm thrown back and out, open hand
-      armL: 1.0,
+      // Left arm thrown back and up behind, fist clenched
+      armL: 0.75,
       armR: 0.05,
-      armFlexL: 0.95,
+      armFlexL: 1.15,
       armFlexR: 0.4,
       armTwistL: 0.5,
       armTwistR: 0.6,
-      elbowL: 0.3,
+      elbowL: 0.22,
       elbowR: 0.02,
       // Forward lean swings the legs back: the hip flexion carries it.
       // Left: lunged out to the side and forward, knee well bent (its hip
@@ -1004,9 +1018,9 @@ export class SuitDriver {
     };
     const L = {
       limbs,
-      wristL: 0.35,
+      wristL: 0.1,
       wristR: -0.1,
-      fingersL: [-0.1, -0.15, -0.1, -0.05, 0],
+      fingersL: [0.6, 0.9, 1, 1, 1],
       fingersR: [0.75, 1, 1, 1, 1],
       bend: LAND_TORSO.bend,
     };

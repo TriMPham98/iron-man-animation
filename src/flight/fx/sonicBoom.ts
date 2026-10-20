@@ -144,8 +144,14 @@ export class SonicBoomFx {
     return false;
   }
 
-  /** Follow the suit (drawn position): the cone comes and goes with the Mach number. */
-  update(dt: number, at: THREE.Vector3, vel: THREE.Vector3, mach: number): void {
+  /**
+   * Follow the suit (drawn position): the cone comes and goes with the Mach
+   * number. `clean` (0–1) is how cleanly the air runs down the body: the
+   * bell is the flow round a suit flying head first, so whipped broadside
+   * or tail first through the band (a reversal bleeding back through Mach 1)
+   * it doesn't form.
+   */
+  update(dt: number, at: THREE.Vector3, vel: THREE.Vector3, mach: number, clean: number): void {
     this.time += dt;
     const t = this.time;
     // On just short of the barrier, gone just past it
@@ -155,7 +161,7 @@ export class SonicBoomFx {
     // It never sits still: the fog pops in and out as the flow round the
     // body hunts about the dew point
     const flutter = 0.6 + 0.25 * Math.sin(t * 23.0) * Math.sin(t * 7.3 + 1.1) + 0.15 * Math.sin(t * 41.0 + 2.3);
-    const alpha = band * humid * flutter;
+    const alpha = band * humid * flutter * clean;
     const speed = vel.length();
     this.cone.visible = alpha > 0.01 && speed > 50;
     if (this.cone.visible) {
