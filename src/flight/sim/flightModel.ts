@@ -104,6 +104,16 @@ const PALM_BRAKE = 9;
 const FLARE_DRAG_MAX = 12;
 /** Horizontal pull the hover computer gets well above hover speed (m/s²). */
 const HOVER_BRAKE_FAST = 14;
+/**
+ * Momentum swing: pushing off again out of a flare with the aim well round
+ * from the travel, the boots carry the speed round onto the new line instead
+ * of fighting it to a stop and starting over. Peak swing rate (rad/s), and
+ * how far off the travel (rad) the aim must be to start one.
+ */
+const SWING_RATE = 2.2;
+const SWING_START = 1.0;
+/** Flat out (no flare first) it takes the boost and the aim well astern (rad). */
+const SWING_START_BOOST = 1.75;
 /** Above this, the air is too thin and the suit starts icing (m). */
 export const ICING_ALT = 9000;
 export const CEILING = 11500;
@@ -155,6 +165,15 @@ export class FlightModel {
   grounded = true;
   /** Air brake deployment 0–1 (flaps). */
   airbrake = 0;
+  /** 0–1: how much of the body's lift the flare has spilled (leads the flaps). */
+  liftSpill = 0;
+  /** 0–1: carrying the speed round onto a new line (a momentum swing). */
+  swing = 0;
+  private swingOn = false;
+  /** Last step's flight-line lean (rad). */
+  private leanPrev = 0;
+  /** Which way the swing turns the travel (+ left, − right, × its strength). */
+  swingTurn = 0;
   /** 0–1: boots cut and dropping (Q), eased in and out. */
   freefall = 0;
   /** 0–1: the palms firing against the travel (X), eased. */
@@ -187,6 +206,8 @@ export class FlightModel {
   private readonly _q = new THREE.Quaternion();
   private readonly _q2 = new THREE.Quaternion();
   private readonly _prevVel = new THREE.Vector3();
+  private readonly _aim = new THREE.Vector3();
+  private readonly _swingAcc = new THREE.Vector3();
 
   constructor(readonly ground: GroundProbe) {}
 
@@ -206,6 +227,11 @@ export class FlightModel {
     this.crouch = 0;
     this.freefall = 0;
     this.palmBrake = 0;
+    this.liftSpill = 0;
+    this.swing = 0;
+    this.swingOn = false;
+    this.swingTurn = 0;
+    this.leanPrev = 0;
     this.gait.attach(this.pos, heading, this.ground);
   }
 
@@ -281,10 +307,16 @@ export class FlightModel {
 
     // ── Throttle / regime ────────────────────────────────────────────
     this.boosting = input.boost && !this.boostLatch && !this.grounded && this.power > 0.5 && !falling;
-    if (input.brake || input.stance || falling) {
+    if (input.stance || falling) {
       this.speedCmd = Math.max(0, this.speedCmd - 220 * dt);
+    } else if (input.brake) {
+      // The throttle rides the airspeed down with the brakes: let go and the
+      // suit holds what it has left instead of coasting on down to idle
+      this.speedCmd = Math.min(this.speedCmd, speed);
     } else if (this.airT > HOP_THROTTLE) {
-      // (a W held through the hop waits for it to clear the deck)
+      // (a W held through the hop waits for it to clear the deck; pushed up
+      // from under the airspeed, it picks up from there, not from the idle)
+      if (input.throttle > 0) this.speedCmd = Math.max(this.speedCmd, Math.min(speed, CRUISE_MAX));
       this.speedCmd = clamp(this.speedCmd + input.throttle * 85 * dt, 0, CRUISE_MAX);
     }
     // In a hover, forward stick alone carries you into flight once you're quick
@@ -293,7 +325,9 @@ export class FlightModel {
     // down): the body is the brakes' now, free to swing round onto the aim
     const wantFlight = !falling && !input.brake && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.stance));
     const flightGoal = wantFlight && !this.grounded ? 1 : 0;
-    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? 0.55 : input.brake ? 0.6 : 0.4);
+    // Already quick (out of a flare), the body swings straight back over
+    const riseTau = THREE.MathUtils.lerp(0.55, 0.3, smooth(40, 120, speed));
+    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? riseTau : input.brake ? 0.6 : 0.4);
     if (this.grounded) this.flightness = 0;
     const fl = smooth(0.05, 0.95, this.flightness);
 
@@ -303,14 +337,22 @@ export class FlightModel {
     // axis (the line it flies along), not the frame's nose a few degrees
     // below it: the nose held on the aim left the path climbing off it
     const lean = (this.posture - Math.PI / 2) * smooth(0.85 * FLIGHT_POSTURE, FLIGHT_POSTURE, this.posture) * fl;
+    // As that reference slides from the nose onto the axis the frame
+    // counter-pitches, so the line it flies doesn't move: shifted under it,
+    // the body's lift chased the new line and porpoised ±13 g swinging
+    // back over out of a flare
+    this.q.multiply(this._q2.setFromAxisAngle(this._n.set(1, 0, 0), this.leanPrev - lean));
+    this.leanPrev = lean;
     this._q.copy(this.q).multiply(this._q2.setFromAxisAngle(this._n.set(1, 0, 0), lean)).invert();
     const al = this._t.copy(aim).applyQuaternion(this._q);
     const yawErr = Math.atan2(al.x, al.z);
     const pitchErr = Math.atan2(al.y, Math.hypot(al.x, al.z)); // + = aim above the nose
     // Turn limits: quick in a hover; in flight the g limit caps the rate at speed
     const gRate = (G_LIMIT * GRAVITY) / Math.max(60, speed);
-    const maxPitch = THREE.MathUtils.lerp(2.6, Math.min(2.4, gRate), fl);
-    const maxYaw = THREE.MathUtils.lerp(3.2, Math.min(1.6, gRate * 0.8), fl);
+    // (mid-swing the body isn't flying the path: it whips round with it)
+    const flTurn = fl * (1 - this.swing);
+    const maxPitch = THREE.MathUtils.lerp(2.6, Math.min(2.4, gRate), flTurn);
+    const maxYaw = THREE.MathUtils.lerp(3.2, Math.min(1.6, gRate * 0.8), flTurn);
     const wantPitch = clamp(pitchErr * 5.5, -maxPitch, maxPitch) * THREE.MathUtils.lerp(0.25, 1, fl);
     // Yaw is flown like a body with inertia, not a rate dial: the suit
     // builds into a turn over ~¼ s (the boots vector, then it swings),
@@ -331,7 +373,8 @@ export class FlightModel {
     } else if (nearVertical) {
       wantRoll = 0;
     } else {
-      const bankGoal = clamp(-yawErr * 2.4, -1.25, 1.25) * fl;
+      // (swinging the speed round, it banks hard into the carve)
+      const bankGoal = clamp(-yawErr * 2.4 * fl - this.swingTurn * 1.2, -1.25, 1.25);
       if (Math.abs(bank) > 2.4) {
         // Inverted: the bank angle flips ±π frame to frame — keep rolling the
         // way we already are rather than dithering on the seam
@@ -401,11 +444,16 @@ export class FlightModel {
     const hoverAcc = vWant.sub(this.vel).multiplyScalar(1.6);
     hoverAcc.y = clamp(hoverAcc.y + GRAVITY, 0, hoverMax);
     // Well over hover speed (flaring out of flight) the boots only lean back
-    // so far: the stop is a long, heavy bleed, not the VTOL's crisp one
+    // so far: the stop is a long, heavy bleed, not the VTOL's crisp one. And
+    // only the brakes or the stance ask for that stop: let go of X at speed
+    // and the hover computer doesn't pull against the travel while the body
+    // swings back over into flight
     const hvNow = Math.hypot(this.vel.x, this.vel.z);
+    const against = hoverAcc.x * this.vel.x + hoverAcc.z * this.vel.z < 0;
+    const fastPull = against ? HOVER_BRAKE_FAST * Math.max(this.airbrake, input.stance ? 1 : 0) : HOVER_BRAKE_FAST;
     const side = Math.min(
       Math.sqrt(Math.max(0, hoverMax * hoverMax - hoverAcc.y * hoverAcc.y)),
-      THREE.MathUtils.lerp(hoverMax, HOVER_BRAKE_FAST, smooth(HOVER_SPEED * 1.5, HOVER_SPEED * 4, hvNow)),
+      THREE.MathUtils.lerp(hoverMax, fastPull, smooth(HOVER_SPEED * 1.5, HOVER_SPEED * 4, hvNow)),
     );
     const hl = Math.hypot(hoverAcc.x, hoverAcc.z);
     if (hl > side) {
@@ -432,6 +480,44 @@ export class FlightModel {
     this.throttle = clamp(this.thrust / THRUST_BOOST, 0, 1);
     acc.addScaledVector(thrustDir, this.thrust);
 
+    // ── Momentum swing ───────────────────────────────────────────────
+    // Out of a flare (or a hover at speed) with the aim swung well round
+    // from the travel, pushing off again — or flat out, punching the boost
+    // with the aim astern — doesn't stop the suit and start over: the boots and palms carve the velocity round onto the aim at a
+    // steady rate, its size kept, the body banked hard into the carve
+    const goingOn = !input.brake && !input.stance && !falling && wantFlight;
+    const aimDir = this._aim.copy(input.aim).normalize();
+    const offAim = speed > 1 ? Math.acos(clamp(this.vel.dot(aimDir) / speed, -1, 1)) : 0;
+    // (on until it's carved round to within a few degrees, then done: the
+    // wing settles the last of it)
+    const swingStart = this.flightness < 0.6 ? SWING_START : this.boosting ? SWING_START_BOOST : Infinity;
+    if (goingOn && speed > 30 && offAim > swingStart) this.swingOn = true;
+    if (!goingOn || offAim < 0.08) this.swingOn = false;
+    const swingGoal = this.swingOn ? 1 : 0;
+    this.swing += (swingGoal - this.swing) * approach(dt, swingGoal ? 0.15 : 0.2);
+    if (this.swing > 1e-3 && speed > 1) {
+      const vDir = this._v.copy(this.vel).divideScalar(speed);
+      // None of the boots' push goes into fighting the old travel
+      acc.addScaledVector(vDir, -Math.min(0, thrustDir.dot(vDir)) * this.thrust * this.swing);
+      // Turn axis: travel × aim; dead astern, keep the way it was turning
+      // (or the body's yaw) and swing round flat
+      const n = this._n.crossVectors(vDir, aimDir);
+      if (n.lengthSq() < 1e-4) n.set(0, this.swingTurn || Math.sign(this.omega.y) || 1, 0);
+      n.normalize();
+      // Eased in by the swing and settled onto the aim over the last ~20°
+      const rate = SWING_RATE * smooth(0, 1, this.swing) * Math.min(1, offAim / 0.35);
+      this._swingAcc.copy(this.vel);
+      this.vel.applyAxisAngle(n, Math.min(rate * dt, offAim));
+      this._swingAcc.subVectors(this.vel, this._swingAcc).divideScalar(Math.max(dt, 1e-4));
+      this.swingTurn = this.swing * clamp(n.y * 3, -1, 1);
+      // With the wing out of it the boots hold the climb on the aim's (no
+      // sag from the bank, no zoom off the half-tilted thrust)
+      acc.y = THREE.MathUtils.lerp(acc.y, (aimDir.y * this.vel.length() - this.vel.y) * 3, this.swing);
+    } else {
+      this.swingTurn *= 1 - approach(dt, 0.2);
+      this._swingAcc.set(0, 0, 0);
+    }
+
     // In a hover the suit leans to its thrust: bring the frame's up toward it
     if (fl < 0.95 && !this.grounded && !falling) {
       const upNow = this.up(this._u);
@@ -449,7 +535,13 @@ export class FlightModel {
     // Drag, thinner with height; the brakes add a lot. A
     // fall is the body's own drag: it settles on its terminal speed
     this.airbrake += ((input.brake ? 1 : 0) - this.airbrake) * approach(dt, 0.15);
-    const flareDrag = Math.min(DRAG * (this.airbrake * 5 + (1 - fl) * 3) * rho * speed * speed, FLARE_DRAG_MAX);
+    // The wing spills its lift ahead of the flaps: the body pitches up into
+    // the flare at once, and a wing still flying then ballooned it 9 g up
+    this.liftSpill += ((input.brake ? 1 : 0) - this.liftSpill) * approach(dt, input.brake ? 0.04 : 0.15);
+    // (the cap opens with the flaps: at Mach 1 even a crack of flap would
+    // hit it, and the brakes bit as a step on the first frame)
+    const flareCap = FLARE_DRAG_MAX * smooth(0, 1, Math.max(this.airbrake, 1 - fl));
+    const flareDrag = Math.min(DRAG * (this.airbrake * 5 + (1 - fl) * 3) * rho * speed * speed, flareCap) * (1 - this.swing);
     const dragK = rho * THREE.MathUtils.lerp(DRAG, FALL_DRAG, this.freefall);
     acc.addScaledVector(this.vel, -(dragK * speed + (flareDrag * (1 - this.freefall)) / Math.max(speed, 1)));
     // Falling, the hands and legs steer it a little (forward / sideways)
@@ -472,14 +564,20 @@ export class FlightModel {
 
     // Body lift: pull the velocity onto the nose (flight only)
     if (fl > 0.01 && speed > 1) {
-      const fNow = this.thrustAxis(this._f);
+      // Onto the line the computer is flying (the long axis in full flight;
+      // the nose while the body is still swinging over, or a nose-high
+      // axis coming back out of a flare zoomed it 50 m up)
+      const fNow = this._f.set(0, -Math.sin(lean), Math.cos(lean)).applyQuaternion(this.q);
       const perp = this._v.copy(this.vel).addScaledVector(fNow, -this.vel.dot(fNow));
       // Flared for the brakes the body is a parachute, not a wing: no balloon
       // Full down kills the wing so the body falls instead of gliding
       const fall = input.vertical < 0 ? 1 + input.vertical : 1;
       // and the pitch-up of the flare doesn't slam it (the load is capped low)
-      const lift = perp.multiplyScalar(-LIFT * speed * rho * fl * (1 - 0.95 * this.airbrake) * fall);
-      const gCap = THREE.MathUtils.lerp(G_LIMIT, 1, this.airbrake) * GRAVITY;
+      const lift = perp.multiplyScalar(-LIFT * speed * rho * fl * (1 - 0.95 * this.liftSpill) * (1 - this.swing) * fall);
+      // Lift works square to the travel: the part of it along the path made
+      // a broadside body (swinging back out of a flare) a second airbrake
+      lift.addScaledVector(this.vel, -lift.dot(this.vel) / (speed * speed));
+      const gCap = THREE.MathUtils.lerp(G_LIMIT, 1, Math.min(1, this.liftSpill * 2)) * GRAVITY;
       const ll = lift.length();
       if (ll > gCap) lift.multiplyScalar(gCap / ll);
       acc.add(lift);
@@ -498,6 +596,9 @@ export class FlightModel {
     // it reads negative (an aileron roll swings it +1 → −1 → +1)
     const felt = this._v.copy(this.vel).sub(this._prevVel).divideScalar(Math.max(dt, 1e-4));
     felt.y += GRAVITY;
+    // (the suit's dampers soak up most of a swing's carve: it reads as a
+    // hard pull, not the 80 g the velocity really turns at)
+    felt.addScaledVector(this._swingAcc, -0.85);
     const liftAxis = this._t.set(0, 1, 0).applyAxisAngle(this._n.set(1, 0, 0), lean).applyQuaternion(this.q);
     this.gLoad += (felt.dot(liftAxis) / GRAVITY - this.gLoad) * approach(dt, 0.25);
 
@@ -625,6 +726,11 @@ export class FlightModel {
     this.thrust *= 1 - approach(dt, 0.12);
     this.throttle = clamp(this.thrust / THRUST_BOOST, 0, 1);
     this.airbrake *= 1 - approach(dt, 0.15);
+    this.liftSpill *= 1 - approach(dt, 0.15);
+    this.swing = 0;
+    this.swingOn = false;
+    this.leanPrev = 0;
+    this.swingTurn = 0;
     this.palmBrake *= 1 - approach(dt, 0.12);
     this.freefall = 0;
     this.trimRoll *= 1 - approach(dt, 0.2);

@@ -211,6 +211,67 @@ describe('FlightModel', () => {
     expect(m.pos.y).toBeGreaterThan(150);
   });
 
+  it('pushes straight back off a supersonic flare: no slump, no zoom, holds the speed it kept', () => {
+    const fly = (after: 'boost' | 'none') => {
+      const m = new FlightModel(flat());
+      m.pos.set(0, 1500, 0);
+      m.vel.set(0, 0, 400);
+      m.grounded = false;
+      m.flightness = 1;
+      m.posture = 1.42;
+      m.speedCmd = 270;
+      m.airT = 5;
+      let atRelease = 0;
+      let low = Infinity;
+      let yMax = 0;
+      run(m, 5, (i, t) => {
+        i.aim.set(0, 0, 1);
+        i.brake = t >= 1 && t < 2.5;
+        i.boost = t < 1 || (after === 'boost' && t >= 2.5);
+        if (t < 2.5) atRelease = m.speed;
+        else low = Math.min(low, m.speed);
+        yMax = Math.max(yMax, m.pos.y);
+      });
+      return { m, atRelease, low, yMax };
+    };
+    const boost = fly('boost');
+    expect(boost.low).toBeGreaterThan(boost.atRelease - 25);
+    expect(boost.m.speed).toBeGreaterThan(boost.atRelease + 50);
+    expect(boost.yMax).toBeLessThan(1530);
+    // Let go of X and the throttle holds what's left (not a coast to idle)
+    const coast = fly('none');
+    expect(coast.m.speed).toBeGreaterThan(250);
+    expect(coast.m.speedCmd).toBeGreaterThan(250);
+  });
+
+  it('swings its speed round onto the aim when it pushes off the other way', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 1500, 0);
+    m.vel.set(0, 0, 400);
+    m.grounded = false;
+    m.flightness = 1;
+    m.posture = 1.42;
+    m.speedCmd = 270;
+    m.airT = 5;
+    let atRelease = 0;
+    let low = Infinity;
+    let swung = 0;
+    run(m, 5, (i, t) => {
+      i.aim.set(0, 0, t < 1 ? 1 : -1);
+      i.brake = t >= 1 && t < 2.5;
+      i.boost = t < 1 || t >= 2.5;
+      if (t < 2.5) atRelease = m.speed;
+      else low = Math.min(low, m.speed);
+      swung = Math.max(swung, m.swing);
+    });
+    expect(swung).toBeGreaterThan(0.9);
+    // Carried round, not killed and rebuilt
+    expect(low).toBeGreaterThan(atRelease * 0.9);
+    expect(m.vel.z).toBeLessThan(-0.98 * m.speed);
+    expect(m.speed).toBeGreaterThan(atRelease);
+    expect(Math.abs(m.pos.y - 1500)).toBeLessThan(40);
+  });
+
   it('comes down fast in a hover as a three-point landing, not a crash', () => {
     const m = new FlightModel(flat());
     m.pos.set(0, 60, 0);

@@ -317,6 +317,7 @@ export class SuitDriver {
   private readonly spread = new THREE.Vector2();
   /** Braking (X) and free fall, sprung: [value, velocity]. */
   private readonly brakeK = new THREE.Vector2();
+  private readonly swingK = new THREE.Vector2();
   private readonly fallK = new THREE.Vector2();
   /** Travel direction in the body frame, smoothed (what the braking palms push against). */
   private readonly travel = new THREE.Vector3(0, -1, 0);
@@ -555,6 +556,11 @@ export class SuitDriver {
     if (sp > 0.5) this.travel.lerp(this._v.copy(m.vel).applyQuaternion(this._qi.copy(bodyQ).invert()).divideScalar(sp), 1 - Math.exp(-dt / 0.08)).normalize();
     springTo(this.brakeK, clamp01(m.palmBrake) * this.dangle * (1 - crouch) * (1 - ub) * (1 - pre), 9, 0.6, dt);
     const bk = clamp01(this.brakeK.x);
+    // Carving the speed round onto a new line (a momentum swing) the palms
+    // throw out against the old travel too and sweep round with it as it
+    // comes onto the new line; the legs stay long for the flight
+    springTo(this.swingK, clamp01(m.swing) * this.dangle * (1 - crouch) * (1 - ub) * (1 - pre), 9, 0.6, dt);
+    const swk = clamp01(this.swingK.x);
     // ── Free fall: boots cut, dropping feet first ─────────────────────
     // Arms thrown up and out against the rush of air, elbows soft, hands
     // open; legs long, a little apart, toes pointed; head down to watch
@@ -655,11 +661,12 @@ export class SuitDriver {
     // the shoulders' line (raised, it shrugged the pauldrons into the
     // helmet and flung an arm up over the back). A raised repulsor arm
     // keeps its shot
-    if (bk > 1e-3) {
+    const palmK = Math.max(bk, swk);
+    if (palmK > 1e-3) {
       // (and leaned back on the flare, pulled toward the ground with it)
       const down = this._v.set(0, -1, 0).applyQuaternion(this._qi.copy(bodyQ).invert()).applyQuaternion(chestQ);
       for (const side of ['L', 'R'] as const) {
-        const k = bk * (1 - (side === 'L' ? arms.aimL : arms.aimR));
+        const k = palmK * (1 - (side === 'L' ? arms.aimL : arms.aimR));
         if (k <= 1e-3) continue;
         const s = side === 'L' ? 1 : -1;
         const tc = _tgt.copy(this.travel).applyQuaternion(chestQ);
