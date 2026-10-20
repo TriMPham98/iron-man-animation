@@ -584,4 +584,52 @@ describe('FlightModel', () => {
     expect(m.posture).toBeGreaterThan(1.3);
     expect(m.posture).toBeLessThan(1.5);
   });
+
+  it('stands upright for the unibeam out of flight, whatever the aim', () => {
+    for (const aimY of [-0.35, 0, 0.35]) {
+      const m = new FlightModel(flat());
+      m.pos.set(0, 300, 0);
+      m.grounded = false;
+      m.vel.set(0, 0, 150);
+      m.flightness = 1;
+      m.posture = 1.42;
+      m.speedCmd = 150;
+      // Stance held through the charge and on through the shot
+      let worst = 0;
+      run(m, 4, (i, t) => {
+        i.aim.set(0, aimY, 1).normalize();
+        i.stance = true;
+        if (t > 1) worst = Math.max(worst, new THREE.Vector3(0, 1, 0).applyQuaternion(m.bodyQuaternion()).angleTo(new THREE.Vector3(0, 1, 0)));
+      });
+      // Still shedding the speed, but on the boots' vectoring, not a lean
+      expect(m.speed).toBeLessThan(110);
+      expect(THREE.MathUtils.radToDeg(worst)).toBeLessThan(5);
+    }
+  });
+
+  it('turns the stance onto the aim, not its reciprocal, even on the boost', () => {
+    for (const boost of [false, true]) {
+      for (const aim of [new THREE.Vector3(1, 0, 0.2), new THREE.Vector3(0.1, 0, -1)]) {
+        const m = new FlightModel(flat());
+        m.pos.set(0, 300, 0);
+        m.grounded = false;
+        m.vel.set(0, 0, 160);
+        m.flightness = 1;
+        m.posture = 1.42;
+        m.speedCmd = 160;
+        let wrongWay = 0;
+        run(m, 3, (i) => {
+          i.aim.copy(aim).normalize();
+          i.stance = true;
+          i.boost = boost;
+          // (the turn never starts off the far way round)
+          const err = Math.atan2(Math.sin(Math.atan2(aim.x, aim.z) - m.heading), Math.cos(Math.atan2(aim.x, aim.z) - m.heading));
+          wrongWay = Math.max(wrongWay, Math.abs(err) - Math.PI * 0.99);
+        });
+        const off = Math.abs(Math.atan2(aim.x, aim.z) - m.heading) % (Math.PI * 2);
+        expect(THREE.MathUtils.radToDeg(Math.min(off, Math.PI * 2 - off))).toBeLessThan(3);
+        expect(wrongWay).toBeLessThan(0.05);
+      }
+    }
+  });
 });

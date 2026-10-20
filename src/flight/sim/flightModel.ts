@@ -422,11 +422,14 @@ export class FlightModel {
     }
     // Turn limits: quick in a hover; in flight the g limit caps the rate at speed
     const gRate = (G_LIMIT * GRAVITY) / Math.max(60, speed);
-    // (mid-swing the body isn't flying the path: it whips round with it)
-    const flTurn = fl * (1 - this.swing);
+    // (mid-swing the body isn't flying the path: it whips round with it;
+    // in the stance it stands and turns on the spot like a hover)
+    const flTurn = input.stance ? 0 : fl * (1 - this.swing);
     const maxPitch = THREE.MathUtils.lerp(2.6, Math.min(2.4, gRate), flTurn);
     const maxYaw = THREE.MathUtils.lerp(3.2, Math.min(1.6, gRate * 0.8), flTurn);
-    const wantPitch = clamp((pitchErr + aoa) * 5.5, -maxPitch, maxPitch) * THREE.MathUtils.lerp(0.25, 1, fl);
+    // (in the stance the body stands upright whatever the aim: the beam
+    // swings, not the suit)
+    const wantPitch = input.stance ? 0 : clamp((pitchErr + aoa) * 5.5, -maxPitch, maxPitch) * THREE.MathUtils.lerp(0.25, 1, fl);
     // Yaw is flown like a body with inertia, not a rate dial: the suit
     // builds into a turn over ~¼ s (the boots vector, then it swings),
     // carries it, and brakes smoothly onto the heading — a time-optimal
@@ -441,7 +444,12 @@ export class FlightModel {
     const bank = Math.atan2(l.y, u.y); // + = right wing low (left wing up)
     const nearVertical = Math.abs(f.y) > 0.93;
     let wantRoll: number;
-    if (fl > 0.2 && Math.abs(input.lateral) > 0.05) {
+    if (input.stance) {
+      // Stood up for the unibeam: no bank. (Upright, the flight roll axis
+      // — the long axis — is the vertical: a bank into the turn there
+      // spun the suit round away from the aim, onto its reciprocal)
+      wantRoll = 0;
+    } else if (fl > 0.2 && Math.abs(input.lateral) > 0.05) {
       wantRoll = input.lateral * 3.4 * fl;
     } else if (nearVertical) {
       wantRoll = 0;
@@ -474,15 +482,17 @@ export class FlightModel {
     }
 
     // Hover: the frame stays near upright — level it back toward world up
-    // (keeping the heading); flight keeps the attitude it was flown into
-    if (fl < 0.999) {
+    // (keeping the heading); flight keeps the attitude it was flown into.
+    // The unibeam stance stands it bolt upright, straight out of flight
+    // (not once the flightness has run down): it fires from the stance
+    if (fl < 0.999 || input.stance) {
       const fNow = this.forward(this._f);
       const heading = Math.atan2(fNow.x, fNow.z);
       const pitchNow = Math.asin(clamp(fNow.y, -1, 1));
       // Hover pitch: a gentle nod toward the aim (the head does the rest)
-      const hoverPitch = clamp(pitchErr + pitchNow, -0.5, 0.5) * 0.25;
+      const hoverPitch = input.stance ? 0 : clamp(pitchErr + pitchNow, -0.5, 0.5) * 0.25;
       this._q.setFromEuler(new THREE.Euler(-hoverPitch, heading, 0, 'YXZ'));
-      this.q.slerp(this._q, approach(dt, 0.12) * (1 - fl));
+      this.q.slerp(this._q, input.stance ? approach(dt, 0.1) : approach(dt, 0.12) * (1 - fl));
     }
 
     // ── Posture (long-axis tilt) ─────────────────────────────────────
@@ -617,7 +627,8 @@ export class FlightModel {
     }
 
     // In a hover the suit leans to its thrust: bring the frame's up toward it
-    if (fl < 0.95 && !this.grounded && !falling) {
+    // (not in the stance: the boots vector under it to shed the speed)
+    if (fl < 0.95 && !this.grounded && !falling && !input.stance) {
       const upNow = this.up(this._u);
       this._q.setFromUnitVectors(upNow, thrustDir);
       this._q2.identity().slerp(this._q, approach(dt, 0.18) * (1 - fl));
