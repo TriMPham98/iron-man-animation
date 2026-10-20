@@ -3,7 +3,7 @@ import { MINI_ROCKETS } from '../../animation/flightCheck';
 import type { Combat } from '../combat/combat';
 import { ASSIST_RANGE, LAUNCHER_PER_ARM } from '../combat/playerWeapons';
 import type { FlightModel } from '../sim/flightModel';
-import { BOOST_SPEED, CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
+import { CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
 import type { GroundProbe } from '../sim/flightModel';
 
 /**
@@ -295,7 +295,7 @@ export class Hud {
     const rx = this.w / 2 + 300 * s;
     // Airspeed in knots, as a flight HUD reads it (Mach 1 ≈ 667 kt)
     const spd = m.speed * KNOTS;
-    this.tape(g, lx, cy, spd, 50, (v) => (v >= 0 ? `${v}` : ''), -1, s, (m.boosting ? BOOST_SPEED : m.speedCmd) * KNOTS);
+    this.tape(g, lx, cy, spd, 50, (v) => (v >= 0 ? `${v}` : ''), -1, s, m.speedTarget * KNOTS);
     this.tape(g, rx, cy, m.pos.y, 100, (v) => `${v}`, 1, s);
     // Readout boxes
     const box = (x: number, label: string, value: string, align: 1 | -1) => {

@@ -120,6 +120,8 @@ const BRAKE_DECEL_MAX = 6 * GRAVITY;
  * this rate (m/s², ~2 g) instead of cutting out and leaving the drag to slam it.
  */
 const BOOST_BLEED = 2 * GRAVITY;
+/** Flap share S cracks open as speed brakes (the full flare is 1). */
+const SPEED_BRAKE = 0.5;
 /** Horizontal pull the hover computer gets well above hover speed (m/s²). */
 const HOVER_BRAKE_FAST = 14;
 /**
@@ -181,6 +183,8 @@ export class FlightModel {
   /** Lateral thrust trim for the HUD and the palms (−1…1). */
   trimRoll = 0;
   trimPitch = 0;
+  /** Rate the airspeed is changing (m/s², + = speeding up), eased: the surge the camera and body ride. */
+  surge = 0;
   /** Load factor (g) felt along the body this frame. */
   gLoad = 1;
   grounded = true;
@@ -287,6 +291,10 @@ export class FlightModel {
 
   get speed(): number {
     return this.vel.length();
+  }
+  /** Airspeed the boots are flying to: the boost's, a boost still bleeding off, or the throttle's. */
+  get speedTarget(): number {
+    return this.boosting ? BOOST_SPEED : Math.max(this.speedCmd, this.boostCarry);
   }
   get mach(): number {
     return this.speed / SPEED_OF_SOUND;
@@ -494,7 +502,7 @@ export class FlightModel {
     const hoverDir = hoverAcc.lengthSq() > 1e-6 ? hoverAcc.normalize() : hoverAcc.copy(UP);
 
     // Flight computer: hold the commanded airspeed with the boots
-    const target = this.boosting ? BOOST_SPEED : Math.max(this.speedCmd, this.boostCarry);
+    const target = this.speedTarget;
     const along = this.vel.dot(axis);
     const wave = waveDrag(speed / SPEED_OF_SOUND);
     const dragHere = DRAG * wave * rho * speed * speed;
@@ -567,7 +575,10 @@ export class FlightModel {
 
     // Drag, thinner with height; the brakes add a lot. A
     // fall is the body's own drag: it settles on its terminal speed
-    this.airbrake += ((input.brake ? 1 : 0) - this.airbrake) * approach(dt, 0.15);
+    // Holding S well over the setting cracks the flaps as speed brakes: a
+    // firmer bleed than the drag alone, nothing like the full flare
+    const speedBrake = !input.brake && input.throttle < 0 && fl > 0.5 && speed > this.speedCmd + 15;
+    this.airbrake += ((input.brake ? 1 : speedBrake ? SPEED_BRAKE : 0) - this.airbrake) * approach(dt, 0.15);
     // The wing spills its lift ahead of the flaps: the body pitches up into
     // the flare at once, and a wing still flying then ballooned it 9 g up
     this.liftSpill += ((input.brake ? 1 : 0) - this.liftSpill) * approach(dt, input.brake ? 0.04 : 0.15);
@@ -627,6 +638,7 @@ export class FlightModel {
     }
 
     this.vel.addScaledVector(acc, dt);
+    this.surge += ((this.vel.length() - speed) / Math.max(dt, 1e-4) - this.surge) * approach(dt, 0.15);
     this.pos.addScaledVector(this.vel, dt);
     // Felt load, as a G meter reads it: the normal load factor — the
     // acceleration minus gravity along the lift axis (out of the back in
@@ -761,6 +773,7 @@ export class FlightModel {
     // ── Flight state at rest ─────────────────────────────────────────
     this.speedCmd = 0;
     this.boostCarry = 0;
+    this.surge *= 1 - approach(dt, 0.15);
     this.flightness = 0;
     this.boosting = false;
     this.thrust *= 1 - approach(dt, 0.12);
