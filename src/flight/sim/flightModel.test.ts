@@ -195,6 +195,53 @@ describe('FlightModel', () => {
     expect(m.mach).toBeGreaterThan(1);
   });
 
+  it('bleeds a boost back to the throttle at about 2 g when it lets go, not a slam', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 1000, 0);
+    m.vel.set(0, 0, 430);
+    m.grounded = false;
+    m.flightness = 1;
+    m.posture = 1.42;
+    m.speedCmd = 270;
+    m.airT = 5;
+    let prev = m.speed;
+    let peak = 0;
+    let at3 = 0;
+    run(m, 12, (i, t) => {
+      i.aim.set(0, 0, 1);
+      i.boost = t < 1;
+      if (t > 1.2) peak = Math.max(peak, (prev - m.speed) * 120);
+      prev = m.speed;
+      if (t < 4) at3 = m.speed;
+    });
+    expect(peak / 9.81).toBeLessThan(2.5);
+    // Still carrying most of it three seconds on, settled on the throttle by the end
+    expect(at3).toBeGreaterThan(350);
+    expect(m.speed).toBeGreaterThan(260);
+    expect(m.speed).toBeLessThan(285);
+  });
+
+  it('brakes from supersonic at no more than about 6 g', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 1000, 0);
+    m.vel.set(0, 0, 430);
+    m.grounded = false;
+    m.flightness = 1;
+    m.posture = 1.42;
+    m.speedCmd = 270;
+    m.airT = 5;
+    let prev = m.speed;
+    let peak = 0;
+    run(m, 6, (i, t) => {
+      i.aim.set(0, 0, 1);
+      i.brake = true;
+      if (t > 0.05) peak = Math.max(peak, (prev - m.speed) * 120);
+      prev = m.speed;
+    });
+    expect(peak / 9.81).toBeLessThan(6.3);
+    expect(peak / 9.81).toBeGreaterThan(4.5);
+  });
+
   it('keeps its height while braking hard into a hover', () => {
     const m = new FlightModel(flat());
     m.pos.set(0, 200, 0);
@@ -237,7 +284,7 @@ describe('FlightModel', () => {
     const boost = fly('boost');
     expect(boost.low).toBeGreaterThan(boost.atRelease - 25);
     // (released just under Mach 1, the boost is pushing through the drag rise)
-    expect(boost.m.speed).toBeGreaterThan(boost.atRelease + 25);
+    expect(boost.m.speed).toBeGreaterThan(boost.atRelease + 15);
     expect(boost.yMax).toBeLessThan(1530);
     // Let go of X and the throttle holds what's left (not a coast to idle)
     const coast = fly('none');
@@ -257,11 +304,12 @@ describe('FlightModel', () => {
     let atRelease = 0;
     let low = Infinity;
     let swung = 0;
-    run(m, 5, (i, t) => {
+    // (the brakes top out at 6 g: a long enough flare to come out subsonic)
+    run(m, 5.5, (i, t) => {
       i.aim.set(0, 0, t < 1 ? 1 : -1);
-      i.brake = t >= 1 && t < 2.5;
-      i.boost = t < 1 || t >= 2.5;
-      if (t < 2.5) atRelease = m.speed;
+      i.brake = t >= 1 && t < 3;
+      i.boost = t < 1 || t >= 3;
+      if (t < 3) atRelease = m.speed;
       else low = Math.min(low, m.speed);
       swung = Math.max(swung, m.swing);
     });

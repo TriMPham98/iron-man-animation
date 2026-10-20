@@ -109,6 +109,17 @@ const PALM_BRAKE = 9;
  * dead, so a stop from cruise takes seconds, not a 20 g slam.
  */
 const FLARE_DRAG_MAX = 12;
+/**
+ * Most the brakes may slow the suit all told (m/s², ~6 g): from supersonic
+ * the drag rise, the flaps, the palms and the boots leaning back stacked to
+ * twice a subsonic stop.
+ */
+const BRAKE_DECEL_MAX = 6 * GRAVITY;
+/**
+ * Letting go of the boost, the boots ease the speed back to the throttle at
+ * this rate (m/s², ~2 g) instead of cutting out and leaving the drag to slam it.
+ */
+const BOOST_BLEED = 2 * GRAVITY;
 /** Horizontal pull the hover computer gets well above hover speed (m/s²). */
 const HOVER_BRAKE_FAST = 14;
 /**
@@ -205,6 +216,8 @@ export class FlightModel {
   private walkTurn = false;
   /** Shift held through a take-off doesn't light the boost until it's pressed again. */
   private boostLatch = false;
+  /** Speed the boots still hold after a boost, bleeding back to the throttle (m/s). */
+  private boostCarry = 0;
 
   private readonly _f = new THREE.Vector3();
   private readonly _u = new THREE.Vector3();
@@ -232,6 +245,7 @@ export class FlightModel {
     this.postureVel = 0;
     this.flightness = 0;
     this.speedCmd = 0;
+    this.boostCarry = 0;
     this.thrust = 0;
     this.grounded = true;
     this.crouch = 0;
@@ -329,6 +343,12 @@ export class FlightModel {
       if (input.throttle > 0) this.speedCmd = Math.max(this.speedCmd, Math.min(speed, CRUISE_MAX));
       this.speedCmd = clamp(this.speedCmd + input.throttle * 85 * dt, 0, CRUISE_MAX);
     }
+    // Off the boost, the target rides the airspeed down to the throttle; the
+    // brakes, the stance, a fall or S drop it (they set their own pace)
+    if (this.boosting) this.boostCarry = speed;
+    else if (input.brake || input.stance || falling || input.throttle < 0) this.boostCarry = 0;
+    else this.boostCarry = Math.min(speed, Math.max(this.speedCmd, this.boostCarry - BOOST_BLEED * dt));
+    const carrying = !this.boosting && this.boostCarry > this.speedCmd;
     // In a hover, forward stick alone carries you into flight once you're quick
     // (a fall is not flight, however fast it gets)
     // X drops it out of flight at once (not once the throttle has run
@@ -474,12 +494,14 @@ export class FlightModel {
     const hoverDir = hoverAcc.lengthSq() > 1e-6 ? hoverAcc.normalize() : hoverAcc.copy(UP);
 
     // Flight computer: hold the commanded airspeed with the boots
-    const target = this.boosting ? BOOST_SPEED : this.speedCmd;
+    const target = this.boosting ? BOOST_SPEED : Math.max(this.speedCmd, this.boostCarry);
     const along = this.vel.dot(axis);
     const wave = waveDrag(speed / SPEED_OF_SOUND);
     const dragHere = DRAG * wave * rho * speed * speed;
     const need = dragHere + GRAVITY * axis.y + (target - along) * 0.9;
-    const tMax = (this.boosting ? THRUST_BOOST : THRUST_MAX) * ceilingK;
+    // (still carrying a boost, the boots keep the boost's authority to hold
+    // the bleed against the drag rise)
+    const tMax = (this.boosting || carrying ? THRUST_BOOST : THRUST_MAX) * ceilingK;
     const flightThrust = clamp(need, 0, tMax);
 
     // Blend the regimes
@@ -597,6 +619,12 @@ export class FlightModel {
     }
     // Strafe / climb trim from the palms in flight
     if (fl > 0.5) acc.addScaledVector(UP, Math.max(0, input.vertical) * 6 * fl);
+    // However fast the brakes meet the air, the stop tops out at a hard 6 g
+    if (this.airbrake > 1e-3 && speed > 1) {
+      const vDir = this._v.copy(this.vel).divideScalar(speed);
+      const over = -acc.dot(vDir) - BRAKE_DECEL_MAX;
+      if (over > 0) acc.addScaledVector(vDir, over * this.airbrake);
+    }
 
     this.vel.addScaledVector(acc, dt);
     this.pos.addScaledVector(this.vel, dt);
@@ -732,6 +760,7 @@ export class FlightModel {
 
     // ── Flight state at rest ─────────────────────────────────────────
     this.speedCmd = 0;
+    this.boostCarry = 0;
     this.flightness = 0;
     this.boosting = false;
     this.thrust *= 1 - approach(dt, 0.12);

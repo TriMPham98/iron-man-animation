@@ -87,10 +87,14 @@ varying float vSide;
 float h(float x) { return fract(sin(x * 91.7 + uSeed) * 43758.5453); }
 void main() {
   float core = exp(-vSide * vSide * 3.5);
-  // Starts at the tip, then thins and breaks up as the vortex decays
-  float start = smoothstep(0.0, 0.06, vAge);
-  float life = pow(1.0 - vAge, 1.6);
-  float breakup = mix(1.0, 0.4 + 0.6 * h(floor(vAge * 24.0)), vAge);
+  // Starts at the tip, then thins and breaks up as the vortex decays. A
+  // thread swept back through the eye (a hard pull, the tips trailing past
+  // the chase camera) interpolates its age a hair past 1 by the near plane:
+  // clamp it, or pow() goes NaN and the bloom smears it over the frame
+  float age = clamp(vAge, 0.0, 1.0);
+  float start = smoothstep(0.0, 0.06, age);
+  float life = pow(1.0 - age, 1.6);
+  float breakup = mix(1.0, 0.4 + 0.6 * h(floor(age * 24.0)), age);
   float a = core * start * life * breakup * vK * 0.32;
   if (a < 0.004) discard;
   gl_FragColor = vec4(vec3(0.95, 0.97, 1.0), a);
