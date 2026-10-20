@@ -27,6 +27,8 @@ const FOV_WIDE = 58;
 const IDENTITY = new THREE.Quaternion();
 /** Most the chase camera trails its ideal spot round the suit (rad). */
 const MAX_SWING = 0.3;
+/** 0–1: how hard the suit is pulling, from a firm turn (5 g) to the wing's limit. */
+const pullK = (m: FlightModel) => THREE.MathUtils.smoothstep(m.gLoad, 5, 13);
 
 export interface CameraGround {
   surface(x: number, z: number): number;
@@ -191,7 +193,9 @@ export class CameraRig {
       // A near-critically damped spring: a quick swing round in a hard turn
       // that eases in and out (no lock-step with the mouse), still well
       // under a quarter second to settle
-      const w = this.swing;
+      // (under a hard pull the operator can't keep up: the swing loosens
+      // and the suit carves away across the frame before it's caught)
+      const w = this.swing * (1 - 0.35 * pullK(m));
       const n = Math.min(32, Math.max(1, Math.ceil(dt * w * 4)));
       const h = dt / n;
       for (let i = 0; i < n; i++) {
@@ -235,8 +239,8 @@ export class CameraRig {
       if (Math.abs(this.bank) > 1e-5) cam.quaternion.multiply(this._q.setFromAxisAngle(this._s.set(0, 0, 1), this.bank));
     }
 
-    // Shake: impacts and boost. Supersonic flight itself does not shake the picture
-    const s = this.shake + (m.boosting ? 0.04 : 0);
+    // Shake: impacts, boost and a hard pull's buffet. Supersonic flight itself does not shake the picture
+    const s = this.shake + (m.boosting ? 0.04 : 0) + 0.05 * pullK(m);
     if (s > 0.0005 && this.mode !== 'flyby') {
       const t = this.time;
       const n = (a: number, b: number) => Math.sin(t * a) * 0.6 + Math.sin(t * b + 1.3) * 0.4;

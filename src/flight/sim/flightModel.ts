@@ -70,6 +70,8 @@ export const BOOST_SPEED = 430;
 /** Max boot thrust (m/s² per kg) at full throttle and on boost. */
 const THRUST_MAX = 30;
 const THRUST_BOOST = 72;
+/** Boots spooling up to the boost's authority (s): the kick builds over ~½ s, not a step. */
+const BOOST_SPOOL = 0.15;
 /** Quadratic drag at sea level (1/m). */
 const DRAG = 2.4e-4;
 /**
@@ -136,6 +138,15 @@ const SWING_RATE = 2.2;
 const SWING_START = 1.0;
 /** Flat out (no flare first) it takes the boost and the aim well astern (rad). */
 const SWING_START_BOOST = 1.75;
+/**
+ * Most the swing carves the travel round (g): slow it's a pivot, flat out an
+ * arc that takes seconds — the one move that had no g limit, ~95 g at boost.
+ */
+const SWING_G = 22;
+/** Speed a swing spends per radian it carves (~40% across a full reversal): the boost earns it back. */
+const SWING_COST = 0.16;
+/** Easing into a swing (s): the carve builds, never snaps on. */
+const SWING_ENTRY = 0.3;
 /** Above this, the air is too thin and the suit starts icing (m). */
 export const ICING_ALT = 9000;
 export const CEILING = 11500;
@@ -224,6 +235,8 @@ export class FlightModel {
   private boostLatch = false;
   /** Speed the boots still hold after a boost, bleeding back to the throttle (m/s). */
   private boostCarry = 0;
+  /** 0–1: the boots spooled up to the boost's authority. */
+  private spool = 0;
 
   private readonly _f = new THREE.Vector3();
   private readonly _u = new THREE.Vector3();
@@ -252,6 +265,7 @@ export class FlightModel {
     this.flightness = 0;
     this.speedCmd = 0;
     this.boostCarry = 0;
+    this.spool = 0;
     this.thrust = 0;
     this.grounded = true;
     this.crouch = 0;
@@ -523,7 +537,12 @@ export class FlightModel {
     const need = dragHere + GRAVITY * axis.y + (target - along) * 0.9;
     // (still carrying a boost, the boots keep the boost's authority to hold
     // the bleed against the drag rise)
-    const tMax = (this.boosting || carrying ? THRUST_BOOST : THRUST_MAX) * ceilingK;
+    // (lit, they spool up to it from what they were giving rather than
+    // stepping onto it: the kick builds from nothing, peaks, and holds)
+    const boostOn = this.boosting || carrying;
+    this.spool += ((boostOn ? 1 : 0) - this.spool) * approach(dt, BOOST_SPOOL);
+    const tFrom = boostOn ? Math.min(this.thrust, THRUST_MAX) : THRUST_MAX;
+    const tMax = THREE.MathUtils.lerp(tFrom, THRUST_BOOST, this.spool) * ceilingK;
     const flightThrust = clamp(need, 0, tMax);
 
     // Blend the regimes
@@ -539,7 +558,7 @@ export class FlightModel {
     // Out of a flare (or a hover at speed) with the aim swung well round
     // from the travel, pushing off again — or flat out, punching the boost
     // with the aim astern — doesn't stop the suit and start over: the boots and palms carve the velocity round onto the aim at a
-    // steady rate, its size kept, the body banked hard into the carve
+    // steady rate under the g limit, paying for the turn in speed, the body banked hard into the carve
     const goingOn = !input.brake && !input.stance && !falling && wantFlight;
     const aimDir = this._aim.copy(input.aim).normalize();
     const offAim = speed > 1 ? Math.acos(clamp(this.vel.dot(aimDir) / speed, -1, 1)) : 0;
@@ -549,20 +568,25 @@ export class FlightModel {
     if (goingOn && speed > 30 && offAim > swingStart) this.swingOn = true;
     if (!goingOn || offAim < 0.08) this.swingOn = false;
     const swingGoal = this.swingOn ? 1 : 0;
-    this.swing += (swingGoal - this.swing) * approach(dt, swingGoal ? 0.15 : 0.2);
+    this.swing += (swingGoal - this.swing) * approach(dt, swingGoal ? SWING_ENTRY : 0.2);
     if (this.swing > 1e-3 && speed > 1) {
       const vDir = this._v.copy(this.vel).divideScalar(speed);
-      // None of the boots' push goes into fighting the old travel
-      acc.addScaledVector(vDir, -Math.min(0, thrustDir.dot(vDir)) * this.thrust * this.swing);
+      // None of the boots' push goes into fighting the old travel, and what
+      // they push sideways is the carve's (below), not on top of it
+      const tAlong = thrustDir.dot(vDir);
+      acc.addScaledVector(thrustDir, -this.thrust * this.swing);
+      acc.addScaledVector(vDir, Math.max(0, tAlong) * this.thrust * this.swing);
       // Turn axis: travel × aim; dead astern, keep the way it was turning
       // (or the body's yaw) and swing round flat
       const n = this._n.crossVectors(vDir, aimDir);
       if (n.lengthSq() < 1e-4) n.set(0, this.swingTurn || Math.sign(this.omega.y) || 1, 0);
       n.normalize();
       // Eased in by the swing and settled onto the aim over the last ~20°
-      const rate = SWING_RATE * smooth(0, 1, this.swing) * Math.min(1, offAim / 0.35);
+      // (capped at SWING_G: the faster it's going, the wider the arc)
+      const rate = Math.min(SWING_RATE, (SWING_G * GRAVITY) / speed) * smooth(0, 1, this.swing) * Math.min(1, offAim / 0.35);
       this._swingAcc.copy(this.vel);
-      this.vel.applyAxisAngle(n, Math.min(rate * dt, offAim));
+      const carve = Math.min(rate * dt, offAim);
+      this.vel.applyAxisAngle(n, carve).multiplyScalar(Math.exp(-SWING_COST * carve));
       this._swingAcc.subVectors(this.vel, this._swingAcc).divideScalar(Math.max(dt, 1e-4));
       this.swingTurn = this.swing * clamp(n.y * 3, -1, 1);
       // With the wing out of it the boots hold the climb on the aim's (no
@@ -635,7 +659,9 @@ export class FlightModel {
       // Lift works square to the travel: the part of it along the path made
       // a broadside body (swinging back out of a flare) a second airbrake
       lift.addScaledVector(this.vel, -lift.dot(this.vel) / (speed * speed));
-      const gCap = THREE.MathUtils.lerp(G_LIMIT, 1, Math.min(1, this.liftSpill * 2)) * GRAVITY;
+      // (and swinging, the wing hands its share of the g to the carve: the
+      // two never stack past the swing's limit)
+      const gCap = THREE.MathUtils.lerp(G_LIMIT, 1, Math.min(1, this.liftSpill * 2)) * GRAVITY * (1 - this.swing);
       const ll = lift.length();
       if (ll > gCap) lift.multiplyScalar(gCap / ll);
       acc.add(lift);
@@ -661,11 +687,14 @@ export class FlightModel {
     // it reads negative (an aileron roll swings it +1 → −1 → +1)
     const felt = this._v.copy(this.vel).sub(this._prevVel).divideScalar(Math.max(dt, 1e-4));
     felt.y += GRAVITY;
-    // (the suit's dampers soak up most of a swing's carve: it reads as a
-    // hard pull, not the 80 g the velocity really turns at)
-    felt.addScaledVector(this._swingAcc, -0.85);
+    // (the suit's dampers soak up the top of a swing's carve: at its
+    // hardest it reads as the wing's limit pull, not the full SWING_G)
+    felt.addScaledVector(this._swingAcc, -(1 - G_LIMIT / SWING_G));
     const liftAxis = this._t.set(0, 1, 0).applyAxisAngle(this._n.set(1, 0, 0), lean).applyQuaternion(this.q);
-    this.gLoad += (felt.dot(liftAxis) / GRAVITY - this.gLoad) * approach(dt, 0.25);
+    // (mid-swing the body isn't square to the carve — flared upright, it
+    // read as a −8 g push — so the meter reads the pull's size, as felt)
+    const pull = THREE.MathUtils.lerp(felt.dot(liftAxis), felt.length(), this.swing);
+    this.gLoad += (pull / GRAVITY - this.gLoad) * approach(dt, 0.25);
 
     this.collide(input);
     this.syncGait(dt);

@@ -195,6 +195,32 @@ describe('FlightModel', () => {
     expect(m.mach).toBeGreaterThan(1);
   });
 
+  it('spools the boost up over a beat instead of stepping onto it', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 1500, 0);
+    m.vel.set(0, 0, 200);
+    m.grounded = false;
+    m.flightness = 1;
+    m.posture = 1.42;
+    m.speedCmd = 200;
+    m.airT = 5;
+    run(m, 2, (i) => i.aim.set(0, 0, 1));
+    const dt = 1 / 120;
+    let last = m.speed;
+    let early = 0;
+    let peak = 0;
+    run(m, 1.5, (i, t) => {
+      i.aim.set(0, 0, 1);
+      i.boost = true;
+      const a = (m.speed - last) / dt;
+      last = m.speed;
+      if (t < 0.06) early = Math.max(early, a);
+      peak = Math.max(peak, a);
+    });
+    expect(peak).toBeGreaterThan(3 * 9.81);
+    expect(early).toBeLessThan(peak * 0.15);
+  });
+
   it('bleeds a boost back to the throttle at about 2 g when it lets go, not a slam', () => {
     const m = new FlightModel(flat());
     m.pos.set(0, 1000, 0);
@@ -350,7 +376,7 @@ describe('FlightModel', () => {
     expect(coast.m.speedCmd).toBeGreaterThan(250);
   });
 
-  it('swings its speed round onto the aim when it pushes off the other way', () => {
+  it('swings its speed round onto the aim when it pushes off the other way, paying for the turn', () => {
     const m = new FlightModel(flat());
     m.pos.set(0, 1500, 0);
     m.vel.set(0, 0, 400);
@@ -362,21 +388,65 @@ describe('FlightModel', () => {
     let atRelease = 0;
     let low = Infinity;
     let swung = 0;
+    let reversed = Infinity;
     // (the brakes top out at 6 g: a long enough flare to come out subsonic)
-    run(m, 5.5, (i, t) => {
+    run(m, 8, (i, t) => {
       i.aim.set(0, 0, t < 1 ? 1 : -1);
       i.brake = t >= 1 && t < 3;
       i.boost = t < 1 || t >= 3;
       if (t < 3) atRelease = m.speed;
       else low = Math.min(low, m.speed);
+      if (t >= 3 && reversed === Infinity && m.vel.z < -0.98 * m.speed) reversed = t - 3;
       swung = Math.max(swung, m.swing);
     });
     expect(swung).toBeGreaterThan(0.9);
-    // Carried round, not killed and rebuilt
-    expect(low).toBeGreaterThan(atRelease * 0.9);
+    // Carried round, not killed and rebuilt — but the carve costs speed
+    expect(low).toBeGreaterThan(atRelease * 0.45);
+    expect(low).toBeLessThan(atRelease * 0.75);
+    // An arc of seconds at speed, not a flick
+    expect(reversed).toBeGreaterThan(2);
+    expect(reversed).toBeLessThan(4.5);
+    // …and the boost earns the speed back on the new line
     expect(m.vel.z).toBeLessThan(-0.98 * m.speed);
-    expect(m.speed).toBeGreaterThan(atRelease);
-    expect(Math.abs(m.pos.y - 1500)).toBeLessThan(40);
+    expect(m.speed).toBeGreaterThan(low + 60);
+    expect(Math.abs(m.pos.y - 1500)).toBeLessThan(60);
+  });
+
+  it('carves a flat-out reversal under the swing g limit, the meter reading no more than a hard pull', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 1500, 0);
+    m.vel.set(0, 0, 420);
+    m.grounded = false;
+    m.flightness = 1;
+    m.posture = 1.42;
+    m.speedCmd = 270;
+    m.airT = 5;
+    const dt = 1 / 120;
+    const prev = new THREE.Vector3().copy(m.vel);
+    const acc = new THREE.Vector3();
+    let peak = 0;
+    let gMax = -Infinity;
+    let gMin = Infinity;
+    let swung = 0;
+    run(m, 7, (i, t) => {
+      i.aim.set(0, 0, t < 1 ? 1 : -1);
+      i.boost = true;
+      // Acceleration square to the travel, last step
+      acc.copy(m.vel).sub(prev).divideScalar(dt);
+      prev.copy(m.vel);
+      acc.addScaledVector(m.vel, -acc.dot(m.vel) / m.vel.lengthSq());
+      if (t > 1) {
+        peak = Math.max(peak, acc.length() / 9.81);
+        gMax = Math.max(gMax, m.gLoad);
+        gMin = Math.min(gMin, m.gLoad);
+      }
+      swung = Math.max(swung, m.swing);
+    });
+    expect(swung).toBeGreaterThan(0.9);
+    expect(peak).toBeLessThan(24);
+    expect(gMax).toBeLessThan(16);
+    expect(gMin).toBeGreaterThan(-1);
+    expect(m.vel.z).toBeLessThan(-0.98 * m.speed);
   });
 
   it('comes down fast in a hover as a three-point landing, not a crash', () => {

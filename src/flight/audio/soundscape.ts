@@ -434,9 +434,11 @@ export class Soundscape {
     const air = Math.min(1, (m.speed / 260) ** 2);
     this.wind?.set((0.05 + 0.85 * air) * inside + 0.04 * out, 0.9 + 0.3 * Math.min(1, m.speed / 400) * inside, 600 + 9000 * Math.min(1, m.speed / 300) * inside);
     // Air brake: the flared plates shake in the stream, a rumble that grows
-    // with the air pressing on them (nothing to buffet in a hover)
+    // with the air pressing on them (nothing to buffet in a hover); a hard
+    // pull shakes the plates too, under it
     const q = THREE.MathUtils.smoothstep(m.speed, 6, 140);
-    this.buffet?.set(m.airbrake * q * 1.1, 0.72 + 0.38 * q, 900 + 5000 * q);
+    const pull = THREE.MathUtils.smoothstep(m.gLoad, 5, 13);
+    this.buffet?.set(Math.max(m.airbrake * 1.1, pull * 0.5) * q, 0.72 + 0.38 * q, 900 + 5000 * q);
     this.beam?.set(beamOn ? 0.6 / Math.max(0.3, near * 1.6) : 0, 1.9, beamOn ? 9000 : 2000);
     // Missile warning: a fast, insistent tone while a seeker is on us
     if (combat.incoming > 0) {
