@@ -236,7 +236,8 @@ describe('FlightModel', () => {
     };
     const boost = fly('boost');
     expect(boost.low).toBeGreaterThan(boost.atRelease - 25);
-    expect(boost.m.speed).toBeGreaterThan(boost.atRelease + 50);
+    // (released just under Mach 1, the boost is pushing through the drag rise)
+    expect(boost.m.speed).toBeGreaterThan(boost.atRelease + 25);
     expect(boost.yMax).toBeLessThan(1530);
     // Let go of X and the throttle holds what's left (not a coast to idle)
     const coast = fly('none');

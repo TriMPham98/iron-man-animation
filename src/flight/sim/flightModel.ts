@@ -72,6 +72,13 @@ const THRUST_MAX = 30;
 const THRUST_BOOST = 72;
 /** Quadratic drag at sea level (1/m). */
 const DRAG = 2.4e-4;
+/**
+ * Transonic drag rise: extra drag (× DRAG) that builds through the high
+ * subsonic, peaks at the barrier and falls off to a residue once clear, so
+ * the boost still punches but the last stretch to Mach 1 is a push.
+ */
+const WAVE_PEAK = 1.25;
+const WAVE_RESIDUE = 0.3;
 /** Body lift: how hard the velocity is pulled onto the nose (1/m), and the g cap. */
 const LIFT = 0.028;
 const G_LIMIT = 13;
@@ -124,6 +131,9 @@ const smooth = (a: number, b: number, x: number) => {
   const t = clamp((x - a) / (b - a), 0, 1);
   return t * t * (3 - 2 * t);
 };
+/** Drag multiplier at a Mach number: 1 subsonic, rising to the barrier, a residue past it. */
+const waveDrag = (mach: number) =>
+  1 + WAVE_PEAK * smooth(0.8, 0.98, mach) - (WAVE_PEAK - WAVE_RESIDUE) * smooth(1.0, 1.12, mach);
 /** Exponential approach: fraction of the gap closed in dt with time constant tau. */
 const approach = (dt: number, tau: number) => 1 - Math.exp(-dt / Math.max(1e-4, tau));
 
@@ -466,7 +476,8 @@ export class FlightModel {
     // Flight computer: hold the commanded airspeed with the boots
     const target = this.boosting ? BOOST_SPEED : this.speedCmd;
     const along = this.vel.dot(axis);
-    const dragHere = DRAG * rho * speed * speed;
+    const wave = waveDrag(speed / SPEED_OF_SOUND);
+    const dragHere = DRAG * wave * rho * speed * speed;
     const need = dragHere + GRAVITY * axis.y + (target - along) * 0.9;
     const tMax = (this.boosting ? THRUST_BOOST : THRUST_MAX) * ceilingK;
     const flightThrust = clamp(need, 0, tMax);
@@ -542,7 +553,7 @@ export class FlightModel {
     // hit it, and the brakes bit as a step on the first frame)
     const flareCap = FLARE_DRAG_MAX * smooth(0, 1, Math.max(this.airbrake, 1 - fl));
     const flareDrag = Math.min(DRAG * (this.airbrake * 5 + (1 - fl) * 3) * rho * speed * speed, flareCap) * (1 - this.swing);
-    const dragK = rho * THREE.MathUtils.lerp(DRAG, FALL_DRAG, this.freefall);
+    const dragK = rho * THREE.MathUtils.lerp(DRAG * wave, FALL_DRAG, this.freefall);
     acc.addScaledVector(this.vel, -(dragK * speed + (flareDrag * (1 - this.freefall)) / Math.max(speed, 1)));
     // Falling, the hands and legs steer it a little (forward / sideways)
     if (falling) {
