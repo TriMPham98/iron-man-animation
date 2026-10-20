@@ -96,6 +96,14 @@ const FALL_STICK = -0.5;
 const FALL_STEER = 4;
 /** Palm jets braking (X) against the travel (m/s²). */
 const PALM_BRAKE = 9;
+/**
+ * Most the flare's extra drag (brakes out, body broadside) adds (m/s²): the
+ * flaps blow back against the dynamic pressure rather than stopping the suit
+ * dead, so a stop from cruise takes seconds, not a 20 g slam.
+ */
+const FLARE_DRAG_MAX = 12;
+/** Horizontal pull the hover computer gets well above hover speed (m/s²). */
+const HOVER_BRAKE_FAST = 14;
 /** Above this, the air is too thin and the suit starts icing (m). */
 export const ICING_ALT = 9000;
 export const CEILING = 11500;
@@ -285,7 +293,7 @@ export class FlightModel {
     // down): the body is the brakes' now, free to swing round onto the aim
     const wantFlight = !falling && !input.brake && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.stance));
     const flightGoal = wantFlight && !this.grounded ? 1 : 0;
-    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? 0.55 : input.brake ? 0.22 : 0.4);
+    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? 0.55 : input.brake ? 0.6 : 0.4);
     if (this.grounded) this.flightness = 0;
     const fl = smooth(0.05, 0.95, this.flightness);
 
@@ -392,7 +400,13 @@ export class FlightModel {
     const hoverMax = THRUST_MAX * 1.1 * ceilingK;
     const hoverAcc = vWant.sub(this.vel).multiplyScalar(1.6);
     hoverAcc.y = clamp(hoverAcc.y + GRAVITY, 0, hoverMax);
-    const side = Math.sqrt(Math.max(0, hoverMax * hoverMax - hoverAcc.y * hoverAcc.y));
+    // Well over hover speed (flaring out of flight) the boots only lean back
+    // so far: the stop is a long, heavy bleed, not the VTOL's crisp one
+    const hvNow = Math.hypot(this.vel.x, this.vel.z);
+    const side = Math.min(
+      Math.sqrt(Math.max(0, hoverMax * hoverMax - hoverAcc.y * hoverAcc.y)),
+      THREE.MathUtils.lerp(hoverMax, HOVER_BRAKE_FAST, smooth(HOVER_SPEED * 1.5, HOVER_SPEED * 4, hvNow)),
+    );
     const hl = Math.hypot(hoverAcc.x, hoverAcc.z);
     if (hl > side) {
       hoverAcc.x *= side / hl;
@@ -435,8 +449,9 @@ export class FlightModel {
     // Drag, thinner with height; the brakes add a lot. A
     // fall is the body's own drag: it settles on its terminal speed
     this.airbrake += ((input.brake ? 1 : 0) - this.airbrake) * approach(dt, 0.15);
-    const dragK = rho * THREE.MathUtils.lerp(DRAG * (1 + this.airbrake * 5 + (1 - fl) * 3), FALL_DRAG, this.freefall);
-    acc.addScaledVector(this.vel, -dragK * speed);
+    const flareDrag = Math.min(DRAG * (this.airbrake * 5 + (1 - fl) * 3) * rho * speed * speed, FLARE_DRAG_MAX);
+    const dragK = rho * THREE.MathUtils.lerp(DRAG, FALL_DRAG, this.freefall);
+    acc.addScaledVector(this.vel, -(dragK * speed + (flareDrag * (1 - this.freefall)) / Math.max(speed, 1)));
     // Falling, the hands and legs steer it a little (forward / sideways)
     if (falling) {
       const hx = vWant.x - this.vel.x;
@@ -446,7 +461,7 @@ export class FlightModel {
     }
     // Palm jets against the travel: X
     const palmGoal = input.brake && !this.grounded ? smooth(2, 14, speed) : 0;
-    this.palmBrake += (palmGoal - this.palmBrake) * approach(dt, 0.12);
+    this.palmBrake += (palmGoal - this.palmBrake) * approach(dt, palmGoal > this.palmBrake ? 0.3 : 0.12);
     // (along the ground: the boots hold the height)
     const hv = Math.hypot(this.vel.x, this.vel.z);
     if (this.palmBrake > 1e-3 && hv > 0.5) {
@@ -462,12 +477,14 @@ export class FlightModel {
       // Flared for the brakes the body is a parachute, not a wing: no balloon
       // Full down kills the wing so the body falls instead of gliding
       const fall = input.vertical < 0 ? 1 + input.vertical : 1;
-      const lift = perp.multiplyScalar(-LIFT * speed * rho * fl * (1 - 0.85 * this.airbrake) * fall);
+      // and the pitch-up of the flare doesn't slam it (the load is capped low)
+      const lift = perp.multiplyScalar(-LIFT * speed * rho * fl * (1 - 0.95 * this.airbrake) * fall);
+      const gCap = THREE.MathUtils.lerp(G_LIMIT, 1, this.airbrake) * GRAVITY;
       const ll = lift.length();
-      if (ll > G_LIMIT * GRAVITY) lift.multiplyScalar((G_LIMIT * GRAVITY) / ll);
+      if (ll > gCap) lift.multiplyScalar(gCap / ll);
       acc.add(lift);
       // Induced drag: turning costs energy
-      acc.addScaledVector(this.vel, -(Math.min(ll, G_LIMIT * GRAVITY) * 0.045) / Math.max(speed, 1));
+      acc.addScaledVector(this.vel, -(Math.min(ll, gCap) * 0.045) / Math.max(speed, 1));
     }
     // Strafe / climb trim from the palms in flight
     if (fl > 0.5) acc.addScaledVector(UP, Math.max(0, input.vertical) * 6 * fl);
