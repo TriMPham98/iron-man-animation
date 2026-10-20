@@ -38,7 +38,8 @@ export const SFX = {
   explosionNear: `${KIT}explosion-near.mp3`,
   explosionSub: `${KIT}explosion-sub.mp3`,
   explosionHuge: `${KIT}explosion-huge.mp3`,
-  sonicNwave: `${KIT}sonic-nwave.mp3`,
+  sonicBoomNear: `${KIT}sonic-boom-near.mp3`,
+  sonicBoomFar: `${KIT}sonic-boom-far.mp3`,
   heroThud: `${KIT}hero-thud.mp3`,
   deepBoom: `${KIT}deep-boom.mp3`,
   rocket1: `${KIT}rocket-1.mp3`,
@@ -64,6 +65,7 @@ export const SFX = {
   wind: `${KIT}wind.mp3`,
   jet: `${KIT}jet.mp3`,
   jetLoop: `${KIT}jet-loop.mp3`,
+  buffet: `${KIT}buffet.mp3`,
 } as const;
 
 /**
@@ -124,6 +126,8 @@ export class Soundscape {
   private boost: Loop | null = null;
   private wind: Loop | null = null;
   private beam: Loop | null = null;
+  /** The airstream shaking the flared brakes (X). */
+  private buffet: Loop | null = null;
   private engines: Array<{ loop: Loop; id: number }> = [];
   private warnT = 0;
   private started = false;
@@ -148,6 +152,8 @@ export class Soundscape {
   /** Where the ears were last frame. */
   private readonly ear = new THREE.Vector3();
   private lastBoom = -99;
+  /** The helmet view is the pilot's own ears. */
+  private helmet = false;
 
   constructor(private readonly audio: GameAudio) {}
 
@@ -173,6 +179,7 @@ export class Soundscape {
     this.boost = A.loop(SFX.thrusterBurn, { start: 1.4, end: 3.9, out });
     this.wind = A.loop(SFX.wind);
     this.beam = A.loop(SFX.thrusterBurn, { start: 1.0, end: 3.0, out });
+    this.buffet = A.loop(SFX.buffet, { out });
     this.roar = A.loop(SFX.jetLoop, { out: this.air ? [this.air.input] : undefined });
   }
 
@@ -182,22 +189,16 @@ export class Soundscape {
   }
 
   /**
-   * The double boom, as an outside ear gets it the moment the Mach cone
-   * sweeps over it: a real recording of the N-wave — the bow shock's
-   * crack, then ~0.11 s on the tail shock's — with a sub slam under each
-   * crack and the whole thing thrown back off the hills.
+   * The boom as a standing-off camera gets it the moment the Mach cone
+   * sweeps over it: the DCS boom heard from far off — the bow and tail
+   * cracks, then the long rumble rolling back off the hills — however
+   * close the pass, so the cinematic shots sound like a jet heard from the ground.
    */
-  private doubleBoom(at: THREE.Vector3): void {
+  private distantBoom(at: THREE.Vector3): void {
     const A = this.audio;
     if (this.now - this.lastBoom < 1.5) return;
     this.lastBoom = this.now;
-    const o = { at, ref: 60, propagate: false };
-    // The cracks land 0.07 s and 0.18 s into the file
-    A.play(SFX.sonicNwave, { ...o, gain: 1.5, echo: 0.6 });
-    A.play(SFX.sonicNwave, { ...o, gain: 0.6, rate: 0.82, lowpass: 900, delay: 0.012 });
-    A.play(SFX.explosionSub, { ...o, gain: 0.95, lowpass: 240, delay: 0.06 });
-    A.play(SFX.deepBoom, { ...o, gain: 1.1, lowpass: 1600, delay: 0.17, echo: 0.5 });
-    A.play(SFX.explosionHuge, { ...o, gain: 0.45, lowpass: 420, delay: 0.25 });
+    A.play(SFX.sonicBoomFar, { at, ref: 60, propagate: false, gain: 1.4, echo: 0.4 });
   }
 
   /** The sea: the slap, the body going in, spray coming down after. */
@@ -252,9 +253,14 @@ export class Soundscape {
         if (at) this.splash(at, e.value ?? 5);
         break;
       case 'sonicBoom':
-        // DCS-style: breaking the barrier is silent in the suit (the pilot
-        // flies ahead of his own noise, he never hears a boom); an outside
-        // ear hears it only when the Mach cone sweeps over it (update())
+        // DCS-style: silent in the helmet (the pilot flies ahead of his own
+        // noise, he never hears a boom). The chase and shoulder cameras get
+        // the DCS boom right on the jet as it breaks through; a standing-off
+        // camera hears it only when the Mach cone sweeps over it (update())
+        if (!this.helmet && !this.outside && this.now - this.lastBoom > 1.5) {
+          this.lastBoom = this.now;
+          A.play(SFX.sonicBoomNear, { gain: 1.1, echo: 0.3 });
+        }
         break;
       case 'boostStart':
         A.play(SFX.rocket1, { at, gain: 0.8, rate: 0.7, ref: 10 });
@@ -377,6 +383,7 @@ export class Soundscape {
   update(dt: number, m: FlightModel, combat: Combat, cam: THREE.Camera, helmet: boolean, beamOn: boolean): void {
     const A = this.audio;
     if (!A.ready) return;
+    this.helmet = helmet;
     this.now += dt;
     // Whose ears: the pilot's in the suit views, the camera's when it
     // stands off (flyby, a directed shot, the title orbit)
@@ -404,7 +411,7 @@ export class Soundscape {
       const cone = Math.sqrt(1 - 1 / (m.mach * m.mach));
       const inCone = ahead > cone;
       if (!inCone) this.coneArmed = true;
-      if (inCone && this.coneArmed && this.outside) this.doubleBoom(m.pos);
+      if (inCone && this.coneArmed && this.outside) this.distantBoom(m.pos);
       if (inCone) this.coneArmed = false;
       gate = inCone ? 1 : 0;
     } else {
@@ -426,6 +433,10 @@ export class Soundscape {
     // (the pilot's, in the helmet — a camera on a hillside hears a breeze)
     const air = Math.min(1, (m.speed / 260) ** 2);
     this.wind?.set((0.05 + 0.85 * air) * inside + 0.04 * out, 0.9 + 0.3 * Math.min(1, m.speed / 400) * inside, 600 + 9000 * Math.min(1, m.speed / 300) * inside);
+    // Air brake: the flared plates shake in the stream, a rumble that grows
+    // with the air pressing on them (nothing to buffet in a hover)
+    const q = THREE.MathUtils.smoothstep(m.speed, 6, 140);
+    this.buffet?.set(m.airbrake * q * 1.1, 0.72 + 0.38 * q, 900 + 5000 * q);
     this.beam?.set(beamOn ? 0.6 / Math.max(0.3, near * 1.6) : 0, 1.9, beamOn ? 9000 : 2000);
     // Missile warning: a fast, insistent tone while a seeker is on us
     if (combat.incoming > 0) {

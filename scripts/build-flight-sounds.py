@@ -45,18 +45,27 @@ FROM_SEARCH = {
     'splash-big': ('hit/ov-fce993b0.wav', 0, None),
     'sam-launch': ('whoosh/_raw/ov-86fcafec.mp3', 0.42, 5.2),
     'jet': ('transition/_raw/ov-7de6124e.mp3', 31.0, 8.5),
-    # A real double boom off the ground (bow and tail shock ~0.11 s apart),
-    # with its own chain: the DC of the recorder's flat pressure step
-    # high-passed out, the body lifted and the two cracks pushed up against
-    # a limiter so they hit like a slammed door
-    'sonic-nwave': ('boom/_raw/ov-3da9f151.mp3', 43.38, 1.8,
-                    'highpass=f=22:poles=2,afade=t=in:d=0.004,afade=t=out:st=0.5:d=1.2,bass=g=6:f=80:w=0.8,'
-                    'acompressor=threshold=-14dB:ratio=2:attack=0.5:release=120,alimiter=limit=0.7:attack=1:release=40:level=false'),
+}
+# Cuts from the DCS World sonic boom video (game audio, not CC0: credited by
+# hand in CREDITS.md). Fetch its audio first:
+#   yt-dlp -x --audio-format wav -o audio/candidates/video/dcs-sonic-boom.wav \
+#     https://www.youtube.com/watch?v=vWggV3kWr-w
+# name: (start, length, fade-out start, gain dB). Plain gain, no loudnorm:
+# the crack must keep its jump over the roar
+VIDEO = 'video/dcs-sonic-boom.wav'
+FROM_VIDEO = {
+    # 1:35 — the crack right on the jet, then the first of its roar
+    'sonic-boom-near': (95.93, 3.6, 1.2, -5),
+    # 4:05 — far off: the double crack, then the long rolling rumble
+    'sonic-boom-far': (246.38, 7.5, 3.0, -5),
 }
 # Loops: (source, start, length, crossfade)
 LOOPS = {
     'wind': ('transition/_raw/ov-8ba94356.mp3', 30.0, 22.0, 2.0),
     'jet-loop': ('transition/_raw/ov-7de6124e.mp3', 33.0, 5.0, 1.2),
+    # Wind tearing across a mic: the suit's flared plates shaking in the
+    # airstream (the clean middle, before the crackles near the end)
+    'buffet': ('transition/_raw/ov-88483e8e.mp3', 4.3, 5.5, 1.0),
 }
 
 
@@ -83,6 +92,10 @@ def main():
         fade = f"afade=t=in:d=0.01,afade=t=out:st={max(0.0, (length or 99) - 0.4)}:d=0.4" if length else 'afade=t=in:d=0.005'
         run([*trim, '-i', os.path.join(CAND, rel), '-af', chain[0] if chain else f'{fade},loudnorm=I=-16:TP=-1.5', '-ar', '44100', '-ac', '1', '-q:a', '3', os.path.join(OUT, name + '.mp3')])
         credits.append(f"- `{name}.mp3` — {credit_of_search(rel)}")
+    for name, (start, length, fade, gain) in FROM_VIDEO.items():
+        run(['-ss', str(start), '-t', str(length), '-i', os.path.join(CAND, VIDEO), '-af',
+             f'highpass=f=20,afade=t=in:d=0.004,afade=t=out:st={fade}:d={length - fade},volume={gain}dB',
+             '-ar', '44100', '-ac', '1', '-q:a', '3', os.path.join(OUT, name + '.mp3')])
     for name, (rel, start, length, xf) in LOOPS.items():
         # Seamless loop: the tail crossfades into the head
         src = os.path.join(CAND, rel)

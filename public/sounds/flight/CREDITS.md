@@ -33,4 +33,8 @@ deploy) come from the project library in `public/sounds/`.
 - `jet.mp3` — "Jet Flyby 1" by unfa (https://freesound.org/people/unfa/sounds/168079), CC0
 - `wind.mp3` (looped) — "Car Strong Wind Noise.mp3" by FunWithSound (https://freesound.org/people/FunWithSound/sounds/439242), CC0
 - `jet-loop.mp3` (looped) — "Jet Flyby 1" by unfa (https://freesound.org/people/unfa/sounds/168079), CC0
-- `sonic-nwave.mp3` — "Breaking the sound barrier" by thenudo (https://freesound.org/people/thenudo/sounds/134829), CC0
+- `buffet.mp3` (looped) — "air over mic.wav" by cognito perceptu (https://freesound.org/people/cognito%20perceptu/sounds/20108), CC0
+
+## Not CC0
+
+- `sonic-boom-near.mp3` (1:35) and `sonic-boom-far.mp3` (4:05) — cut from "DCS 2.7.9 Sonic Boom Effect / Audio Update" (https://www.youtube.com/watch?v=vWggV3kWr-w), game audio from DCS World by Eagle Dynamics. Not cleared for redistribution: swap these out before publishing anything.
