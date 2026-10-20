@@ -7,7 +7,7 @@ looped and level-matched here. Run from the repo root after
 
     python3 scripts/build-flight-sounds.py
 """
-import json, os, subprocess
+import json, os, re, subprocess
 
 KIT = 'audio/kit'
 CAND = 'audio/candidates'
@@ -26,11 +26,6 @@ FROM_KIT = {
     'zip': 'whoosh/fs-471097-knife-sword-swing-1',
     'charge': 'riser/fs-531729-energy-riser-3-1',
     'repulsor-zap': 'zap/kenney-scifi-laser-large-001',
-    'lock-tick': 'ui/kenney-digital-three-tone2',
-    'lock-full': 'ui/kenney-interface-confirmation-001',
-    'warn': 'ui/kenney-digital-high-down',
-    'jarvis-blip': 'ui/kenney-digital-three-tone1',
-    'wave-tone': 'ui/kenney-digital-low-three-tone',
     'ping-1': 'tap/kenney-impact-impact-metal-heavy-000',
     'ping-2': 'tap/kenney-impact-impact-metal-heavy-001',
     'ping-3': 'tap/kenney-impact-impact-metal-light-001',
@@ -59,6 +54,20 @@ FROM_VIDEO = {
     # 4:05 — far off: the double crack, then the long rolling rumble
     'sonic-boom-far': (246.38, 7.5, 3.0, -5),
 }
+# HUD tones (Openverse / Freesound CC0, `sfx.py search --type ui`): name:
+# (source, start, length). Short clean beeps: peak-normalised, not loudnorm
+# (a quarter-second beep has no loudness window to measure)
+HUD = {
+    # "lock on": the first of its three seeker beeps — one per target painted
+    'lock-tick': ('ui/_raw/ov-d46d834b.mp3', 0.0, 0.3),
+    # "Missile Lock Detected": one pulse of its warbling RWR beep; the sim
+    # retriggers it faster as a seeker closes
+    'rwr-pulse': ('ui/_raw/ov-da49f84c.mp3', 0.04, 0.28),
+    'kill-confirm': ('ui/_raw/ov-0e4470e4.mp3', 0.0, 0.8),
+    'jarvis-blip': ('ui/_raw/ov-72ea12c6.mp3', 0.0, 0.55),
+    'wave-start': ('ui/_raw/ov-10a82ee3.mp3', 0.06, 0.95),
+    'wave-clear': ('ui/_raw/ov-7c7afab7.mp3', 0.0, 1.0),
+}
 # Loops: (source, start, length, crossfade)
 LOOPS = {
     'wind': ('transition/_raw/ov-8ba94356.mp3', 30.0, 22.0, 2.0),
@@ -66,11 +75,20 @@ LOOPS = {
     # Wind tearing across a mic: the suit's flared plates shaking in the
     # airstream (the clean middle, before the crackles near the end)
     'buffet': ('transition/_raw/ov-88483e8e.mp3', 4.3, 5.5, 1.0),
+    # An AIM-9's seeker growl: the paint searching for heat
+    'seeker-growl': ('ui/_raw/ov-6b5a28ab.mp3', 0.5, 4.5, 0.5),
+    # "lock on": its solid tone — the house is full, shoot
+    'lock-tone': ('ui/_raw/ov-d46d834b.mp3', 1.75, 0.9, 0.2),
 }
 
 
 def run(args):
     subprocess.run(['ffmpeg', '-v', 'error', '-y', *args], check=True)
+
+
+def peak_db(path):
+    r = subprocess.run(['ffmpeg', '-v', 'info', '-i', path, '-af', 'volumedetect', '-f', 'null', '-'], capture_output=True, text=True)
+    return float(re.search(r'max_volume: (-?[\d.]+) dB', r.stderr).group(1))
 
 
 def credit_of_search(rel):
@@ -91,6 +109,13 @@ def main():
         trim = ['-ss', str(start)] + (['-t', str(length)] if length else [])
         fade = f"afade=t=in:d=0.01,afade=t=out:st={max(0.0, (length or 99) - 0.4)}:d=0.4" if length else 'afade=t=in:d=0.005'
         run([*trim, '-i', os.path.join(CAND, rel), '-af', chain[0] if chain else f'{fade},loudnorm=I=-16:TP=-1.5', '-ar', '44100', '-ac', '1', '-q:a', '3', os.path.join(OUT, name + '.mp3')])
+        credits.append(f"- `{name}.mp3` — {credit_of_search(rel)}")
+    for name, (rel, start, length) in HUD.items():
+        tmp = os.path.join(OUT, f'_{name}.wav')
+        run(['-ss', str(start), '-t', str(length), '-i', os.path.join(CAND, rel), '-af',
+             f'highpass=f=80,afade=t=in:d=0.004,afade=t=out:st={length - 0.04}:d=0.04', '-ar', '44100', '-ac', '1', tmp])
+        run(['-i', tmp, '-af', f'volume={-3 - peak_db(tmp):.1f}dB', '-ar', '44100', '-ac', '1', '-q:a', '3', os.path.join(OUT, name + '.mp3')])
+        os.remove(tmp)
         credits.append(f"- `{name}.mp3` — {credit_of_search(rel)}")
     for name, (start, length, fade, gain) in FROM_VIDEO.items():
         run(['-ss', str(start), '-t', str(length), '-i', os.path.join(CAND, VIDEO), '-af',

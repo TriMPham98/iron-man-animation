@@ -245,6 +245,22 @@ export class PlayerWeapons {
     return this.holdL > 0 || this.holdR > 0;
   }
 
+  /** The seeker as the pilot hears it: 0 off, 1 searching, 2 painting (some locks), 3 every round locked. */
+  get seeker(): 0 | 1 | 2 | 3 {
+    const A = this.arms;
+    let n = -1;
+    let cap = 0;
+    if (this.missileHeld && A.silos > 0.95) {
+      n = this.locks.length;
+      cap = Math.min(SALVO_MAX, this.rockets);
+    } else if (this.launcherHeld && A.launchers > 0.95) {
+      n = this.launcherLocks.length;
+      cap = this.launcherAmmo;
+    }
+    if (n < 0) return 0;
+    return n >= cap ? 3 : n > 0 ? 2 : 1;
+  }
+
   update(dt: number, c: Controls, aim: THREE.Vector3, eye: THREE.Vector3, hostiles: readonly Hostile[], enabled: boolean): void {
     const A = this.arms;
     this.lastDt = dt;

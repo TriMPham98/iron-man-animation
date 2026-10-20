@@ -113,6 +113,31 @@ void main() {
 }
 `;
 
+const BRIGHT_PASS_FRAG = /* glsl */ `
+uniform sampler2D tDiffuse;
+uniform vec3 defaultColor;
+uniform float defaultOpacity;
+uniform float luminosityThreshold;
+uniform float smoothWidth;
+varying vec2 vUv;
+vec3 tap(vec2 uv, inout float wsum) {
+  vec3 c = texture2D(tDiffuse, uv).rgb;
+  float w = 1.0 / (1.0 + luminance(c));
+  wsum += w;
+  return c * w;
+}
+void main() {
+  // four bilinear taps one source pixel off-centre cover the 4×4 block
+  vec2 px = 1.0 / vec2(textureSize(tDiffuse, 0));
+  float wsum = 0.0;
+  vec3 c = tap(vUv + vec2(-px.x, -px.y), wsum) + tap(vUv + vec2(px.x, -px.y), wsum)
+         + tap(vUv + vec2(-px.x, px.y), wsum) + tap(vUv + vec2(px.x, px.y), wsum);
+  c /= wsum;
+  float alpha = smoothstep(luminosityThreshold, luminosityThreshold + smoothWidth, luminance(c));
+  gl_FragColor = mix(vec4(defaultColor, defaultOpacity), vec4(c, 1.0), alpha);
+}
+`;
+
 export class FlightPost {
   private readonly rt: THREE.WebGLRenderTarget;
   private readonly bloom: UnrealBloomPass;
@@ -134,6 +159,14 @@ export class FlightPost {
     });
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.32, 0.5, 1.3);
     this.bloom.blendMaterial.visible = false;
+    // The bright pass reads the frame at quarter resolution, one tap per
+    // texel: a lone glint off a wave crest or the armour (HDR in the
+    // thousands) lands in a single texel and blurs out as a glowing square.
+    // Gather the texel's whole 4×4 footprint instead, Karis-weighted, so
+    // isolated sparkles average away while broad highlights (the sun, the
+    // glitter path, the jets) bloom as before
+    this.bloom.materialHighPassFilter.fragmentShader = BRIGHT_PASS_FRAG;
+    this.bloom.materialHighPassFilter.needsUpdate = true;
     this.uniforms = {
       tScene: { value: this.rt.texture },
       tBloom: { value: this.bloom.renderTargetsHorizontal[0].texture },

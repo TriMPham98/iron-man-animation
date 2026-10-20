@@ -48,11 +48,15 @@ export const SFX = {
   zip: `${KIT}zip.mp3`,
   charge: `${KIT}charge.mp3`,
   repulsorZap: `${KIT}repulsor-zap.mp3`,
+  // HUD: a seeker's growl and lock tone, the RWR's pulse, the HUD's chimes
   lockTick: `${KIT}lock-tick.mp3`,
-  lockFull: `${KIT}lock-full.mp3`,
-  warn: `${KIT}warn.mp3`,
+  lockTone: `${KIT}lock-tone.mp3`,
+  seekerGrowl: `${KIT}seeker-growl.mp3`,
+  rwrPulse: `${KIT}rwr-pulse.mp3`,
+  killConfirm: `${KIT}kill-confirm.mp3`,
   jarvisBlip: `${KIT}jarvis-blip.mp3`,
-  waveTone: `${KIT}wave-tone.mp3`,
+  waveStart: `${KIT}wave-start.mp3`,
+  waveClear: `${KIT}wave-clear.mp3`,
   ping1: `${KIT}ping-1.mp3`,
   ping2: `${KIT}ping-2.mp3`,
   ping3: `${KIT}ping-3.mp3`,
@@ -129,7 +133,12 @@ export class Soundscape {
   /** The airstream shaking the flared brakes (X). */
   private buffet: Loop | null = null;
   private engines: Array<{ loop: Loop; id: number }> = [];
+  /** The seeker painting targets (missiles, launchers): growl, then the solid tone. */
+  private growl: Loop | null = null;
+  private lockTone: Loop | null = null;
   private warnT = 0;
+  private readonly _r = new THREE.Vector3();
+  private readonly _c = new THREE.Vector3();
   private started = false;
   private rocketSide = 0;
   /** When each state-change sound last played (s, sim time). */
@@ -181,6 +190,8 @@ export class Soundscape {
     this.beam = A.loop(SFX.thrusterBurn, { start: 1.0, end: 3.0, out });
     this.buffet = A.loop(SFX.buffet, { out });
     this.roar = A.loop(SFX.jetLoop, { out: this.air ? [this.air.input] : undefined });
+    this.growl = A.loop(SFX.seekerGrowl, { ui: true });
+    this.lockTone = A.loop(SFX.lockTone, { ui: true });
   }
 
   /** Watching from a camera off the suit (flyby, planted, title). */
@@ -287,10 +298,10 @@ export class Soundscape {
         A.play(SFX.weaponStow, { at: m.pos, gain: 0.55, ref: 6 });
         break;
       case 'lockTick':
-        A.play(SFX.lockTick, { ui: true, gain: 0.5, rate: 1 + 0.06 * (e.value ?? 1) });
-        break;
       case 'lockFull':
-        A.play(SFX.lockFull, { ui: true, gain: 0.6 });
+        // One beep per target painted, each a step up; the last one hands
+        // over to the solid lock tone (update())
+        A.play(SFX.lockTick, { ui: true, gain: 0.42, rate: 1 + 0.05 * ((e.value ?? 1) - 1) });
         break;
       case 'missileLaunch':
         A.play(this.rocketSide++ % 2 ? SFX.rocket1 : SFX.rocket2, { at, gain: 1.1, vary: 0.08, ref: 10 });
@@ -355,13 +366,13 @@ export class Soundscape {
         A.play(SFX.jet, { at, gain: 0.8, ref: 30, offset: 2.5, duration: 4 });
         break;
       case 'kill':
-        A.play(SFX.lockTick, { ui: true, gain: 0.35, rate: 0.8 });
+        A.play(SFX.killConfirm, { ui: true, gain: 0.32 });
         break;
       case 'waveStart':
-        A.play(SFX.waveTone, { ui: true, gain: 0.55 });
+        A.play(SFX.waveStart, { ui: true, gain: 0.5 });
         break;
       case 'waveClear':
-        A.play(SFX.lockFull, { ui: true, gain: 0.45, rate: 0.9 });
+        A.play(SFX.waveClear, { ui: true, gain: 0.5 });
         break;
       case 'suitCritical':
         A.play(SFX.unclampDry, { ui: true, gain: 0.8 });
@@ -373,7 +384,7 @@ export class Soundscape {
         A.play(SFX.thrusterIgnite, { ui: true, gain: 0.5, delay: 0.25 });
         break;
       case 'jarvis':
-        A.play(SFX.jarvisBlip, { ui: true, gain: 0.3 });
+        A.play(SFX.jarvisBlip, { ui: true, gain: 0.22 });
         break;
       default:
         break;
@@ -440,12 +451,32 @@ export class Soundscape {
     const pull = THREE.MathUtils.smoothstep(m.gLoad, 5, 13);
     this.buffet?.set(Math.max(m.airbrake * 1.1, pull * 0.5) * q, 0.72 + 0.38 * q, 900 + 5000 * q);
     this.beam?.set(beamOn ? 0.6 / Math.max(0.3, near * 1.6) : 0, 1.9, beamOn ? 9000 : 2000);
-    // Missile warning: a fast, insistent tone while a seeker is on us
-    if (combat.incoming > 0) {
+    // Seeker: a low growl while it searches, higher and louder once it has
+    // heat, then the solid tone with every round locked
+    const seek = combat.weapons.seeker;
+    this.growl?.set(seek === 1 ? 0.16 : seek === 2 ? 0.24 : 0, seek === 2 ? 1.3 : 1, 2800);
+    this.lockTone?.set(seek === 3 ? 0.3 : 0, 1, 8000);
+    // Missile warning: the RWR pulse from the side the nearest seeker is
+    // coming from, quickening as it closes — half a second apart at five
+    // seconds out, near-continuous in the last one
+    let tgo = Infinity;
+    for (const t of combat.missiles.threats()) {
+      const r = this._r.copy(t.pos).sub(m.pos);
+      const d = r.length();
+      const closing = -r.dot(this._c.copy(t.vel).sub(m.vel)) / Math.max(d, 1e-3);
+      const go = d / Math.max(30, closing);
+      if (go < tgo) {
+        tgo = go;
+        this._w.copy(t.pos);
+      }
+    }
+    if (tgo < Infinity) {
       this.warnT -= dt;
       if (this.warnT <= 0) {
-        A.play(SFX.warn, { ui: true, gain: 0.32 });
-        this.warnT = 0.24;
+        this.warnT = THREE.MathUtils.clamp(0.1 * tgo, 0.11, 0.5);
+        const at = this._w.sub(cam.position).normalize().multiplyScalar(3).add(cam.position);
+        // Fast pulses are cut short so they stay separate beeps
+        A.play(SFX.rwrPulse, { at, ref: 3, propagate: false, gain: 0.55, duration: Math.min(0.28, 0.75 * this.warnT) });
       }
     } else {
       this.warnT = 0;
