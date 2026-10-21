@@ -23,6 +23,7 @@ interface Button {
 
 /** The cluster (placed on a 3 × 2 grid by the CSS, the fire button beside it). */
 const CLUSTER: Button[] = [
+  { act: 'wave', label: 'WAVE' },
   { act: 'flares', label: 'FLR', hold: true },
   { act: 'unibeam', label: 'BEAM', hold: true, aims: true },
   { act: 'launcher', label: 'POD', hold: true },
@@ -83,6 +84,11 @@ export class TouchControls {
     this.root.classList.toggle('tc-off', !on);
     if (!on) this.releaseAll();
     this.measure();
+  }
+
+  /** The WAVE button shows only while a wave can be called. */
+  setWaveReady(on: boolean): void {
+    this.root.classList.toggle('tc-wave-ready', on);
   }
 
   setOpacity(v: number): void {

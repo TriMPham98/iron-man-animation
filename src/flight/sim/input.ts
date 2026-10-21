@@ -191,6 +191,7 @@ export class Input {
     edge(11, 'KeyV');
     edge(9, 'Escape');
     edge(8, 'KeyH');
+    edge(12, 'KeyN');
     c.vertical = Math.max(-1, Math.min(1, c.vertical));
     c.throttle = Math.max(-1, Math.min(1, c.throttle));
   }

@@ -47,6 +47,8 @@ export class Hud {
   bottomInset = 0;
   /** Floor on the HUD's scale (a phone's short side would make it unreadable). */
   minScale = 0;
+  /** How to call a wave, for the prompt under the radar (the touch overlay has a button). */
+  waveKey = 'N';
   private killFlash = 0;
   private hitMarker = 0;
 
@@ -694,6 +696,13 @@ export class Hud {
     this.text(g, `KILLS ${c.kills}`, x, y + R + 28 * s, 10 * s, this.killFlash > 0 ? WHITE : CYAN, 'center');
     const alive = c.hostiles.filter((h) => h.alive).length;
     if (alive) this.text(g, `HOSTILES ${alive}`, x, y + R + 42 * s, 10 * s, RED, 'center');
+    else if (c.waveReady) {
+      // A wave is on offer: a slow pulse, never a timer
+      g.save();
+      g.globalAlpha *= 0.55 + 0.45 * Math.sin(this.time * 3);
+      this.text(g, `${this.waveKey} — CALL WAVE ${c.wave + 2}`, x, y + R + 42 * s, 9 * s, AMBER, 'center', JARVIS);
+      g.restore();
+    }
   }
 
   private drawWarnings(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, m: FlightModel, c: Combat, s: number): void {

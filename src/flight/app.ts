@@ -340,6 +340,7 @@ export class FlightApp {
         // Touch screens: no pointer lock, the overlay drives the touch source
         this.input.touchMode = true;
         this.touch = new TouchControls(this.input, this.opts.canvas.parentElement ?? document.body, () => this.pauseMenu());
+        this.hud.waveKey = 'WAVE';
         this.syncViewport(true);
       }
     }
@@ -416,6 +417,7 @@ export class FlightApp {
     hud.alpha += (hudGoal - hud.alpha) * (1 - Math.exp(-dt / 0.6));
     if (this.touch) {
       this.touch.setActive(this.engaged && !this.paused && !director && !this.autopilot);
+      this.touch.setWaveReady(game.combat.waveReady);
       hud.bottomInset = this.touch.bottomInset;
       hud.minScale = 0.55;
     }

@@ -42,7 +42,7 @@ export const CONTROLS: { ground: Row[]; flight: Row[]; always: Row[] } = {
     ['V', 'camera'],
     ['WHEEL', 'camera distance'],
     ['R', 'reset to the house'],
-    ['N', 'call a wave'],
+    ['N', 'call a wave (sky clear)'],
     ['ESC', 'pause'],
   ],
 };
@@ -81,6 +81,7 @@ const TOUCH_ROWS: Row[] = [
   ['BRAKE', 'palm brake · flare to a hover'],
   ['MSL', 'hold to paint, release to fire'],
   ['FLR / POD', 'flares · forearm launchers'],
+  ['WAVE', 'call a wave (shows when the sky is clear)'],
   ['CAM / II', 'camera · pause'],
 ];
 const STORE = 'mk3-flight-settings';
@@ -201,6 +202,7 @@ export class Screens {
                     ['RB / LB', 'repulsors · rockets'],
                     ['Y / B', 'unibeam · flares'],
                     ['L3 / R3', 'boost · camera'],
+                    ['D-PAD UP', 'call a wave'],
                     ['START', 'pause'],
                   ])}</div></section>
                 </div>

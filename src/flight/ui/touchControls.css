@@ -68,7 +68,11 @@
   border-color: rgba(var(--tc-rgb), calc(0.8 * var(--tc-alpha)));
 }
 .tc-cluster .tc-missile, .tc-cluster .tc-unibeam { border-color: rgba(var(--tc-rgb), calc(0.75 * var(--tc-alpha))); }
-/* The far corner (top, away from the thumb) is the one left empty */
+/* The far corner (top, away from the thumb) is free: WAVE takes it while the sky is clear */
+.tc-cluster .tc-wave { grid-area: 1 / 1; visibility: hidden; border-color: rgba(255, 184, 77, calc(0.8 * var(--tc-alpha))); color: rgba(255, 220, 160, var(--tc-alpha)); }
+.tc-wave-ready .tc-cluster .tc-wave { visibility: visible; animation: tc-wave-pulse 1.6s ease-in-out infinite; }
+.tc-cluster .tc-wave.on { background: rgba(255, 184, 77, calc(0.35 * var(--tc-alpha) + 0.1)); box-shadow: 0 0 16px rgba(255, 184, 77, 0.45); }
+@keyframes tc-wave-pulse { 50% { box-shadow: 0 0 14px rgba(255, 184, 77, 0.5); } }
 .tc-cluster .tc-flares { grid-area: 1 / 2; }
 .tc-cluster .tc-unibeam { grid-area: 1 / 3; }
 .tc-cluster .tc-launcher { grid-area: 2 / 1; }

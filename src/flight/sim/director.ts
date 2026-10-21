@@ -58,7 +58,7 @@ export class Director {
   tail = 0;
 
   constructor(private readonly game: Game) {
-    game.combat.autoWaves = false;
+    game.combat.wavesEnabled = false;
     game.rig.mode = 'attract';
     // Booms and kills cut the picture
     game.events.on((e) => {

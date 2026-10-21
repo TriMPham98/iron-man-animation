@@ -16,9 +16,9 @@ import { hazeAll } from '../render/haze';
 
 /**
  * The fight: the suit's armour and the hostiles that wear it down, in
- * escalating waves. Free flight until the pilot calls the first wave (or
- * flies for a while), then drones from over the ridges, then the SAM
- * sites wake up. Armour regenerates out of combat; at zero the suit drops
+ * escalating waves. Free flight until the pilot calls a wave (N, or the
+ * touch WAVE button, offered whenever the sky is clear): drones from over
+ * the ridges, then the SAM sites wake up. Armour regenerates out of combat; at zero the suit drops
  * dead for a few seconds and reboots in the air.
  */
 
@@ -49,7 +49,6 @@ export class Combat {
   wave = -1;
   kills = 0;
   private waveT = 0;
-  private freeFlight = 0;
   private readonly samSpots: THREE.Vector3[];
   private readonly player: PlayerTarget;
 
@@ -96,8 +95,13 @@ export class Combat {
     return this.player;
   }
 
-  /** Waves start by themselves after a minute of flight (off for scripted runs). */
-  autoWaves = true;
+  /** The pilot can call waves (off for scripted runs). */
+  wavesEnabled = true;
+
+  /** A wave can be called now: the sky is clear and the suit is up. */
+  get waveReady(): boolean {
+    return this.wavesEnabled && this.down <= 0 && !this.hostiles.some((h) => h.alive);
+  }
 
   /** One drone at a point, flying a heading (scripted encounters). */
   spawnDrone(at: THREE.Vector3, heading: THREE.Vector3): Drone {
@@ -110,8 +114,10 @@ export class Combat {
     return d;
   }
 
-  /** Start the next wave now. */
+  /** Start the next wave, if one is on offer. */
   callWave(): void {
+    if (!this.waveReady) return;
+    this.waveT = 0;
     this.wave++;
     const w = WAVES[Math.min(this.wave, WAVES.length - 1)];
     const extra = Math.max(0, this.wave - (WAVES.length - 1));
@@ -156,22 +162,12 @@ export class Combat {
       this.armor = Math.min(1, this.armor + dt * 0.035);
     }
 
-    // Waves: the first comes after a minute of free flight (or on N)
-    const active = this.hostiles.some((h) => h.alive);
-    if (!this.autoWaves) {
-      // Scripted: no waves
-    } else if (this.wave < 0) {
-      if (!this.model.grounded) this.freeFlight += dt;
-      if (this.freeFlight > 75) this.callWave();
-    } else if (!active) {
+    // Waves only come when called (N): a clear sky just gets announced
+    if (this.wavesEnabled && this.wave >= 0 && !this.hostiles.some((h) => h.alive)) {
       this.waveT += dt;
       if (this.waveT > 1.5 && this.waveT - dt <= 1.5) {
         this.events.emit('waveClear', { value: this.wave + 1 });
-        this.events.emit('jarvis', { text: 'Area clear, sir. Next formation in twenty seconds.' });
-      }
-      if (this.waveT > 22) {
-        this.waveT = 0;
-        this.callWave();
+        this.events.emit('jarvis', { text: 'Area clear, sir. Next formation on your word.' });
       }
     }
 
