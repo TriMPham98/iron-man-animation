@@ -70,7 +70,16 @@ export const SFX = {
   jet: `${KIT}jet.mp3`,
   jetLoop: `${KIT}jet-loop.mp3`,
   buffet: `${KIT}buffet.mp3`,
+  // The world under a low pass: open sea, the coast's breakers, wind in the
+  // trees on the hills, white water thrashed up by the boots
+  sea: `${KIT}sea.mp3`,
+  surf: `${KIT}surf.mp3`,
+  trees: `${KIT}trees.mp3`,
+  spray: `${KIT}spray.mp3`,
 } as const;
+
+/** Points on the ring sampled round the ear for sea vs land. */
+const RING = 8;
 
 /**
  * Where the suit has been (s, sim clock): an observer hears it from where it
@@ -163,6 +172,20 @@ export class Soundscape {
   private lastBoom = -99;
   /** The helmet view is the pilot's own ears. */
   private helmet = false;
+  /** The ground under the ears: open sea, breakers on the coast, wind in the trees. */
+  private sea: Loop | null = null;
+  private surf: Loop | null = null;
+  private trees: Loop | null = null;
+  /** The boots skimming the sea (the suit's own, like the thrust). */
+  private spray: Loop | null = null;
+  /** Share of the ground round the ears that is sea (0–1, smoothed). */
+  private water = 0;
+  /** The ears' height above the ground or sea (m, smoothed). */
+  private earHeight = 100;
+  /** Ridge passes: the clearance last frame, and the lowest since it began falling. */
+  private lastClear = Infinity;
+  private dipLow = Infinity;
+  private lastRidge = -99;
 
   constructor(private readonly audio: GameAudio) {}
 
@@ -190,6 +213,10 @@ export class Soundscape {
     this.beam = A.loop(SFX.thrusterBurn, { start: 1.0, end: 3.0, out });
     this.buffet = A.loop(SFX.buffet, { out });
     this.roar = A.loop(SFX.jetLoop, { out: this.air ? [this.air.input] : undefined });
+    this.spray = A.loop(SFX.spray, { out });
+    this.sea = A.loop(SFX.sea);
+    this.surf = A.loop(SFX.surf);
+    this.trees = A.loop(SFX.trees);
     this.growl = A.loop(SFX.seekerGrowl, { ui: true });
     this.lockTone = A.loop(SFX.lockTone, { ui: true });
   }
@@ -391,6 +418,68 @@ export class Soundscape {
     }
   }
 
+  /**
+   * What the land and sea sound like from low over them. Round the ears: the
+   * open sea's wash, the breakers where it meets the coast, wind through the
+   * trees on the hills — all fading with height (from a few hundred metres
+   * up it's only the airstream) and under the pilot's own wind (`masked`).
+   * Made by the suit: white water thrashed up when the boots skim the sea,
+   * the treetops thrashing in a low hover's downwash, and the air slapping
+   * back off a ridge crest taken fast and close.
+   */
+  private terrain(dt: number, m: FlightModel, cam: THREE.Camera, masked: number): void {
+    const g = m.ground;
+    const ear = cam.position;
+    const floor = Math.max(g.surface(ear.x, ear.z), 0);
+    const ease = 1 - Math.exp(-dt / 0.6);
+    this.earHeight += (Math.max(0, ear.y - floor) - this.earHeight) * ease;
+    const h = this.earHeight;
+    // Sea vs land: the ground under the ears and a ring round it, wider the
+    // higher the ears (the coast is heard from further off up there)
+    const r = 90 + 1.5 * h;
+    let wet = g.isWater(ear.x, ear.z) ? 2 : 0;
+    for (let i = 0; i < RING; i++) {
+      const a = (i / RING) * Math.PI * 2;
+      if (g.isWater(ear.x + r * Math.cos(a), ear.z + r * Math.sin(a))) wet++;
+    }
+    this.water += (wet / (RING + 2) - this.water) * ease;
+    const sea = this.water;
+    // Breakers wherever sea and land share the ring
+    const coast = 1 - Math.abs(2 * sea - 1);
+    const quiet = 1 - 0.65 * masked;
+    this.sea?.set(sea * (1 - 0.6 * coast) * quiet * 0.42 / (1 + h / 45), 1, 2500 + 9000 / (1 + h / 40));
+    this.surf?.set(coast * quiet * 0.7 / (1 + h / 70), 1, 3000 + 14000 / (1 + h / 50));
+    // Hills: wind in the trees, and the treetops thrashing under the boots
+    // in a low hover (the downwash, so it's the throttle not the airspeed)
+    const below = m.clearance;
+    const overLand = !g.isWater(m.pos.x, m.pos.z);
+    const wash = overLand && !m.grounded ? m.throttle * THREE.MathUtils.smoothstep(-below, -35, -4) * (1 - THREE.MathUtils.smoothstep(m.speed, 20, 70)) : 0;
+    const leaves = (1 - sea) * quiet * 0.4 / (1 + h / 30);
+    this.trees?.set(leaves + 0.55 * wash, 1 + 0.25 * wash, 5000 + 12000 * Math.min(1, leaves * 3 + wash));
+    // Skimming the sea: the boots' jets tearing up white water, louder with
+    // the throttle and the speed it's dragged across the surface at
+    const skim = !overLand && !m.grounded ? THREE.MathUtils.smoothstep(-below, -18, -1.5) : 0;
+    const fast = THREE.MathUtils.smoothstep(m.speed, 5, 140);
+    this.spray?.set(skim * Math.min(1.2, 0.45 * m.throttle + 0.8 * fast), 0.85 + 0.35 * fast, 2500 + 15000 * skim);
+    // A ridge crest taken fast and close: the air slaps back off the rock
+    // as it flicks past under the boots
+    if (below < this.lastClear) {
+      this.dipLow = Math.min(this.dipLow, below);
+    } else if (this.dipLow < 30 && this.lastClear < 30) {
+      const k = THREE.MathUtils.smoothstep(m.speed, 50, 250) * (1 - this.dipLow / 30);
+      if (overLand && k > 0.1 && this.now - this.lastRidge > 0.6) {
+        this.lastRidge = this.now;
+        const at = this._r.set(m.pos.x, g.surface(m.pos.x, m.pos.z), m.pos.z);
+        this.audio.play(SFX.flyby, { at, gain: 0.35 + 0.75 * k, rate: 0.75 + 0.3 * k, vary: 0.06, ref: 12, offset: 0.15 });
+        this.audio.play(SFX.heroThud, { at, gain: 0.25 * k, rate: 0.6, lowpass: 400, ref: 12 });
+      }
+      this.dipLow = Infinity;
+    } else {
+      this.dipLow = Infinity;
+    }
+    this.lastClear = below;
+  }
+
   update(dt: number, m: FlightModel, combat: Combat, cam: THREE.Camera, helmet: boolean, beamOn: boolean): void {
     const A = this.audio;
     if (!A.ready) return;
@@ -451,6 +540,7 @@ export class Soundscape {
     const pull = THREE.MathUtils.smoothstep(m.gLoad, 5, 13);
     this.buffet?.set(Math.max(m.airbrake * 1.1, pull * 0.5) * q, 0.72 + 0.38 * q, 900 + 5000 * q);
     this.beam?.set(beamOn ? 0.6 / Math.max(0.3, near * 1.6) : 0, 1.9, beamOn ? 9000 : 2000);
+    this.terrain(dt, m, cam, air * inside);
     // Seeker: a low growl while it searches, higher and louder once it has
     // heat, then the solid tone with every round locked
     const seek = combat.weapons.seeker;

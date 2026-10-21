@@ -43,7 +43,7 @@ export interface WorkshopHandle {
 }
 
 /** Steps that block the main thread for long and only run in quiet windows. */
-const HEAVY = new Set(['world', 'pipelines', 'sim', 'settle0']);
+const HEAVY = new Set(['world', 'pipelines', 'sim', 'settle0', 'gauge']);
 
 const smooth = (x: number) => {
   const t = THREE.MathUtils.clamp(x, 0, 1);

@@ -418,15 +418,28 @@ async function boot(): Promise<void> {
       scene.clear();
       renderer.renderLists.dispose();
       renderer.dispose();
-      // Last the context itself (its teardown waits on the GPU): when the
-      // pilot takes the stick, or after a few quiet seconds
-      await Promise.race([
-        new Promise((r) => document.addEventListener('pointerlockchange', r, { once: true })),
-        new Promise((r) => setTimeout(r, 8000)),
-      ]);
-      await idleTick();
+      // The drawing buffer, the biggest thing left, goes now...
+      let t0 = performance.now();
+      renderer.setSize(1, 1, false);
+      console.info(`[handoff] workshop drawing buffer released in ${Math.round(performance.now() - t0)} ms`);
+      // ...and the context itself (its teardown waits on the GPU: a stall of
+      // a few frames) only where that can't be seen: the pause menu or a
+      // hidden tab, never the pilot's first moments on the stick
+      await new Promise<void>((r) => {
+        const unseen = (e: Event) => {
+          // An unlock is the pilot letting go of the stick: the pause menu
+          const unlocked = e.type === 'pointerlockchange' && !document.pointerLockElement;
+          if (!unlocked && document.visibilityState !== 'hidden') return;
+          document.removeEventListener('pointerlockchange', unseen);
+          document.removeEventListener('visibilitychange', unseen);
+          r();
+        };
+        document.addEventListener('pointerlockchange', unseen);
+        document.addEventListener('visibilitychange', unseen);
+      });
+      t0 = performance.now();
       renderer.forceContextLoss();
-      console.info('[handoff] workshop context released');
+      console.info(`[handoff] workshop context released in ${Math.round(performance.now() - t0)} ms`);
     })();
   };
   suit.group.updateMatrixWorld(true);

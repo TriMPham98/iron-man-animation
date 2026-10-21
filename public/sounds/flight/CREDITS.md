@@ -37,6 +37,10 @@ deploy) come from the project library in `public/sounds/`.
 - `buffet.mp3` (looped) — "air over mic.wav" by cognito perceptu (https://freesound.org/people/cognito%20perceptu/sounds/20108), CC0
 - `seeker-growl.mp3` (looped) — "SideWinderGrowl.wav" by FrazierWing (https://freesound.org/people/FrazierWing/sounds/569666), CC0
 - `lock-tone.mp3` (looped) — "lock on" by SamsterBirdies (https://freesound.org/people/SamsterBirdies/sounds/467881), CC0
+- `sea.mp3` (looped) — "Ocean Noise - Surf" by amholma (https://freesound.org/people/amholma/sounds/372181), CC0
+- `surf.mp3` (looped) — "Waves of Hawaii" by florianreichelt (https://freesound.org/people/florianreichelt/sounds/450755), CC0
+- `trees.mp3` (looped) — "Wind forest slow shifts fairly strong trees bright Irving Nature Park 190929.flac" by TRP (https://freesound.org/people/TRP/sounds/574549), CC0
+- `spray.mp3` (looped) — "Huge Waterfall 2" by deleted_user_7146007 (https://freesound.org/people/deleted_user_7146007/sounds/383733), CC0
 
 ## Not CC0
 

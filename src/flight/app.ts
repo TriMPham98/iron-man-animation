@@ -302,6 +302,55 @@ export class FlightApp {
       await this.step(`settle${i}`, () => this.frame(1 / 60));
       console.info(`[flight] settle frame ${i}: ${this.timings[`settle${i}`]} ms`);
     }
+    await this.step('gauge', () => this.gaugeResolution());
+  }
+
+  /**
+   * Starts at the pixel ratio this GPU can hold, measured rather than found
+   * by dropping frames: the first seconds are the handoff's lift-off shot,
+   * which holds its resolution (a resize mid-shot is a stall), so whatever
+   * ratio it starts at is the one it is seen at. Two timed full frames (each
+   * waited out with a one-pixel read) fit cost = fixed + per-pixel × ratio².
+   */
+  private gaugeResolution(): void {
+    const r = this.renderer;
+    const gl = r.getContext();
+    const px = new Uint8Array(4);
+    const time = (dpr: number) => {
+      r.setPixelRatio(dpr);
+      this.post.resize();
+      let best = Infinity;
+      // The first draw at a size pays for its targets: best of three
+      for (let i = 0; i < 3; i++) {
+        const t0 = performance.now();
+        this.post.render(0, this.lens);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        best = Math.min(best, performance.now() - t0);
+      }
+      return best;
+    };
+    // GPU budget per frame, leaving the CPU's share and a margin of 60 fps
+    const BUDGET = 11;
+    const MIN = 0.7;
+    const hi = this.adaptive.maxPixelRatio;
+    const tHi = time(hi);
+    let pick = hi;
+    let log = `${hi.toFixed(2)}: ${tHi.toFixed(1)} ms`;
+    if (tHi > BUDGET && hi > MIN) {
+      const lo = Math.max(MIN, hi * 0.6);
+      const tLo = time(lo);
+      log += `, ${lo.toFixed(2)}: ${tLo.toFixed(1)} ms`;
+      const perPx = (tHi - tLo) / (hi * hi - lo * lo);
+      const fixed = tHi - perPx * hi * hi;
+      if (perPx > 0 && BUDGET > fixed) pick = Math.sqrt((BUDGET - fixed) / perPx);
+      else pick = tLo <= BUDGET ? lo : MIN;
+      pick = THREE.MathUtils.clamp(Math.floor(pick * 20) / 20, MIN, hi);
+    }
+    // Back to the ratio the targets are tracked at, then on to the pick
+    r.setPixelRatio(this.adaptive.pixelRatio);
+    this.post.resize();
+    this.adaptive.set(pick);
+    console.info(`[flight] resolution gauge ${log} → ${this.adaptive.pixelRatio.toFixed(2)}`);
   }
 
   // Lens flare: where the sun is on screen and whether the land hides it

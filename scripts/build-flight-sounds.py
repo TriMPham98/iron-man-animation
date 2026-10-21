@@ -68,7 +68,7 @@ HUD = {
     'wave-start': ('ui/_raw/ov-10a82ee3.mp3', 0.06, 0.95),
     'wave-clear': ('ui/_raw/ov-7c7afab7.mp3', 0.0, 1.0),
 }
-# Loops: (source, start, length, crossfade)
+# Loops: (source, start, length, crossfade[, keep swells: skip the levelling])
 LOOPS = {
     'wind': ('transition/_raw/ov-8ba94356.mp3', 30.0, 22.0, 2.0),
     'jet-loop': ('transition/_raw/ov-7de6124e.mp3', 33.0, 5.0, 1.2),
@@ -79,6 +79,16 @@ LOOPS = {
     'seeker-growl': ('ui/_raw/ov-6b5a28ab.mp3', 0.5, 4.5, 0.5),
     # "lock on": its solid tone — the house is full, shoot
     'lock-tone': ('ui/_raw/ov-d46d834b.mp3', 1.75, 0.9, 0.2),
+    # The world under a low pass. Open sea: the steady dark wash of a whole
+    # ocean, no single wave in it
+    'sea': ('transition/_raw/ov-42a94c71.mp3', 4.0, 24.0, 2.0),
+    # The coast: two whole breakers rolling in and drawing back, swells kept
+    # (cut and joined in the lulls)
+    'surf': ('transition/_raw/ov-6044b489.mp3', 6.0, 25.0, 1.5, True),
+    # Hills: strong wind through the trees on the slopes
+    'trees': ('transition/_raw/ov-52de0164.mp3', 10.0, 22.0, 2.0),
+    # Boots skimming the sea: white water thrashed up under the jets
+    'spray': ('transition/_raw/ov-3295e370.mp3', 4.0, 12.0, 1.0),
 }
 
 
@@ -121,12 +131,17 @@ def main():
         run(['-ss', str(start), '-t', str(length), '-i', os.path.join(CAND, VIDEO), '-af',
              f'highpass=f=20,afade=t=in:d=0.004,afade=t=out:st={fade}:d={length - fade},volume={gain}dB',
              '-ar', '44100', '-ac', '1', '-q:a', '3', os.path.join(OUT, name + '.mp3')])
-    for name, (rel, start, length, xf) in LOOPS.items():
+    for name, (rel, start, length, xf, *keep) in LOOPS.items():
         # Seamless loop: the tail crossfades into the head
         src = os.path.join(CAND, rel)
         tmp = os.path.join(OUT, f'_{name}.wav')
         # Even out the level first (a pass swells; an engine loop shouldn't)
-        run(['-ss', str(start), '-t', str(length + xf), '-i', src, '-af', 'dynaudnorm=f=200:g=21:p=0.9', '-ar', '44100', '-ac', '1', tmp])
+        # (levelled with a few seconds either side: dynaudnorm ramps its gain
+        # in and out over the ends, which would dip the loop at every lap)
+        pad = min(3.0, start)
+        level = 'anull' if keep and keep[0] else 'dynaudnorm=f=200:g=21:p=0.9'
+        run(['-ss', str(start - pad), '-t', str(length + xf + 2 * pad), '-i', src, '-af',
+             f'{level},atrim={pad}:{pad + length + xf},asetpts=PTS-STARTPTS', '-ar', '44100', '-ac', '1', tmp])
         run([
             '-i', tmp, '-filter_complex',
             f"[0]asplit[a][b];[a]atrim=0:{length},asetpts=PTS-STARTPTS[body];"
