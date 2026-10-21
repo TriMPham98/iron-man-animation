@@ -77,7 +77,7 @@ const REPULSOR_KNOCK = 9;
 /** Repulsor blue-white (HDR), the light a shot throws on the armour and round its impact. */
 const REPULSOR_HOT = new THREE.Color(7, 10, 15);
 const REPULSOR_COOL = new THREE.Color(0.6, 1.4, 3);
-const MUZZLE_LIGHT = 90;
+const MUZZLE_LIGHT = 40;
 const IMPACT_LIGHT = 900;
 const MISSILE_CONE = Math.cos(THREE.MathUtils.degToRad(19));
 const MISSILE_RANGE = 3200;
@@ -311,7 +311,7 @@ export class PlayerWeapons {
     A.aimR = rate(this.holdR > 0 || this.launchHold[1] > 0, A.aimR);
     this.muzzleT += dt;
     this.impactT += dt;
-    const mk = Math.max(0, 1 - this.muzzleT / 0.1);
+    const mk = Math.max(0, 1 - this.muzzleT / 0.08);
     const ik = Math.max(0, 1 - this.impactT / 0.18);
     this.muzzleLight.intensity = MUZZLE_LIGHT * mk * mk;
     this.impactLight.intensity = IMPACT_LIGHT * ik * ik;
@@ -648,7 +648,8 @@ export class PlayerWeapons {
       const v = this._w.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(2).addScaledVector(dir, 14 + Math.random() * 24).add(vel);
       P.emit('plasma', from, v, { scale: 0.35 + Math.random() * 0.2, life: 0.35 });
     }
-    this.muzzleLight.position.copy(from);
+    // Out ahead of the hand: it lights the arm and the air, not the faceplate
+    this.muzzleLight.position.copy(from).addScaledVector(dir, 0.7);
     this.muzzleT = 0;
     // The kick goes back up the arm into the suit (on foot the legs take it:
     // walking into your own fire must still carry you forward)
@@ -679,7 +680,7 @@ export class PlayerWeapons {
         this.particles.emit('plasma', at, undefined, { scale: 0.4, life: 0.3 });
       }
       let hit: THREE.Vector3 | null = null;
-      let struck = false;
+      let struck: Hostile | null = null;
       // Against hostiles (segment vs sphere)
       const seg = this._v.copy(b.p).sub(prev);
       const len2 = seg.lengthSq();
@@ -688,10 +689,12 @@ export class PlayerWeapons {
         const t = THREE.MathUtils.clamp(this._w.copy(h.pos).sub(prev).dot(seg) / Math.max(len2, 1e-6), 0, 1);
         const c = this._w.copy(prev).addScaledVector(seg, t);
         if (c.distanceToSquared(h.pos) < h.radius * h.radius) {
-          hit = c.clone();
+          // The hit sphere is generous (aim assist): the burst sits on the
+          // airframe, between the bolt's line and the target's middle
+          hit = c.clone().lerp(h.pos, 0.6);
           // A repulsor hits like a ram: the target is shoved off its line
           h.vel.addScaledVector(seg, REPULSOR_KNOCK / Math.sqrt(Math.max(len2, 1e-6)));
-          struck = true;
+          struck = h;
           const killed = h.damage(REPULSOR_DAMAGE, hit, 'repulsor');
           if (killed) this.onKill(h);
           break;
@@ -706,18 +709,23 @@ export class PlayerWeapons {
           // back off the struck face and a slower glowing core
           const P = this.particles;
           const d = this._n.copy(b.v).sub(b.vs).normalize();
-          P.emit('flash', hit, undefined, { scale: 0.4, color: REPULSOR_HOT, end: REPULSOR_COOL });
+          // What it hit carries the glow on with it a little
+          const carry = struck ? this._a.copy(struck.vel).multiplyScalar(0.6) : this._a.set(0, 0, 0);
+          P.emit('flash', hit, carry, { scale: 0.4, color: REPULSOR_HOT, end: REPULSOR_COOL });
           const u = this._l.set(0, 1, 0).cross(d);
           if (u.lengthSq() < 1e-4) u.set(1, 0, 0);
           u.normalize();
           const w = this._b.crossVectors(d, u);
-          for (let k = 0; k < 18; k++) {
-            const a = (k / 18) * Math.PI * 2;
-            const v = this._w.copy(u).multiplyScalar(Math.cos(a)).addScaledVector(w, Math.sin(a)).multiplyScalar(26);
-            P.emit('plasma', hit, v, { scale: 1.1, life: 0.8 });
+          for (let k = 0; k < 28; k++) {
+            const a = (k / 28) * Math.PI * 2;
+            const v = this._w.copy(u).multiplyScalar(Math.cos(a)).addScaledVector(w, Math.sin(a)).multiplyScalar(34).add(carry);
+            P.emit('plasma', hit, v, { scale: 0.75, life: 0.45 });
           }
-          P.burst('plasma', hit, 16, 12, undefined, 1, { scale: 1.6 });
-          P.burst('plasma', hit, 5, 2, undefined, 1, { scale: 3, life: 0.4 });
+          for (let k = 0; k < 14; k++) {
+            const v = this._w.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(22).add(carry);
+            P.emit('plasma', hit, v, { scale: 1.5, life: 0.7 });
+          }
+          P.emit('plasma', hit, carry, { scale: 5, life: 0.5 });
           P.burst('spark', hit, 26, 20, this._w.copy(d).multiplyScalar(-0.6), 1);
           this.impactLight.position.copy(hit);
           this.impactT = 0;
