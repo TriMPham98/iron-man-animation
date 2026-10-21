@@ -8,3 +8,4 @@ audio/kit/
 audio/candidates/
 audio/*.png
 capture/
+.vercel

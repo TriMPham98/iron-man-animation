@@ -37,6 +37,8 @@ export type SimEventKind =
   // World
   | 'explosion'
   | 'bigExplosion'
+  | 'treeCut'
+  | 'treeFall'
   | 'hitArmor'
   | 'ricochet'
   | 'enemyFire'
