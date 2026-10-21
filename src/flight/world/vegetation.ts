@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ATMOSPHERE_GLSL } from './atmosphere';
+import { FELL, Felling } from './felling';
 import { HOME, coastZ, type Heightfield } from './heightfield';
 
 /**
@@ -24,7 +25,8 @@ import { HOME, coastZ, type Heightfield } from './heightfield';
  *    models step out, so nothing pops.
  *  - Dense brush (< ~230 m): small clumps that grow in from the edge.
  * Cells are culled against a widened view frustum and the instance lists
- * rebuilt only when the eye has moved or turned enough to need it.
+ * rebuilt only when the eye has moved or turned enough to need it (or the
+ * unibeam has cut something down: see {@link Felling}).
  */
 
 const CELL = 128;
@@ -598,6 +600,28 @@ const SHADE_GLSL = /* glsl */ `
   reflectedLight.indirectDiffuse += diffuseColor.rgb * uSunColor * (vegBack * 0.35 * RECIPROCAL_PI * vegBake.r);
 `;
 
+// Felled trees: the close build, kept on one side of the cut (no sway)
+const FELL_VERT_PARS = /* glsl */ `
+attribute vec3 aCut; // cut height (model units), side kept (+1 above, −1 below), heat 0–1
+varying vec3 vInstWorld;
+varying vec3 vCut;
+`;
+const FELL_VERT_BEGIN = /* glsl */ `
+  vec3 transformed = vec3(position);
+  vInstWorld = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  vCut = vec3((position.y - aCut.x) * aCut.y, aCut.y, aCut.z);
+`;
+const FELL_FRAG_PARS = /* glsl */ `
+${NEAR_FRAG_PARS}
+varying vec3 vCut;
+`;
+const FELL_COLOR_GLSL = /* glsl */ `
+  #include <color_fragment>
+  // The cut: the inside of the trunk's tube charred, its rim glowing while hot
+  float fellRim = 1.0 - smoothstep(0.0, 0.45, vCut.x);
+  if (!gl_FrontFacing && vCut.x < 1.2) diffuseColor.rgb = vec3(0.02, 0.016, 0.012);
+`;
+
 const IMP_VERT_PARS = /* glsl */ `
 attribute vec4 iA; // x y z, height scale
 attribute vec2 iB; // width scale, kind
@@ -794,6 +818,28 @@ export const TINT = {
   greenGrass: [0.7, 0.85, 0.6],
 } as const;
 
+/** Squared distance from a point to a segment, on the ground plane. */
+function segDist2(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const ll = dx * dx + dz * dz;
+  const t = ll > 1e-9 ? THREE.MathUtils.clamp(((px - ax) * dx + (pz - az) * dz) / ll, 0, 1) : 0;
+  return (px - ax - dx * t) ** 2 + (pz - az - dz * t) ** 2;
+}
+
+/** Takes plants (by "x,z") out of a cell: its models and its impostors. */
+function strip(c: CellData, gone: Set<string>): void {
+  for (const k of KINDS) {
+    const src = c.near[k];
+    const keep: number[] = [];
+    for (let o = 0; o < src.length; o += NEAR_STRIDE) if (!gone.has(`${src[o + 12]},${src[o + 14]}`)) for (let e = 0; e < NEAR_STRIDE; e++) keep.push(src[o + e]);
+    if (keep.length !== src.length) c.near[k] = new Float32Array(keep);
+  }
+  const imp: number[] = [];
+  for (let o = 0; o < c.imp.length; o += IMP_STRIDE) if (!gone.has(`${c.imp[o]},${c.imp[o + 2]}`)) for (let e = 0; e < IMP_STRIDE; e++) imp.push(c.imp[o + e]);
+  if (imp.length !== c.imp.length) c.imp = new Float32Array(imp);
+}
+
 export class Vegetation {
   readonly group = new THREE.Group();
   private readonly near: Record<Kind, THREE.InstancedMesh>;
@@ -818,6 +864,14 @@ export class Vegetation {
   /** Hand-laid planting (the house's garden): both builds of each kind, swapped per plant by distance. */
   private readonly garden: { hi: THREE.InstancedMesh; lo: THREE.InstancedMesh; src: Float32Array; hiR: number }[] = [];
   private readonly gardenMat = new Map<string, THREE.Material>();
+  /** Garden kind per entry of {@link garden}. */
+  private readonly gardenKind: string[] = [];
+  /** What the unibeam has taken, per cell ("x,z" of each plant), so a cell planted again stays cut. */
+  private readonly cuts = new Map<string, Set<string>>();
+  /** Something was cut: rebuild the lists next frame. */
+  private dirty = false;
+  private lastTime = 0;
+  readonly felling: Felling;
   private gardenMesh!: (geo: THREE.BufferGeometry, cap: number, range: number, twoSided: boolean) => THREE.InstancedMesh;
   /** Cells and instances put in the lists at the last rebuild (stats). */
   stats = { cells: 0, near: 0, imp: 0, tuft: 0, rebuilds: 0, buildMs: 0 };
@@ -893,6 +947,25 @@ export class Vegetation {
       return make(geo, cap, mat);
     };
     this.grass = make(grassGeometry(), CAP.grass, tuftMat);
+
+    // Felled trees: both sides drawn (the cut's inside shows), clipped at the cut
+    const fellMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, side: THREE.DoubleSide });
+    fellMat.envMapIntensity = 0.7;
+    fellMat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, this.uniforms);
+      shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${FELL_VERT_PARS}`).replace('#include <begin_vertex>', FELL_VERT_BEGIN);
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>\n${FELL_FRAG_PARS}`)
+        .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n  if (vCut.x < 0.0) discard;')
+        .replace('#include <color_fragment>', FELL_COLOR_GLSL)
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += vec3(5.0, 1.6, 0.35) * vCut.z * fellRim * fellRim;')
+        .replace('#include <aomap_fragment>', SHADE_GLSL)
+        .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vInstWorld);');
+    };
+    fellMat.customProgramCacheKey = () => 'vegetation-felled';
+    this.felling = new Felling(field, fellMat);
+    for (const k of KINDS) this.felling.register(k, this.close[k].geometry);
+    this.group.add(this.felling.group);
 
     // Impostors
     const geo = new THREE.InstancedBufferGeometry();
@@ -981,8 +1054,11 @@ export class Vegetation {
       });
       const range = model.range ?? RADIUS;
       const twoSided = !!model.twoSided;
+      const hi = model.build('hi');
+      this.felling.register(kind, hi);
+      this.gardenKind.push(kind);
       this.garden.push({
-        hi: this.gardenMesh(model.build('hi'), list.length, range, twoSided),
+        hi: this.gardenMesh(hi, list.length, range, twoSided),
         lo: this.gardenMesh(model.build('lo'), list.length, range, twoSided),
         src,
         hiR: model.hiRange ?? 200,
@@ -1073,6 +1149,8 @@ export class Vegetation {
       cx,
       cz,
     };
+    const gone = this.cuts.get(key);
+    if (gone) strip(data, gone);
     this.cache.set(key, data);
     if (this.cache.size > 3000) {
       // Forget the oldest cells
@@ -1112,8 +1190,73 @@ export class Vegetation {
     return c.tuft;
   }
 
+  /**
+   * The unibeam's line (from `from` along unit `dir`, `reach` m, `radius`
+   * m thick) through the cover and the garden: trees it crosses are cut
+   * through where it meets the stem and fall away from the suit, brush
+   * burns off. Only cells already planted can hold anything it hits.
+   */
+  cut(from: THREE.Vector3, dir: THREE.Vector3, reach: number, radius: number): void {
+    const ex = from.x + dir.x * reach;
+    const ez = from.z + dir.z * reach;
+    // Far enough off the line that nothing standing there can reach it
+    const pad = radius + 8;
+    const near = (x: number, z: number, r: number) => segDist2(x, z, from.x, from.z, ex, ez) < r * r;
+    const tint = new THREE.Color();
+    const take = (kind: string, src: Float32Array, o: number, floor?: number): boolean => {
+      if (!near(src[o + 12], src[o + 14], pad * Math.max(1, Math.hypot(src[o + 4], src[o + 5], src[o + 6])))) return false;
+      _m.fromArray(src, o);
+      const y = this.felling.strike(kind, _m, from, dir, reach, radius);
+      if (y < 0) return false;
+      this.felling.fell(kind, _m, tint.fromArray(src, o + 16), y, from, floor);
+      return true;
+    };
+    const x0 = Math.floor((Math.min(from.x, ex) - pad) / CELL);
+    const x1 = Math.floor((Math.max(from.x, ex) + pad) / CELL);
+    const z0 = Math.floor((Math.min(from.z, ez) - pad) / CELL);
+    const z1 = Math.floor((Math.max(from.z, ez) + pad) / CELL);
+    for (let cz = z0; cz <= z1; cz++) {
+      for (let cx = x0; cx <= x1; cx++) {
+        const key = `${cx},${cz}`;
+        const c = this.cache.get(key);
+        if (!c || !near(c.x, c.z, CELL * Math.SQRT1_2 + pad)) continue;
+        let gone: Set<string> | null = null;
+        for (const k of KINDS) {
+          const src = c.near[k];
+          for (let o = 0; o < src.length; o += NEAR_STRIDE) {
+            if (!take(k, src, o)) continue;
+            gone ??= new Set();
+            gone.add(`${src[o + 12]},${src[o + 14]}`);
+          }
+        }
+        if (!gone) continue;
+        const all = this.cuts.get(key) ?? new Set<string>();
+        for (const g of gone) all.add(g);
+        this.cuts.set(key, all);
+        strip(c, gone);
+        this.dirty = true;
+      }
+    }
+    // The garden (laid on the house's decks: it falls no lower than it stood)
+    this.garden.forEach((g, i) => {
+      const kind = this.gardenKind[i];
+      if (!FELL[kind]) return;
+      let cut = false;
+      const keep: number[] = [];
+      for (let o = 0; o < g.src.length; o += NEAR_STRIDE) {
+        if (take(kind, g.src, o, g.src[o + 13] - 0.3)) cut = true;
+        else for (let e = 0; e < NEAR_STRIDE; e++) keep.push(g.src[o + e]);
+      }
+      if (!cut) return;
+      g.src = new Float32Array(keep);
+      this.dirty = true;
+    });
+  }
+
   update(camera: THREE.PerspectiveCamera | THREE.Camera, time: number): void {
     const eye = camera.position;
+    this.felling.update(THREE.MathUtils.clamp(time - this.lastTime, 0, 0.1));
+    this.lastTime = time;
     this.uniforms.uTime.value = time;
     (this.uniforms.uEye.value as THREE.Vector3).copy(eye);
     const ground = Math.max(0, this.field.heightAt(eye.x, eye.z));
@@ -1122,7 +1265,7 @@ export class Vegetation {
     if (!this.group.visible) return;
     camera.getWorldDirection(this._dir);
     const fov = (camera as THREE.PerspectiveCamera).fov ?? 0;
-    if (!this.pending && eye.distanceToSquared(this.lastEye) < REBUILD_MOVE * REBUILD_MOVE && this._dir.dot(this.lastDir) > REBUILD_TURN && fov === this.lastFov) return;
+    if (!this.pending && !this.dirty && eye.distanceToSquared(this.lastEye) < REBUILD_MOVE * REBUILD_MOVE && this._dir.dot(this.lastDir) > REBUILD_TURN && fov === this.lastFov) return;
     // A jump (boot, respawn, a teleport) plants the whole ring at once:
     // no point growing it in over seconds behind a cut
     const jumped = eye.distanceToSquared(this.lastEye) > 500 * 500;
@@ -1136,6 +1279,7 @@ export class Vegetation {
   private rebuild(camera: THREE.Camera, budgetMs: number): void {
     const t0 = performance.now();
     let pending = false;
+    this.dirty = false;
     const eye = camera.position;
     camera.updateMatrixWorld();
     this._vp.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);

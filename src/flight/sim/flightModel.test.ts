@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { EMPTY_INPUT, FlightModel, type GroundProbe } from './flightModel';
+import { EMPTY_INPUT, FlightModel, MAX_MACH, type GroundProbe } from './flightModel';
 
 /** Flat ground at y = 0 (or sea, for the water tests). */
 const flat = (water = false): GroundProbe => ({
@@ -193,6 +193,27 @@ describe('FlightModel', () => {
       i.aim.set(0, 0, 1);
     });
     expect(m.mach).toBeGreaterThan(1);
+  });
+
+  it('tops out at MAX_MACH on boost up high, and the thick air holds it short low down', () => {
+    const top = (alt: number) => {
+      const m = new FlightModel(flat());
+      m.pos.set(0, alt, 0);
+      m.vel.set(0, 0, 250);
+      m.grounded = false;
+      m.flightness = 1;
+      m.posture = 1.42;
+      m.speedCmd = 250;
+      run(m, 25, (i) => {
+        i.boost = true;
+        i.aim.set(0, 0, 1);
+      });
+      return m.mach;
+    };
+    expect(top(5000)).toBeCloseTo(MAX_MACH, 2);
+    const low = top(300);
+    expect(low).toBeGreaterThan(1.35);
+    expect(low).toBeLessThan(MAX_MACH - 0.04);
   });
 
   it('spools the boost up over a beat instead of stepping onto it', () => {

@@ -64,9 +64,15 @@ export const EMPTY_INPUT = (): FlightInput => ({
 
 /** Long-axis tilt in full flight (rad): a touch nose-high of prone. */
 export const FLIGHT_POSTURE = 1.42;
-/** Throttle airspeed range (m/s) and the boost target. */
+/** Throttle airspeed range (m/s). */
 export const CRUISE_MAX = 270;
-export const BOOST_SPEED = 430;
+/**
+ * The Mk II's top speed on boost: a prototype, short of the Mk III that ran
+ * with F-22s. Low down the thick air holds it to ~Mach 1.4; from a few
+ * thousand metres up it makes the full figure.
+ */
+export const MAX_MACH = 1.5;
+export const BOOST_SPEED = MAX_MACH * SPEED_OF_SOUND;
 /** Max boot thrust (m/s² per kg) at full throttle and on boost. */
 const THRUST_MAX = 30;
 const THRUST_BOOST = 72;
