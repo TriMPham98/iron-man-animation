@@ -127,10 +127,10 @@ export const SFX_ONSETS = {
   armsLock: { clip: 'clip-seed-v5-16', src: 0.813, fallback: 11.821 },
   /** Clang — faceplate slams shut. */
   faceplate: { clip: 'clip-seed-v5-16', src: 1.085, fallback: 12.093 },
-  /** First BCI beep — eyes flicker on. */
-  eyesOn: { clip: 'clip-seed-v5-17', src: 0.1, fallback: 12.175 },
-  /** BCI phrase accent — eyes at full. */
-  eyesFull: { clip: 'clip-seed-v5-17', src: 0.43, fallback: 12.505 },
+  /** Clang tail, on JARVIS's first line — eyes flicker on. */
+  eyesOn: { clip: 'clip-seed-v5-16', src: 1.167, fallback: 12.175 },
+  /** Clang tail — eyes at full. */
+  eyesFull: { clip: 'clip-seed-v5-16', src: 1.497, fallback: 12.505 },
   /** Steam hiss — helmet pressure vents. */
   steamVent: { clip: 'clip-seed-v5-18', src: 0.1, fallback: 12.753 },
 } as const satisfies Record<string, SfxOnset>;

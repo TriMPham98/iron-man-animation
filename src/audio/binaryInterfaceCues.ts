@@ -1,8 +1,9 @@
 /**
- * JARVIS telemetry cues for the cropped Binary Code Interface SFX.
+ * JARVIS telemetry cues for the bottom ticker, each line landing with the
+ * flight sim's text blip (see `assemblyCues`).
  *
- * Crop window matches director seed v5 (`choreTimeline.seed.json`):
- *   start 12.075s on seed clock · cropIn 0 · cropOut 5.925
+ * Timing was cut to the Binary Code Interface chatter's chirp/beep onsets
+ * (once on the seed at 12.075s · cropIn 0 · cropOut 5.925), kept as is.
  *
  * Lines are Iron Man (2008) J.A.R.V.I.S. dialogue from the suit HUD /
  * power-up sequence (Paul Bettany), timed to mid-density chirp/beep
@@ -23,10 +24,7 @@ export interface BinaryInterfaceCue {
   line: string;
 }
 
-/**
- * Placement of the Binary Code Interface clip on the seed/audio clock.
- * Keep in sync with `choreTimeline.seed.json` clip-seed-v5-17.
- */
+/** Placement of the cue sheet on the seed/audio clock (the old chatter crop). */
 export const BINARY_INTERFACE_CLIP = {
   soundId: 'binary-code-interface',
   /** Seed-clock start (seconds). */

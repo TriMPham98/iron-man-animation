@@ -418,13 +418,10 @@ async function boot(): Promise<void> {
       scene.clear();
       renderer.renderLists.dispose();
       renderer.dispose();
-      // The drawing buffer, the biggest thing left, goes now...
-      let t0 = performance.now();
-      renderer.setSize(1, 1, false);
-      console.info(`[handoff] workshop drawing buffer released in ${Math.round(performance.now() - t0)} ms`);
-      // ...and the context itself (its teardown waits on the GPU: a stall of
-      // a few frames) only where that can't be seen: the pause menu or a
-      // hidden tab, never the pilot's first moments on the stick
+      // Last the context itself, with its drawing buffer (both waits on the
+      // GPU: a stall of a few frames, even shrinking the buffer), only where
+      // that can't be seen: the pause menu or a hidden tab, never the lift-off
+      // or the pilot's first moments on the stick
       await new Promise<void>((r) => {
         const unseen = (e: Event) => {
           // An unlock is the pilot letting go of the stick: the pause menu
@@ -437,7 +434,7 @@ async function boot(): Promise<void> {
         document.addEventListener('pointerlockchange', unseen);
         document.addEventListener('visibilitychange', unseen);
       });
-      t0 = performance.now();
+      const t0 = performance.now();
       renderer.forceContextLoss();
       console.info(`[handoff] workshop context released in ${Math.round(performance.now() - t0)} ms`);
     })();
