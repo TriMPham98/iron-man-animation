@@ -155,6 +155,14 @@ const SWING_G = 22;
 const SWING_COST = 0.16;
 /** Easing into a swing (s): the carve builds, never snaps on. */
 const SWING_ENTRY = 0.3;
+/**
+ * Attitude waypoint toward a far aim: at most this far round in heading from
+ * where the body points, and this steep (rad) — never over the top.
+ */
+const GUIDE_TURN = 1.4;
+const GUIDE_PITCH = 1.48;
+/** Further round than this (rad), the aim is astern: the turn keeps its side. */
+const GUIDE_ASTERN = 2.7;
 /** Above this, the air is too thin and the suit starts icing (m). */
 export const ICING_ALT = 9000;
 export const CEILING = 11500;
@@ -216,6 +224,8 @@ export class FlightModel {
   /** 0–1: carrying the speed round onto a new line (a momentum swing). */
   swing = 0;
   private swingOn = false;
+  /** Way round (+1 left, −1 right) a turn onto an aim dead astern is going; 0 = not in one. */
+  private guideSide = 0;
   /** Last step's flight-line lean (rad). */
   private leanPrev = 0;
   /** Which way the swing turns the travel (+ left, − right, × its strength). */
@@ -284,6 +294,7 @@ export class FlightModel {
     this.swingOn = false;
     this.swingTurn = 0;
     this.leanPrev = 0;
+    this.guideSide = 0;
     this.gait.attach(this.pos, heading, this.ground);
   }
 
@@ -407,7 +418,16 @@ export class FlightModel {
     // back over out of a flare
     this.q.multiply(this._q2.setFromAxisAngle(this._n.set(1, 0, 0), this.leanPrev - lean));
     this.leanPrev = lean;
-    this._q.copy(this.q).multiply(this._q2.setFromAxisAngle(this._n.set(1, 0, 0), lean)).invert();
+    this._q.copy(this.q).multiply(this._q2.setFromAxisAngle(this._n.set(1, 0, 0), lean));
+    // Never over the top: steered at an aim far round behind (or past the
+    // vertical), the shortest way there pitched the body up through the
+    // vertical, a half loop that left it on its back — and the roll-out
+    // flipped it over. Fly at a waypoint instead that leads the turn round
+    // by heading, no more than a quarter turn off where the body points and
+    // short of the vertical, so the body banks and carves round the long way,
+    // head up, onto the aim
+    if (!input.stance) this.guideAim(aim, this._q, fl);
+    this._q.invert();
     const al = this._t.copy(aim).applyQuaternion(this._q);
     const yawErr = Math.atan2(al.x, al.z);
     const pitchErr = Math.atan2(al.y, Math.hypot(al.x, al.z)); // + = aim above the nose
@@ -734,6 +754,40 @@ export class FlightModel {
 
     this.collide(input);
     this.syncGait(dt);
+  }
+
+  /**
+   * Bend an aim (in place) into the waypoint the attitude flies at: within
+   * {@link GUIDE_TURN} of the body's heading and {@link GUIDE_PITCH} of the
+   * horizon, blended in with the flight regime (a hover pivots on the spot).
+   */
+  private guideAim(aim: THREE.Vector3, frame: THREE.Quaternion, fl: number): void {
+    if (fl < 1e-3) return;
+    const f = this._v.set(0, 0, 1).applyQuaternion(frame);
+    const u = this._n.set(0, 1, 0).applyQuaternion(frame);
+    // Heading off the nose — or, pointing up or down the vertical, off the
+    // belly (where the nose is headed as it comes back over to the horizon)
+    const hx = f.x - u.x * f.y;
+    const hz = f.z - u.z * f.y;
+    const heading = Math.atan2(hx, hz);
+    const aimH = Math.hypot(aim.x, aim.z);
+    let turn = aimH > 1e-4 ? Math.atan2(Math.sin(Math.atan2(aim.x, aim.z) - heading), Math.cos(Math.atan2(aim.x, aim.z) - heading)) : 0;
+    // With the aim all but dead astern, stay on the way round it was already
+    // going (or banked into): picked afresh each frame, the waypoint flicked
+    // side to side across the seam and the body hung on it, turning neither way
+    if (Math.abs(turn) > GUIDE_ASTERN) {
+      if (!this.guideSide) {
+        const upLeft = u.x * Math.cos(heading) - u.z * Math.sin(heading);
+        this.guideSide = Math.sign(Math.abs(upLeft) > 0.05 ? upLeft : this.omega.y || turn) || 1;
+      }
+      turn = this.guideSide * Math.abs(turn);
+    } else if (Math.abs(turn) < GUIDE_ASTERN - 0.2) this.guideSide = 0;
+    const h = heading + clamp(turn, -GUIDE_TURN, GUIDE_TURN);
+    const p = clamp(Math.atan2(aim.y, aimH), -GUIDE_PITCH, GUIDE_PITCH);
+    const gx = Math.sin(h) * Math.cos(p);
+    const gy = Math.sin(p);
+    const gz = Math.cos(h) * Math.cos(p);
+    aim.set(aim.x + (gx - aim.x) * fl, aim.y + (gy - aim.y) * fl, aim.z + (gz - aim.z) * fl).normalize();
   }
 
   /** Keep the legs' contacts in step with the ground state. */

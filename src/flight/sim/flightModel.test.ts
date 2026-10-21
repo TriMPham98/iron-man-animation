@@ -554,6 +554,43 @@ describe('FlightModel', () => {
     expect(m.up().y).toBeGreaterThan(0.5);
   });
 
+  it('turns onto an aim far round behind it head up, never over the top onto its back', () => {
+    // Body roll off the horizon about its long axis (rad): past π/2 it's on its back
+    const roll = (m: FlightModel) => {
+      const a = m.thrustAxis();
+      if (Math.abs(a.y) > 0.97) return 0;
+      const level = new THREE.Vector3(0, 1, 0).addScaledVector(a, -a.y).normalize();
+      return new THREE.Vector3(0, 0, -1).applyQuaternion(m.bodyQuaternion()).angleTo(level);
+    };
+    const aims = [
+      new THREE.Vector3(0, Math.sin(1.05), -Math.cos(1.05)), // astern, 60° up
+      new THREE.Vector3(0, Math.sin(0.5), -Math.cos(0.5)), // astern, 30° up
+      new THREE.Vector3(0, -Math.sin(1.05), -Math.cos(1.05)), // astern, 60° down
+      new THREE.Vector3(0.17, 0.98, -0.1), // up past the vertical
+    ];
+    for (const [speed, boost] of [[60, false], [120, false], [250, false], [450, true]] as const) {
+      for (const aim of aims) {
+        const m = new FlightModel(flat());
+        m.pos.set(0, 3000, 0);
+        m.vel.set(0, 0, speed);
+        m.grounded = false;
+        m.flightness = 1;
+        m.posture = 1.42;
+        m.speedCmd = Math.min(speed, 270);
+        run(m, 1, (i) => i.aim.set(0, 0, 1));
+        let worst = 0;
+        run(m, 8, (i) => {
+          i.aim.copy(aim).normalize();
+          i.boost = boost;
+          worst = Math.max(worst, roll(m));
+        });
+        expect(THREE.MathUtils.radToDeg(worst)).toBeLessThan(95);
+        // and it still gets there
+        expect(THREE.MathUtils.radToDeg(m.thrustAxis().angleTo(aim.clone().normalize()))).toBeLessThan(8);
+      }
+    }
+  });
+
   it('turns on a dime in a hover smoothly: eased yaw, no snap, no overshoot', () => {
     const m = new FlightModel(flat());
     m.pos.set(0, 50, 0);

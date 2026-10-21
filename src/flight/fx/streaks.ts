@@ -12,6 +12,7 @@ attribute vec3 iB;
 attribute vec4 iColor;
 attribute vec2 iWidth; // width at A, width at B
 varying vec2 vUv;
+varying float vCap;
 varying vec4 vColor;
 void main() {
   vec3 a = (viewMatrix * vec4(iA, 1.0)).xyz;
@@ -29,6 +30,8 @@ void main() {
   // Caps: push the ends out along the segment by half a width
   vec3 p = mid + side * position.x * w + dir * (position.y - 0.5) * 2.0 * w * position.z;
   vUv = vec2(position.x, position.y);
+  // −1 / +1 at the far edge of the A / B cap, 0 where the cap meets the body
+  vCap = position.z * (position.y * 2.0 - 1.0);
   vColor = iColor;
   gl_Position = projectionMatrix * vec4(p, 1.0);
 }
@@ -36,11 +39,14 @@ void main() {
 
 const FRAG = /* glsl */ `
 varying vec2 vUv;
+varying float vCap;
 varying vec4 vColor;
 void main() {
-  float x = abs(vUv.x);
-  float core = exp(-x * x * 18.0);
-  float halo = exp(-x * x * 3.5) * 0.45;
+  // Round ends: across the body and out along the caps share one falloff,
+  // so a streak shorter than it is wide is a dot, not a square
+  float r2 = vUv.x * vUv.x + vCap * vCap;
+  float core = exp(-r2 * 18.0);
+  float halo = exp(-r2 * 3.5) * 0.45;
   gl_FragColor = vec4(vColor.rgb * (core * 1.6 + halo), 1.0) * vColor.a;
 }
 `;

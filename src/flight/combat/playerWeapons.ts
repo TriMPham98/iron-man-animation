@@ -74,6 +74,11 @@ const REPULSOR_RECOIL = 0.4;
 /** Share of a weapon's recoil that reaches a suit standing on its legs (it braces). */
 const BRACED = 0.1;
 const REPULSOR_KNOCK = 9;
+/** Repulsor blue-white (HDR), the light a shot throws on the armour and round its impact. */
+const REPULSOR_HOT = new THREE.Color(7, 10, 15);
+const REPULSOR_COOL = new THREE.Color(0.6, 1.4, 3);
+const MUZZLE_LIGHT = 90;
+const IMPACT_LIGHT = 900;
 const MISSILE_CONE = Math.cos(THREE.MathUtils.degToRad(19));
 const MISSILE_RANGE = 3200;
 const LOCK_TIME = 0.24;
@@ -160,6 +165,11 @@ export class PlayerWeapons {
   private readonly flareList: Flare[] = [];
   private readonly beam = new UnibeamFx();
   private readonly pending: Shot[] = [];
+  /** One light rides the palm that fires, one flares where a bolt lands. */
+  private readonly muzzleLight = new THREE.PointLight(0xa8d8ff, 0, 9, 2);
+  private readonly impactLight = new THREE.PointLight(0xa8d8ff, 0, 60, 2);
+  private muzzleT = 1;
+  private impactT = 1;
   private repulsorT = 0;
   private nextSide: 'L' | 'R' = 'R';
   private holdL = 0;
@@ -218,7 +228,7 @@ export class PlayerWeapons {
     private readonly events: EventBus,
   ) {
     this.group.name = 'player-weapons';
-    this.group.add(this.beam.group);
+    this.group.add(this.beam.group, this.muzzleLight, this.impactLight);
   }
 
   /** Rockets left in both pods. */
@@ -299,6 +309,12 @@ export class PlayerWeapons {
     const rate = (on: boolean, cur: number) => cur + ((on ? 1 : 0) - cur) * (1 - Math.exp(-dt / (on ? 0.06 : 0.22)));
     A.aimL = rate(this.holdL > 0 || this.launchHold[0] > 0, A.aimL);
     A.aimR = rate(this.holdR > 0 || this.launchHold[1] > 0, A.aimR);
+    this.muzzleT += dt;
+    this.impactT += dt;
+    const mk = Math.max(0, 1 - this.muzzleT / 0.1);
+    const ik = Math.max(0, 1 - this.impactT / 0.18);
+    this.muzzleLight.intensity = MUZZLE_LIGHT * mk * mk;
+    this.impactLight.intensity = IMPACT_LIGHT * ik * ik;
     A.flashL = Math.max(0, A.flashL - dt * 6);
     A.flashR = Math.max(0, A.flashR - dt * 6);
     A.chargeL = this.chargeSide === 'L' ? Math.min(1, this.chargeT * 10) : Math.max(0, A.chargeL - dt * 8);
@@ -611,14 +627,29 @@ export class PlayerWeapons {
     const dir = target.clone().sub(from).normalize();
     // Never fire backward through the suit
     if (dir.dot(aim) < 0.5) dir.copy(aim);
-    // Muzzle blast: a white flash in the palm and a cone of plasma thrown
-    // down the line, riding the suit's own speed
-    this.particles.emit('flash', from, this.model.vel, { scale: 0.09 });
-    this.particles.emit('plasma', from, this.model.vel, { scale: 2.4 });
-    for (let i = 0; i < 9; i++) {
-      const v = this._w.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(5).addScaledVector(dir, 10 + Math.random() * 26).add(this.model.vel);
-      this.particles.emit('plasma', from, v, { scale: 0.9 + Math.random() * 0.6 });
+    // Muzzle blast: a tight white-blue flash in the palm, a collar of
+    // plasma blown out round the wrist and a short jet thrown down the
+    // line, all riding the suit's own speed. Kept small: the camera sits a
+    // few metres off the hand and a big glow would white out the suit
+    const P = this.particles;
+    const vel = this.model.vel;
+    P.emit('flash', from, vel, { scale: 0.045, color: REPULSOR_HOT, end: REPULSOR_COOL });
+    P.emit('plasma', from, vel, { scale: 0.7, life: 0.5 });
+    const u = this._n.set(0, 1, 0).cross(dir);
+    if (u.lengthSq() < 1e-4) u.set(1, 0, 0);
+    u.normalize();
+    const w = this._l.crossVectors(dir, u);
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 + Math.random() * 0.4;
+      const v = this._w.copy(u).multiplyScalar(Math.cos(a)).addScaledVector(w, Math.sin(a)).multiplyScalar(9 + Math.random() * 3).addScaledVector(dir, 3).add(vel);
+      P.emit('plasma', from, v, { scale: 0.3, life: 0.3 });
     }
+    for (let i = 0; i < 4; i++) {
+      const v = this._w.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(2).addScaledVector(dir, 14 + Math.random() * 24).add(vel);
+      P.emit('plasma', from, v, { scale: 0.35 + Math.random() * 0.2, life: 0.35 });
+    }
+    this.muzzleLight.position.copy(from);
+    this.muzzleT = 0;
     // The kick goes back up the arm into the suit (on foot the legs take it:
     // walking into your own fire must still carry you forward)
     this.model.vel.addScaledVector(dir, -REPULSOR_RECOIL * (this.model.grounded ? BRACED : 1));
@@ -645,7 +676,7 @@ export class PlayerWeapons {
       while (b.laid > 7) {
         b.laid -= 7;
         const at = this._b.copy(b.p).addScaledVector(b.v, -b.laid / BOLT_SPEED);
-        this.particles.emit('plasma', at, undefined, { scale: 0.55, life: 0.22 });
+        this.particles.emit('plasma', at, undefined, { scale: 0.4, life: 0.3 });
       }
       let hit: THREE.Vector3 | null = null;
       let struck = false;
@@ -670,12 +701,26 @@ export class PlayerWeapons {
       if (!hit && b.p.y < surf) hit = new THREE.Vector3(b.p.x, surf + 0.3, b.p.z);
       if (hit || b.life <= 0) {
         if (hit) {
-          // A blue-white detonation: a hard flash, a shell of plasma
-          // blown outward, sparks and a slower glowing core
-          this.particles.emit('flash', hit, undefined, { scale: 0.4 });
-          this.particles.burst('plasma', hit, 22, 16, undefined, 1, { scale: 1.8 });
-          this.particles.burst('plasma', hit, 6, 2, undefined, 1, { scale: 3.2, life: 0.4 });
-          this.particles.burst('spark', hit, 22, 18, undefined, 1);
+          // A blue-white detonation: a hard flash, a shock ring blown out
+          // across the line of the shot, a shell of plasma, sparks thrown
+          // back off the struck face and a slower glowing core
+          const P = this.particles;
+          const d = this._n.copy(b.v).sub(b.vs).normalize();
+          P.emit('flash', hit, undefined, { scale: 0.4, color: REPULSOR_HOT, end: REPULSOR_COOL });
+          const u = this._l.set(0, 1, 0).cross(d);
+          if (u.lengthSq() < 1e-4) u.set(1, 0, 0);
+          u.normalize();
+          const w = this._b.crossVectors(d, u);
+          for (let k = 0; k < 18; k++) {
+            const a = (k / 18) * Math.PI * 2;
+            const v = this._w.copy(u).multiplyScalar(Math.cos(a)).addScaledVector(w, Math.sin(a)).multiplyScalar(26);
+            P.emit('plasma', hit, v, { scale: 1.1, life: 0.8 });
+          }
+          P.burst('plasma', hit, 16, 12, undefined, 1, { scale: 1.6 });
+          P.burst('plasma', hit, 5, 2, undefined, 1, { scale: 3, life: 0.4 });
+          P.burst('spark', hit, 26, 20, this._w.copy(d).multiplyScalar(-0.6), 1);
+          this.impactLight.position.copy(hit);
+          this.impactT = 0;
           const water = this.field.heightAt(hit.x, hit.z) < 0 && hit.y < 1;
           if (water) this.particles.burst('spray', hit, 10, 6, new THREE.Vector3(0, 1.4, 0), 0.6);
           else if (hit.y < surf + 1) this.particles.burst('dust', hit, 5, 4, new THREE.Vector3(0, 0.8, 0), 0.8, { scale: 0.8 });
@@ -888,12 +933,21 @@ export class PlayerWeapons {
     const S = this.streaks;
     for (const b of this.bolts) {
       // A white-hot slug in a blue sheath, its tail stretched behind it —
-      // but never back past the palm it left (it grows out of the hand)
-      const len = Math.min(0.012, b.p.distanceTo(b.o) / b.v.length());
+      // but never back past the palm it left (it grows out of the hand).
+      // The sheath shimmers shot to shot so a stream doesn't read as one
+      // rod; the slug's round head is a short fat streak (its caps)
+      const sp = b.v.length();
+      const out = b.p.distanceTo(b.o);
+      const len = Math.min(0.022, out / sp);
+      // Still in the palm (its first frame) it's a point inside the muzzle
+      // flash, not a fat orb in the camera's face
+      const fl = (0.85 + 0.3 * Math.sin(b.age * 90 + (b.side === 'L' ? 0 : 2))) * THREE.MathUtils.lerp(0.3, 1, Math.min(1, out / 4));
       const tail = this._a.copy(b.p).addScaledVector(b.v, -len);
-      S.add(tail, b.p, 2.2, 4.5, 10, 0.7, 0.1, 0.55);
-      const mid = this._b.copy(b.p).addScaledVector(b.v, -len * 0.45);
-      S.add(mid, b.p, 9, 11, 14, 1, 0.05, 0.16);
+      S.add(tail, b.p, 1.6, 3.6, 10, 0.6, 0.04, 0.6 * fl);
+      const mid = this._b.copy(b.p).addScaledVector(b.v, -len * 0.4);
+      S.add(mid, b.p, 9, 11, 14, 1, 0.03, 0.17);
+      const head = this._b.copy(b.p).addScaledVector(b.v, -Math.min(0.35, out) / sp);
+      S.add(head, b.p, 10, 13, 18, 1, 0.24 * fl, 0.3 * fl);
     }
     // Launcher lock: each arm's laser ranges the targets it will take, the
     // next shot's line brightest

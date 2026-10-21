@@ -310,6 +310,8 @@ export interface EmitOptions {
   life?: number;
   /** Override colour (start). */
   color?: THREE.Color;
+  /** Override colour (end). */
+  end?: THREE.Color;
   alpha?: number;
 }
 
@@ -358,9 +360,10 @@ export class Particles {
     pool.c0[k + 1] = (c ? c.g : pr.color[1]) * jitter;
     pool.c0[k + 2] = (c ? c.b : pr.color[2]) * jitter;
     const e = pr.end ?? pr.color;
-    pool.c1[k] = e[0] * jitter;
-    pool.c1[k + 1] = e[1] * jitter;
-    pool.c1[k + 2] = e[2] * jitter;
+    const ec = opts.end;
+    pool.c1[k] = (ec ? ec.r : e[0]) * jitter;
+    pool.c1[k + 1] = (ec ? ec.g : e[1]) * jitter;
+    pool.c1[k + 2] = (ec ? ec.b : e[2]) * jitter;
     pool.alpha[i] = pr.alpha * (opts.alpha ?? 1);
     pool.drag[i] = pr.drag;
     pool.lift[i] = pr.lift;
