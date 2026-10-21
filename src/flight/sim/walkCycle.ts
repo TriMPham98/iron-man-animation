@@ -3,8 +3,8 @@ import type { LimbOffsets } from '../../suit/rigPose';
 import { boneSpec } from '../../suit/rig';
 
 /**
- * The suit on foot: a procedural gait for walking, jogging and turning in
- * place, with feet that are really planted.
+ * The suit on foot: a procedural gait for walking, sidestepping and turning
+ * in place, with feet that are really planted.
  *
  * Each boot is a world-space contact. A stance boot stays exactly where it
  * came down while the body walks over it (the legs are solved onto it by
@@ -14,15 +14,14 @@ import { boneSpec } from '../../suit/rig';
  * boot swings in its first part, the right half a cycle later — that runs
  * while the suit moves, turns, or still has a boot out of place, and stops
  * on both feet. It's a heavy suit's gait, not a catwalk: the boots stand
- * shoulder-wide and track apart (narrowing only a little at a sprint), the
+ * shoulder-wide and track apart (narrowing only a little on the move), the
  * hips barely roll, and the weight drives the stride. The pelvis rides an
  * inverted pendulum: it sits as low as the furthest stance boot needs
  * (that's the bob), dips on each heavy footfall and turns a little with the
  * stride while the shoulders carry the counter-turn. The arms hang off the
  * armour with loose fists and swing straight fore and aft against the legs
- * a beat behind them; running, the elbows lock near square and pump, the
- * body leans into the speed and the knees drive high. Each boot lands heel
- * first and rolls flat.
+ * a beat behind them, and the body leans a little into the speed. Each boot
+ * lands heel first and rolls flat.
  *
  * Stepped at the physics rate by the flight model (which turns each boot
  * strike into a footstep); posed at the render rate by the suit driver.
@@ -51,6 +50,8 @@ const SHIN = ANKLE.clone().sub(KNEE);
 const LEG_MAX = THIGH.length() + SHIN.length();
 /** Most of the leg's length a stance leg is allowed to use (never locks straight). */
 const REACH = 0.975;
+/** Shortest hip → ankle a leg is folded to (m): any closer and the knee folds past the thigh. */
+const FOLD = 0.5;
 /** Toe → ankle (bind): the heel rises about the toe on push-off. */
 const TOE_TO_ANKLE = new THREE.Vector3(0, ANKLE.y - 0.02, ANKLE.z - TOE.z);
 
@@ -61,10 +62,8 @@ const ARM_TWIST = -0.5;
 const FOOT_STEP = 0.85;
 /** Walking speeds (m/s). */
 export const WALK_SPEED = 1.5;
-export const RUN_SPEED = 4.8;
 export const BACK_SPEED = 1.0;
 export const STRAFE_SPEED = 1.15;
-export const STRAFE_RUN = 2.0;
 
 /** The rig root channels of a frame's pose (rigPose: lift m; pitch, roll, yaw rad). */
 export interface RootPose {
@@ -115,7 +114,6 @@ const _Z = new THREE.Vector3(0, 0, 1);
  */
 const TRACK_STAND = 0.06;
 const TRACK_WALK = 0.035;
-const TRACK_RUN = 0.015;
 
 /** Furthest a boot is kept from its rest spot when planted out of a landing (m). */
 const PLANT_REACH = 0.32;
@@ -222,14 +220,12 @@ export class Gait {
   phase = 0;
   /** Is the clock running (moving, turning or settling)? */
   active = 0;
-  /** 0 walk … 1 jog (smoothed). */
-  run = 0;
   /** Share of the walk in the pose: 1 on the ground, 0 in the air. */
   weight = 0;
   /** Boots on the ground (false: flying, the legs are the driver's). */
   attached = false;
-  /** Swing share of the cycle (walk 0.4, run 0.62: a little float). */
-  swingFrac = 0.4;
+  /** Swing share of the cycle. */
+  readonly swingFrac = 0.4;
   /** Boots' stance width past the bind ankle (m): wide at rest, narrower on the move. */
   track = TRACK_STAND;
   /** Pelvis bob spring (m) and its velocity. */
@@ -237,6 +233,10 @@ export class Gait {
   private bobVel = 0;
   /** Forward lean (rad), sprung. */
   private lean = 0;
+  /** Is the cycle clock ticking (it stops on both feet)? */
+  private ticking = false;
+  /** Lowest pelvis lift that leaves every leg room to fold (m), from the last reach check. */
+  private foldLift = -Infinity;
   private readonly prevVel = new THREE.Vector3();
   readonly feet: [Foot, Foot] = [this.foot(1), this.foot(-1)];
   /** Footfalls so far (tests / debugging). */
@@ -316,7 +316,7 @@ export class Gait {
 
   /**
    * One physics step on the ground. Returns the strength of a boot strike
-   * this step (0 = none): ~0.3 settling, ~0.5 walking, 1 jogging.
+   * this step (0 = none): ~0.3 settling, ~0.5 walking.
    */
   step(dt: number, pos: THREE.Vector3, heading: number, vel: THREE.Vector3, omega: number, crouch: number, ground: GroundSurface): number {
     this.pos.copy(pos);
@@ -327,9 +327,7 @@ export class Gait {
     if (!this.attached) return 0;
 
     const speed = Math.hypot(vel.x, vel.z);
-    this.run += (smooth(2.0, 3.3, speed) - this.run) * approach(dt, 0.25);
-    this.swingFrac = lerp(0.4, 0.62, this.run);
-    const trackGoal = lerp(TRACK_STAND, lerp(TRACK_WALK, TRACK_RUN, this.run), smooth(0.1, 0.8, speed));
+    const trackGoal = lerp(TRACK_STAND, TRACK_WALK, smooth(0.1, 0.8, speed));
     this.track += (trackGoal - this.track) * approach(dt, 0.3);
     // Stride (one step) grows with speed; shorter sideways (the legs would cross)
     const fwdBody = Math.sin(heading) * vel.x + Math.cos(heading) * vel.z;
@@ -350,8 +348,15 @@ export class Gait {
     const run = moving || turning || need > 0.07 || anySwing;
     this.active += ((moving || turning ? 1 : 0) - this.active) * approach(dt, 0.3);
     if (!run || crouch > 0) {
+      this.ticking = false;
       this.updateBody(dt, 0);
       return 0;
+    }
+    if (!this.ticking) {
+      // Starting off: the next boot lifts now, not up to half a cycle later
+      // with the body already walking away from both planted boots
+      this.ticking = true;
+      this.phase = (this.phase < 0.5 ? 0.5 : 1) - 1e-6;
     }
     // Cadence (cycles/s): the stride matches the speed; turning and
     // settling steps at an easy pace
@@ -396,13 +401,13 @@ export class Gait {
           f.pos.copy(f.to);
           f.yaw = f.toYaw;
           // Heel first: the toes are still up and roll down onto the ground
-          f.heel = moving ? -lerp(0.16, 0.22, this.run) : 0;
+          f.heel = moving ? -0.16 : 0;
           const k = Math.hypot(f.to.x - f.from.x, f.to.z - f.from.z);
-          const s = moving ? lerp(0.5, 1, this.run) : 0.3;
+          const s = moving ? 0.5 : 0.3;
           strike = Math.max(strike, s * clamp(0.4 + k * 1.2, 0.4, 1));
           this.strikes++;
           // The weight drops into the knees
-          this.bobVel -= lerp(0.12, 0.3, this.run) * (moving ? 1 : 0.4);
+          this.bobVel -= 0.12 * (moving ? 1 : 0.4);
         } else {
           // In the air: the heel's pushed-off angle eases back flat
           f.heel *= 1 - approach(dt, 0.08);
@@ -412,7 +417,7 @@ export class Gait {
         const other = this.feet[f.side === 1 ? 1 : 0];
         rotY(_a.copy(f.pos).sub(_b.set(pos.x, f.pos.y, pos.z)), -heading, _a);
         const behind = -_a.z - 0.05;
-        const goal = moving && other.swinging ? clamp(behind / 0.35, 0, 1) * lerp(0.3, 0.55, this.run) * smooth(0.0, 0.6, other.t) : 0;
+        const goal = moving && other.swinging ? clamp(behind / 0.35, 0, 1) * 0.3 * smooth(0.0, 0.6, other.t) : 0;
         // (a heel-strike's toes-up rolls down a little slower than a push-off rises)
         f.heel += (goal - f.heel) * approach(dt, f.heel < 0 ? 0.07 : 0.05);
       }
@@ -426,38 +431,57 @@ export class Gait {
     void strike;
     const speed = Math.hypot(this.vel.x, this.vel.z);
     // (a soft knee even standing: the suit's weight is carried, not locked out)
-    const base = -lerp(0.035, lerp(0.06, 0.09, this.run), this.active);
-    const goal = Math.min(base, this.reachLift(this.pos, null, { ...ZERO_ROOT, pitch: this.lean }) - 0.002);
+    const base = -lerp(0.035, 0.06, this.active);
+    const goal = Math.max(Math.min(base, this.reachLift(this.pos, null, { ...ZERO_ROOT, pitch: this.lean }) - 0.002), this.foldLift);
     const w = 14;
     this.bobVel += (w * w * (goal - this.bob) - 2 * 0.75 * w * this.bobVel) * dt;
     this.bob += this.bobVel * dt;
-    // Forward lean with speed — running, the body falls into the stride —
-    // and more into an acceleration
+    // Forward lean with speed, and more into an acceleration
     const acc = (Math.hypot(this.vel.x, this.vel.z) - Math.hypot(this.prevVel.x, this.prevVel.z)) / Math.max(dt, 1e-4);
     this.prevVel.copy(this.vel);
-    const leanGoal = clamp(0.015 * speed + 0.1 * this.run + 0.015 * clamp(acc, -3, 3), -0.05, 0.24);
+    const leanGoal = clamp(0.015 * speed + 0.015 * clamp(acc, -3, 3), -0.05, 0.24);
     this.lean += (leanGoal - this.lean) * approach(dt, 0.25);
   }
 
   /**
    * Highest pelvis lift (m, ≤ 0 usually) at which every stance boot is
-   * still within reach — the inverted pendulum's height.
+   * still within reach — the inverted pendulum's height. Also notes the
+   * lowest lift that keeps every boot (stance or swing) at least a folded
+   * leg's length below the hip (`foldLift`): over a step the pelvis rides
+   * up rather than crushing the leg on the higher boot into a pretzel.
    */
   private reachLift(pos: THREE.Vector3, q: THREE.Quaternion | null, root: RootPose): number {
     let lift = 0.05;
+    let fold = -Infinity;
     const quat = q ?? this._qh.setFromAxisAngle(_Y, this.heading);
     const a = this._ank;
     for (const f of this.feet) {
-      if (f.swinging && f.t > 0.02) continue;
       // Ankle in the body frame at zero lift / tilt
       this.ankleRig(f, pos, quat, { ...root, lift: 0 }, a);
       const dx = a.x - f.side * HIP.x;
       const dz = a.z - HIP.z;
+      const flat = dx * dx + dz * dz;
+      fold = Math.max(fold, Math.sqrt(Math.max(0, FOLD * FOLD - flat)) - (HIP.y - a.y));
+      if (f.swinging && f.t > 0.02) continue;
       const reach = LEG_MAX * REACH;
-      const vert = Math.sqrt(Math.max(0.05, reach * reach - dx * dx - dz * dz));
+      const vert = Math.sqrt(Math.max(0.05, reach * reach - flat));
       lift = Math.min(lift, vert - (HIP.y - a.y));
     }
+    this.foldLift = fold;
     return lift;
+  }
+
+  /**
+   * Ground height the body rides at (world y): between the boots, so it
+   * climbs onto a step as the weight goes onto the boot up there instead
+   * of when the hips pass over the edge.
+   */
+  support(): number {
+    let y = 0;
+    for (const f of this.feet) {
+      y += f.swinging ? lerp(f.from.y, f.to.y, f.t) : f.pos.y;
+    }
+    return y / 2;
   }
 
   /** A boot's ankle target in the rig frame for a body pose and root offsets. */
@@ -468,11 +492,11 @@ export class Gait {
     if (f.swinging) {
       const s = f.t * f.t * (3 - 2 * f.t);
       p.lerpVectors(f.from, f.to, s);
-      // Running, the heel kicks up behind first and the knee drives
-      // through high (the boot's still back while it climbs)
-      const clear = lerp(0.07, 0.18, this.run) * Math.sin(Math.PI * Math.pow(f.t, 0.8));
-      const kick = 0.14 * this.run * Math.sin(Math.PI * clamp(f.t / 0.62, 0, 1));
-      p.y = lerp(f.from.y, f.to.y, s) + clear + kick;
+      // Up a step the boot rises early and clears the edge before it comes
+      // over it; down one it carries out level past the edge and drops late
+      const rise = f.to.y - f.from.y;
+      const clear = (0.07 + 0.15 * Math.abs(rise)) * Math.sin(Math.PI * Math.pow(f.t, 0.8));
+      p.y = f.from.y + rise * (rise > 0 ? smooth(0, 0.55, f.t) : smooth(0.45, 1, f.t)) + clear;
       heel = 0;
     } else {
       p.copy(f.pos);
@@ -519,14 +543,14 @@ export class Gait {
       lift: root.lift,
       pitch: root.pitch + this.lean * w,
       // (only a little: a hip that rolls over each step reads as a sashay)
-      roll: root.roll + 0.014 * c * (1 - 0.3 * this.run) * w,
+      roll: root.roll + 0.014 * c * w,
       // The pelvis turns a little with the forward leg …
-      yaw: root.yaw - lerp(0.04, 0.06, this.run) * stride * w,
+      yaw: root.yaw - 0.04 * stride * w,
       // … and the shoulders drive the other way, well past it
-      twist: lerp(0.1, 0.2, this.run) * stride * w,
+      twist: 0.1 * stride * w,
     };
     // Never ask a stance leg for more than it has
-    const walkLift = this.attached ? Math.min(this.bob, this.reachLift(pos, q, out)) : this.bob;
+    const walkLift = this.attached ? Math.max(Math.min(this.bob, this.reachLift(pos, q, out)), this.foldLift) : this.bob;
     out.lift = lerp(root.lift, walkLift, w);
     const ang: LegAngles = { hip: 0, hipOut: 0, knee: 0 };
     const zRel = [0, 0];
@@ -556,22 +580,21 @@ export class Gait {
     void zRel;
     // Arms: hanging off the armour, swung straight fore and aft against the
     // legs (left arm forward with the right boot) from the shoulder like
-    // pendulums — a beat behind the legs walking, so they reverse soft
-    // instead of on the footfall; running they're locked to the stride and
-    // pump, the elbows near square
-    const armPh = 2 * Math.PI * (this.phase - sf - lerp(0.07, 0.03, this.run));
-    const swingA = lerp(0.22, 0.62, this.run) * this.active;
+    // pendulums — a beat behind the legs, so they reverse soft instead of
+    // on the footfall
+    const armPh = 2 * Math.PI * (this.phase - sf - 0.07);
+    const swingA = 0.22 * this.active;
     const swL = Math.cos(armPh) * swingA;
     const swR = -swL;
     limbs.armFlexL += swL * w;
     limbs.armFlexR += swR * w;
-    const elbow = 0.22 + lerp(0.06, 1.1, this.run) * this.active;
-    limbs.elbowL += (elbow + lerp(0.3, 0.2, this.run) * Math.max(0, -swL)) * w;
-    limbs.elbowR += (elbow + lerp(0.3, 0.2, this.run) * Math.max(0, -swR)) * w;
+    const elbow = 0.22 + 0.06 * this.active;
+    limbs.elbowL += (elbow + 0.3 * Math.max(0, -swL)) * w;
+    limbs.elbowR += (elbow + 0.3 * Math.max(0, -swR)) * w;
     // In from the flight pose's spread, but clear of the body: the suit's
     // arms ride out on the bulk of the armour
-    limbs.armL += lerp(-0.15, -0.1, this.run) * w;
-    limbs.armR += lerp(-0.15, -0.1, this.run) * w;
+    limbs.armL += -0.15 * w;
+    limbs.armR += -0.15 * w;
     limbs.armTwistL += ARM_TWIST * w;
     limbs.armTwistR += ARM_TWIST * w;
     return out;

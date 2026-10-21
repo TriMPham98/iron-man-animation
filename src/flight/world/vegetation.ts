@@ -55,7 +55,7 @@ const NEAR_STRIDE = 19;
 /** Floats per impostor: x y z sy | sx kind | r g b. */
 const IMP_STRIDE = 9;
 
-function seeded(cx: number, cz: number, salt = 0): () => number {
+export function seeded(cx: number, cz: number, salt = 0): () => number {
   let s = (Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663) ^ Math.imul(salt, 83492791)) >>> 0;
   return () => {
     s = (Math.imul(s ^ (s >>> 15), 2246822507) + 0x6d2b79f5) >>> 0;
@@ -71,7 +71,7 @@ function seeded(cx: number, cz: number, salt = 0): () => number {
  * by the eye (rounder clumps, twigs, more fronds), `lo` out to the
  * impostors. Same silhouette, so the swap between them barely shows.
  */
-type Detail = 'hi' | 'lo';
+export type Detail = 'hi' | 'lo';
 
 /** A stable 0–1 hash of a point (shared corners of a non-indexed mesh agree). */
 function hash3(x: number, y: number, z: number, seed: number): number {
@@ -84,7 +84,7 @@ function hash3(x: number, y: number, z: number, seed: number): number {
  * each corner in or out at random, so the outline reads as ragged leaves
  * rather than a polygon; the normals stay smooth, so the light doesn't.
  */
-function blob(r: number, sy: number, at: THREE.Vector3, seed: number, detail = 0, leafy = 0): THREE.BufferGeometry {
+export function blob(r: number, sy: number, at: THREE.Vector3, seed: number, detail = 0, leafy = 0): THREE.BufferGeometry {
   const g = new THREE.IcosahedronGeometry(r, detail);
   const pos = g.getAttribute('position');
   const nrm = new Float32Array(pos.count * 3);
@@ -120,7 +120,7 @@ function blob(r: number, sy: number, at: THREE.Vector3, seed: number, detail = 0
  * gets in among the leaves. Leaves carry the blob's outward normal, so the
  * clump still shades as one soft mass.
  */
-function clump(r: number, sy: number, at: THREE.Vector3, seed: number, hi: boolean, leafy: number, leaf = 0.42): THREE.BufferGeometry {
+export function clump(r: number, sy: number, at: THREE.Vector3, seed: number, hi: boolean, leafy: number, leaf = 0.42): THREE.BufferGeometry {
   if (!hi) return blob(r, sy, at, seed, 0, leafy);
   const core = blob(r * 0.86, sy, at, seed, 0, leafy * 0.6);
   const cp = core.getAttribute('position');
@@ -175,13 +175,13 @@ function clump(r: number, sy: number, at: THREE.Vector3, seed: number, hi: boole
 }
 
 /** Non-indexed, position + normal only: anything can then merge with anything. */
-function bare(g: THREE.BufferGeometry): THREE.BufferGeometry {
+export function bare(g: THREE.BufferGeometry): THREE.BufferGeometry {
   const out = g.index ? g.toNonIndexed() : g;
   for (const k of Object.keys(out.attributes)) if (k !== 'position' && k !== 'normal') out.deleteAttribute(k);
   return out;
 }
 
-function paint(g: THREE.BufferGeometry, top: THREE.Color, bottom: THREE.Color, y0: number, y1: number): THREE.BufferGeometry {
+export function paint(g: THREE.BufferGeometry, top: THREE.Color, bottom: THREE.Color, y0: number, y1: number): THREE.BufferGeometry {
   g = bare(g);
   const pos = g.getAttribute('position');
   const col = new Float32Array(pos.count * 3);
@@ -210,7 +210,7 @@ const WARM = new THREE.Color(1.3, 1.15, 0.62);
  * shades as one mass, not a pile of balls. Free at draw time, and the
  * impostors inherit it from the bake.
  */
-function foliage(parts: THREE.BufferGeometry[], c: THREE.Vector3, rad: THREE.Vector3, top: THREE.Color, bottom: THREE.Color, seed: number): THREE.BufferGeometry {
+export function foliage(parts: THREE.BufferGeometry[], c: THREE.Vector3, rad: THREE.Vector3, top: THREE.Color, bottom: THREE.Color, seed: number): THREE.BufferGeometry {
   const g = paint(mergeGeometries(parts.map(bare)), top, bottom, c.y - rad.y, c.y + rad.y);
   const pos = g.getAttribute('position');
   const nrm = g.getAttribute('normal');
@@ -238,7 +238,7 @@ function foliage(parts: THREE.BufferGeometry[], c: THREE.Vector3, rad: THREE.Vec
 }
 
 /** A tapered limb from a to b (open tube). */
-function limb(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, sides = 5): THREE.BufferGeometry {
+export function limb(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, sides = 5): THREE.BufferGeometry {
   const len = a.distanceTo(b);
   const g = new THREE.CylinderGeometry(r1, r0, len, sides, 1, true).translate(0, len / 2, 0);
   const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
@@ -246,8 +246,8 @@ function limb(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, sides 
   return g;
 }
 
-const BARK = [new THREE.Color(0.075, 0.062, 0.05), new THREE.Color(0.045, 0.037, 0.03)] as const;
-const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+export const BARK = [new THREE.Color(0.075, 0.062, 0.05), new THREE.Color(0.045, 0.037, 0.03)] as const;
+export const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
 /** Chaparral clump: dense lobes (also sage, and the brush near the eye, by tint). */
 function bushGeometry(d: Detail): THREE.BufferGeometry {
@@ -271,7 +271,7 @@ function bushGeometry(d: Detail): THREE.BufferGeometry {
 }
 
 /** Dry grass clump: a fan of thin bent blades (two-sided). */
-function grassGeometry(): THREE.BufferGeometry {
+export function grassGeometry(): THREE.BufferGeometry {
   const pos: number[] = [];
   const nrm: number[] = [];
   const col: number[] = [];
@@ -443,8 +443,42 @@ function palmGeometry(d: Detail): THREE.BufferGeometry {
   const trunk = mergeGeometries(pts.slice(1).map((p, i) => bare(limb(pts[i], p, rad(i / SEG), rad((i + 1) / SEG), hi ? 7 : 5))));
   const trunkP = paint(trunk, new THREE.Color(0.13, 0.11, 0.09), new THREE.Color(0.075, 0.065, 0.055), 0, H);
   const top = pts[pts.length - 1];
-  // Old fronds: a dead brown skirt under the crown
-  const skirt = paint(blob(0.72, 1.5, top.clone().add(V(0, -1.0, 0)), 9, hi ? 1 : 0, 0.5), new THREE.Color(0.12, 0.09, 0.055), new THREE.Color(0.045, 0.035, 0.025), H - 2.2, H);
+  // Old fronds: a dead brown skirt under the crown. Close up, a thatch of
+  // hanging dead leaves round a darker core; further off just the lump
+  const skirtTop = new THREE.Color(0.12, 0.09, 0.055);
+  const skirtFoot = new THREE.Color(0.045, 0.035, 0.025);
+  let skirt = paint(blob(hi ? 0.5 : 0.72, hi ? 1.9 : 1.5, top.clone().add(V(0, -1.0, 0)), 9, hi ? 1 : 0, 0.5), skirtTop, skirtFoot, H - 2.2, H);
+  if (hi) {
+    const rs = seeded(9, 21);
+    const thatch: THREE.BufferGeometry[] = [];
+    for (let k = 0; k < 22; k++) {
+      const a = (k / 22) * Math.PI * 2 + rs() * 0.25;
+      const out = V(Math.cos(a), 0, Math.sin(a));
+      const side = V(-out.z, 0, out.x);
+      const y0 = top.y - 0.1 - rs() * 0.4;
+      const len = 1.6 + rs() * 0.9;
+      // Hangs from the crown, bellying out, then in toward the trunk at the hem
+      const p0 = top.clone().setY(y0).addScaledVector(out, 0.35);
+      const p1 = top.clone().setY(y0 - len * 0.5).addScaledVector(out, 0.78 + rs() * 0.15);
+      const p2 = top.clone().setY(y0 - len).addScaledVector(out, 0.5 + rs() * 0.2);
+      const w = 0.24 + rs() * 0.12;
+      const tris: number[] = [];
+      for (const [a0, a1, w0, w1] of [
+        [p0, p1, w, w * 1.1],
+        [p1, p2, w * 1.1, w * 0.5],
+      ] as const) {
+        const q = [a0.clone().addScaledVector(side, -w0), a0.clone().addScaledVector(side, w0), a1.clone().addScaledVector(side, w1), a1.clone().addScaledVector(side, -w1)];
+        for (const i of [0, 2, 1, 0, 3, 2]) tris.push(q[i].x, q[i].y, q[i].z);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(tris, 3));
+      const n = new Float32Array(tris.length);
+      for (let i = 0; i < n.length; i += 3) n.set([out.x, 0.35, out.z], i);
+      g.setAttribute('normal', new THREE.BufferAttribute(n, 3));
+      thatch.push(g);
+    }
+    skirt = mergeGeometries([skirt, paint(mergeGeometries(thatch), skirtTop.clone().multiplyScalar(1.15), skirtFoot, H - 2.8, H)]);
+  }
 
   const rnd = seeded(5, 13);
   const pos: number[] = [];
@@ -518,7 +552,7 @@ function palmGeometry(d: Detail): THREE.BufferGeometry {
   return mergeGeometries([trunkP, skirt, crown]);
 }
 
-const MODELS: Record<Kind, (d: Detail) => THREE.BufferGeometry> = { bush: bushGeometry, oak: oakGeometry, pine: pineGeometry, palm: palmGeometry };
+export const MODELS: Record<Kind, (d: Detail) => THREE.BufferGeometry> = { bush: bushGeometry, oak: oakGeometry, pine: pineGeometry, palm: palmGeometry };
 
 // ── Shaders ──────────────────────────────────────────────────────────────
 
@@ -732,8 +766,28 @@ const _p = new THREE.Vector3();
 const _n = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
+/** A garden plant (world space); `squash` widens or narrows it. */
+export interface GardenPlant {
+  kind: string;
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
+  squash?: number;
+  yaw?: number;
+  tint?: readonly number[];
+}
+
+/** A garden kind: its two builds, single-sheet leaves, and how far it's drawn (m). */
+export interface GardenModel {
+  build: (d: Detail) => THREE.BufferGeometry;
+  twoSided?: boolean;
+  range?: number;
+  hiRange?: number;
+}
+
 /** Tints (multiplying the models' own colours). */
-const TINT = {
+export const TINT = {
   chaparral: [1, 1, 1],
   sage: [1.75, 1.75, 1.95],
   dryBrush: [2.4, 1.75, 1.35],
@@ -761,6 +815,10 @@ export class Vegetation {
   private readonly _vp = new THREE.Matrix4();
   private readonly _dir = new THREE.Vector3();
   private readonly geos: Record<Kind, THREE.BufferGeometry>;
+  /** Hand-laid planting (the house's garden): both builds of each kind, swapped per plant by distance. */
+  private readonly garden: { hi: THREE.InstancedMesh; lo: THREE.InstancedMesh; src: Float32Array; hiR: number }[] = [];
+  private readonly gardenMat = new Map<string, THREE.Material>();
+  private gardenMesh!: (geo: THREE.BufferGeometry, cap: number, range: number, twoSided: boolean) => THREE.InstancedMesh;
   /** Cells and instances put in the lists at the last rebuild (stats). */
   stats = { cells: 0, near: 0, imp: 0, tuft: 0, rebuilds: 0, buildMs: 0 };
 
@@ -825,6 +883,15 @@ export class Vegetation {
       palm: make(MODELS.palm('hi'), CAP_HI.palm, palmMat),
     };
     this.tuft = make(this.geos.bush, CAP.tuft, tuftMat);
+    this.gardenMesh = (geo, cap, range, twoSided) => {
+      const key = `garden-${range}${twoSided ? '-2' : ''}`;
+      let mat = this.gardenMat.get(key);
+      if (!mat) {
+        mat = nearMat(new THREE.Vector4(1e6, 1e6 + 1, range * 0.85, range), key, twoSided ? THREE.DoubleSide : THREE.FrontSide);
+        this.gardenMat.set(key, mat);
+      }
+      return make(geo, cap, mat);
+    };
     this.grass = make(grassGeometry(), CAP.grass, tuftMat);
 
     // Impostors
@@ -891,6 +958,37 @@ export class Vegetation {
     this.imp.visible = !!atlas;
     this.group.add(this.imp);
     this.group.name = 'vegetation';
+  }
+
+  /**
+   * Plants a hand-laid garden: each kind drawn with its close build within
+   * `hiR` of the eye and its lighter one out to `range`, lit, swayed and
+   * hazed exactly like the cover around it.
+   */
+  addGarden(models: Record<string, GardenModel>, plants: GardenPlant[]): void {
+    for (const [kind, model] of Object.entries(models)) {
+      const list = plants.filter((p) => p.kind === kind);
+      if (!list.length) continue;
+      const src = new Float32Array(list.length * NEAR_STRIDE);
+      list.forEach((p, i) => {
+        _q.setFromAxisAngle(UP, p.yaw ?? hash3(p.x, 0, p.z, 7) * Math.PI * 2);
+        const k = p.scale;
+        _m.compose(_p.set(p.x, p.y, p.z), _q, _s.set(k * (p.squash ?? 1), k, k * (p.squash ?? 1)));
+        src.set(_m.elements, i * NEAR_STRIDE);
+        const t = p.tint ?? TINT.chaparral;
+        const v = 0.88 + hash3(p.x, 1, p.z, 3) * 0.24;
+        src.set([t[0] * v, t[1] * v, t[2] * v], i * NEAR_STRIDE + 16);
+      });
+      const range = model.range ?? RADIUS;
+      const twoSided = !!model.twoSided;
+      this.garden.push({
+        hi: this.gardenMesh(model.build('hi'), list.length, range, twoSided),
+        lo: this.gardenMesh(model.build('lo'), list.length, range, twoSided),
+        src,
+        hiR: model.hiRange ?? 200,
+      });
+    }
+    this.lastEye.set(Infinity, 0, 0);
   }
 
   /** Everything planted in one cell, computed once and cached. */
@@ -1174,6 +1272,23 @@ export class Vegetation {
     this.grass.count = grassN;
     upload(this.grass.instanceMatrix, grassN);
     upload(this.grass.instanceColor!, grassN);
+    for (const g of this.garden) {
+      let hi = 0;
+      let lo = 0;
+      for (let o = 0; o < g.src.length; o += NEAR_STRIDE) {
+        const near = Math.hypot(g.src[o + 12] - eye.x, g.src[o + 13] - eye.y, g.src[o + 14] - eye.z) < g.hiR;
+        if (near) put(g.hi, g.src, o, hi++);
+        else put(g.lo, g.src, o, lo++);
+      }
+      for (const [m, n] of [
+        [g.hi, hi],
+        [g.lo, lo],
+      ] as const) {
+        m.count = n;
+        upload(m.instanceMatrix, n);
+        upload(m.instanceColor!, n);
+      }
+    }
     this.imp.geometry.instanceCount = impN;
     upload(this.impA, impN);
     upload(this.impB, impN);

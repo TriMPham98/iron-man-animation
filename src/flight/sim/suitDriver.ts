@@ -487,8 +487,8 @@ export class SuitDriver {
     let wristL = 1.45 * palmsDown;
     let wristR = 1.45 * palmsDown;
     // (on the ground: a loose, half-curled hand, closing to a fist on the
-    // move — tight at a run)
-    const fist = m.gait.weight * m.gait.active * lerp(0.6, 1, m.gait.run);
+    // move)
+    const fist = m.gait.weight * m.gait.active * 0.6;
     let fingersL: number[] = [0.3, 0.5, 0.6, 0.65, 0.7].map((r, i) => lerp(lerp(r, i === 0 ? 0.65 : 1, fist), -0.25, palmsDown));
     let fingersR = fingersL.slice();
 

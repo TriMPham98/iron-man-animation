@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GRAVITY, SPEED_OF_SOUND } from '../world/config';
-import { BACK_SPEED, Gait, RUN_SPEED, STRAFE_RUN, STRAFE_SPEED, WALK_SPEED } from './walkCycle';
+import { BACK_SPEED, Gait, STRAFE_SPEED, WALK_SPEED } from './walkCycle';
 
 /**
  * Flight dynamics of the suit. A point mass with a body attitude: the boots
@@ -22,7 +22,7 @@ import { BACK_SPEED, Gait, RUN_SPEED, STRAFE_RUN, STRAFE_SPEED, WALK_SPEED } fro
  *
  * On the ground the suit walks: the same keys mean something else there.
  * W/S walk forward and back and A/D sidestep (relative to where the pilot
- * looks; the body turns to the look on stepping feet), Shift jogs, and the
+ * looks; the body turns to the look on stepping feet), and the
  * climb command (E) is the only way up — a jump-jet hop into a hover,
  * after which every key has its flight meaning again. Coming down slow and
  * upright onto ground sets the boots down and it walks again.
@@ -739,21 +739,20 @@ export class FlightModel {
   }
 
   /**
-   * On foot: turn to the look on stepping feet, walk / sidestep / jog
+   * On foot: turn to the look on stepping feet, walk / sidestep
    * relative to it, step up kerbs and down ledges, stop at walls.
    */
   private stepWalk(dt: number, input: FlightInput): void {
     this._prevVel.copy(this.vel);
     const ground = this.ground;
     const stuck = this.crouch > 0 || this.power < 0.5;
-    // Intent: W/S (or the stick) forward, A/D sideways, Shift jogs
+    // Intent: W/S (or the stick) forward, A/D sideways
     let fwdIn = Math.abs(input.throttle) >= Math.abs(input.forward) ? input.throttle : input.forward;
     let latIn = input.lateral;
     if (stuck) fwdIn = latIn = 0;
     fwdIn = clamp(fwdIn, -1, 1);
     latIn = clamp(latIn, -1, 1);
     const moving = Math.hypot(fwdIn, latIn) > 0.08;
-    const run = input.boost && !input.stance;
 
     // ── Heading: the body follows the look ──────────────────────────
     const aim = this._a.copy(input.aim);
@@ -764,7 +763,7 @@ export class FlightModel {
     else if (Math.abs(yawErrRaw) < 0.03 && Math.abs(this.omega.y) < 0.2) this.walkTurn = false;
     const yawErr = this.walkTurn && !stuck ? yawErrRaw : 0;
     // The same eased S-curve as the air, at a walker's rates
-    const maxYaw = run ? 2.6 : 2.1;
+    const maxYaw = 2.1;
     const yawAccMax = maxYaw / 0.3;
     const yawErrAbs = Math.abs(yawErr);
     const wantYaw = Math.sign(yawErr) * Math.min(maxYaw, yawErrAbs * 5, Math.sqrt(2 * yawAccMax * 0.75 * yawErrAbs));
@@ -782,8 +781,8 @@ export class FlightModel {
     // ── Velocity: heavy — it leans into a start and plants to stop ──
     const fwd = this._f.set(Math.sin(aimHeading), 0, Math.cos(aimHeading));
     const left = this._l.set(Math.cos(aimHeading), 0, -Math.sin(aimHeading));
-    const vF = fwdIn >= 0 ? (run ? RUN_SPEED : WALK_SPEED) : BACK_SPEED * (run ? 1.4 : 1);
-    const vS = run ? STRAFE_RUN : STRAFE_SPEED;
+    const vF = fwdIn >= 0 ? WALK_SPEED : BACK_SPEED;
+    const vS = STRAFE_SPEED;
     const want = this._v.set(0, 0, 0).addScaledVector(fwd, fwdIn * vF).addScaledVector(left, -latIn * vS);
     // Diagonals no faster than straight
     const wl = Math.hypot(want.x, want.z);
@@ -839,8 +838,10 @@ export class FlightModel {
       this.airT = HOP_GUARD;
       this.walkTurn = false;
     } else {
-      // Ride the ground, easing over steps
-      this.pos.y += (there + hip - this.pos.y) * approach(dt, 0.07);
+      // Ride the boots, easing over steps (the weight goes up a step with
+      // the boot that's planted there)
+      const ride = this.gait.attached ? this.gait.support() : there;
+      this.pos.y += (ride + hip - this.pos.y) * approach(dt, 0.07);
     }
 
     // ── Flight state at rest ─────────────────────────────────────────
@@ -921,10 +922,10 @@ export class FlightModel {
         this.impactSpeed = into;
       }
       this.grounded = true;
-      // Keep the way it was drifting as the first steps (no faster than a jog)
+      // Keep the way it was drifting as the first steps (no faster than a walk)
       this.vel.y = 0;
       const hv = Math.hypot(this.vel.x, this.vel.z);
-      if (hv > RUN_SPEED) this.vel.multiplyScalar(RUN_SPEED / hv);
+      if (hv > WALK_SPEED) this.vel.multiplyScalar(WALK_SPEED / hv);
       this.flightness = 0;
       this.speedCmd = 0;
       return;

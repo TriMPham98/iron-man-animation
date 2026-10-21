@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { HOME, HOME_HEIGHT, type Heightfield } from './heightfield';
 import { FRAME_YAW, buildCliffGeometry, cliffHeight, crest, toLocal, toWorld } from './houseCliff';
 import { Batch, Footprint, Outline, alongOutline, beam, box, fascia, flat, houseMaterials, slab, strut, wallQuad, type P2 } from './houseKit';
-import { cypressGeometry, palmGeometry, shrubGeometry } from './housePlants';
+import { seeded, type GardenPlant } from './vegetation';
 
 /**
  * The house on the bluff, after the Stark house in Iron Man (2008) and Iron
@@ -20,9 +20,11 @@ import { cypressGeometry, palmGeometry, shrubGeometry } from './housePlants';
  * up into the hills. The landing pad sits on the lawn beside the house,
  * ringed in the reactor's blue.
  *
- * Everything static is merged per material (a dozen draw calls); palms,
- * cypress and shrubs are instanced; furniture, mullions, rails and the
- * small lights drop out beyond ~900 m.
+ * Everything static is merged per material (a dozen draw calls);
+ * furniture, mullions, rails and the small lights drop out beyond ~900 m.
+ * The garden (palms, cypress, olives, oaks, hedges, agaves, dry grass) is
+ * laid out here and handed to the vegetation, which draws it with the
+ * coast's own models and shading (src/flight/world/housePlants.ts).
  */
 
 /** Where the suit stands (world xz) and the pad's height. */
@@ -63,7 +65,39 @@ const POOL = roundedRect(13, 41.5, 33, 52.1, 1.2);
 const SPIRAL = new THREE.Vector2(13, 23);
 /** Entry court. */
 const COURT = new THREE.Vector2(64, -26);
+/** Hot tub on the pool deck, by the infinity edge. */
+const SPA = new THREE.Vector2(36.4, 46.4);
+/** Fire pit and lounge on the great room's roof. */
+const FIRE = new THREE.Vector2(60, 50);
+/** The drive's line (frame), from the court up into the hills. */
+const DRIVE: P2[] = [[64, -38], [69, -60], [84, -92], [102, -130], [108, -175], [98, -225], [92, -280], [100, -330]];
+/** Garden paths: round the west end, and from the pad to the helical stair. */
+const PATHS: P2[][] = [
+  [[12, 10], [26, -6], [44, -16], [52, -22]],
+  [[0, 0], [14.5, 17]],
+];
 const PAD_L = toLocal(PAD.x, PAD.y);
+PATHS[1][0] = [PAD_L.x + 7, PAD_L.y + 2];
+
+/** 0–1: how far a point is into the irrigated lawn round the house (ragged at the edge). */
+function lawnAt(x: number, z: number): number {
+  const dx = Math.max(0, Math.abs(x - 52) - 62);
+  const dz = Math.max(0, z < 20 ? 20 - z - 50 : 0);
+  const n = Math.sin(x * 0.31) * Math.sin(z * 0.27) * 3 + Math.sin(x * 0.11 + z * 0.17) * 4;
+  return 1 - THREE.MathUtils.smoothstep(Math.hypot(dx, dz) + n, -2, 8);
+}
+
+/** Plan distance from a point to a polyline. */
+function toLine(x: number, z: number, line: P2[]): number {
+  let best = Infinity;
+  for (let i = 0; i < line.length - 1; i++) {
+    const [ax, az] = line[i];
+    const [bx, bz] = line[i + 1];
+    const t = THREE.MathUtils.clamp(((x - ax) * (bx - ax) + (z - az) * (bz - az)) / ((bx - ax) ** 2 + (bz - az) ** 2), 0, 1);
+    best = Math.min(best, Math.hypot(x - ax - t * (bx - ax), z - az - t * (bz - az)));
+  }
+  return best;
+}
 
 function roundedRect(x0: number, z0: number, x1: number, z1: number, r: number): Outline {
   const pts: THREE.Vector2[] = [];
@@ -93,7 +127,7 @@ const _l = new THREE.Vector2();
  * bluff) at a point, or −∞: the flight model lands on them like ground.
  */
 export function structureTop(x: number, z: number): number {
-  if (Math.hypot(x - PAD.x, z - PAD.y) < 7) return PAD_Y + 0.35;
+  if (Math.hypot(x - PAD.x, z - PAD.y) < 7) return PAD_Y;
   const l = toLocal(x, z, _l);
   if (l.x < -100 || l.x > 180 || l.y < -40 || l.y > 140) return -Infinity;
   let top = -Infinity;
@@ -117,6 +151,7 @@ interface Batches {
   litFine: Batch;
   water: Batch;
   lawn: Batch;
+  outFine: Batch;
 }
 
 const WHITE = new THREE.Color(0.74, 0.73, 0.71);
@@ -213,6 +248,11 @@ const pianoSet: Vignette = (B, x, z, yaw, y) => {
   put(B, 1.2, 0.7, 1.2, 0.2, 0.35, 0, x, y, z, yaw, 0x050505);
   put(B, 0.4, 0.5, 1.0, -0.8, 0.25, 0, x, y, z, yaw, DARK);
   put(B, 0.6, 1.4, 0.6, 1.2, 0.7, -2.2, x, y, z, yaw, 0x2f4a22);
+};
+const umbrella = (B: Batch, x: number, z: number, y: number) => {
+  B.add(new THREE.CylinderGeometry(0.04, 0.05, 2.5, 6).translate(x, y + 1.25, z), 0x8a8c8e);
+  B.add(new THREE.ConeGeometry(1.5, 0.45, 12, 1, true).translate(x, y + 2.5, z), 0xece6da);
+  B.add(new THREE.CylinderGeometry(0.35, 0.35, 0.06, 12).translate(x, y + 0.03, z), 0x2a2a2c);
 };
 const loungers: Vignette = (B, x, z, yaw, y) => {
   for (const s of [-1.2, 1.2]) {
@@ -317,7 +357,8 @@ function flip(g: THREE.BufferGeometry, dir: THREE.Vector3): THREE.BufferGeometry
   return g;
 }
 
-export function buildHouse(field?: Heightfield): THREE.Group {
+/** The house's meshes, and its garden for the vegetation to draw (world space). */
+export function buildHouse(field?: Heightfield): { group: THREE.Group; garden: GardenPlant[] } {
   const g = new THREE.Group();
   g.name = 'house';
   const M = houseMaterials();
@@ -332,6 +373,13 @@ export function buildHouse(field?: Heightfield): THREE.Group {
     litFine: new Batch('house-lit-fine'),
     water: new Batch('house-pool', 0.25),
     lawn: new Batch('house-lawn'),
+    outFine: new Batch('house-out-fine'),
+  };
+  const garden: GardenPlant[] = [];
+  /** A plant at a frame point (y up from the terrace). */
+  const sow = (kind: string, x: number, y: number, z: number, scale: number, squash?: number) => {
+    const w = toWorld(x, z);
+    garden.push({ kind, x: w.x, y: y + HOME_HEIGHT, z: w.y, scale, squash });
   };
   /** Ground height in the frame (terrace = 0), the rock top included. */
   const ground = (x: number, z: number) => {
@@ -352,6 +400,11 @@ export function buildHouse(field?: Heightfield): THREE.Group {
   B.concrete.add(fascia(S2, Y2 - 0.4, 0.8, 0.55), WHITE);
   // A shallow parapet upstand round the upper terrace's outer edge
   B.concrete.add(fascia(S1, Y1 + 0.18, 0.2, 0.3), WHITE);
+  // Shadow-gap reveals: a dark line between each plate and its edge beam,
+  // and a steel drip edge under the deck's nose
+  B.metal.add(fascia(S1.offset(0.03), Y1 - 0.4, 0.06, 0.1), 0x232426);
+  B.metal.add(fascia(S2.offset(0.03), Y2 - 0.4, 0.06, 0.1), 0x232426);
+  B.metal.add(fascia(P0.offset(0.02), Y0 - 0.9, 0.05, 0.08), 0x8a8c8e);
 
   // Glass lines with mullions; solid wall to the street
   facade(B, E0, Y0, Y1 - 0.45, seaward, 2.9);
@@ -364,6 +417,20 @@ export function buildHouse(field?: Heightfield): THREE.Group {
     const q = p.clone().addScaledVector(n, -6.4);
     B.lit.add(beam(p.clone().addScaledVector(n, -0.2), q, (Y1 + Y2 - 0.45) / 2, Y2 - 0.45 - Y1, 0.15), WARM_WALL, 0.3);
   }, 4.5);
+  // Sheers half drawn across some of the bedroom glass, and at the ends of the main floor
+  for (const [o, y0, y1, k] of [
+    [E1, Y1, Y2 - 0.45, 1.05],
+    [E0, Y0, Y1 - 0.45, 1.5],
+  ] as const) {
+    const inner = o.offset(-0.22);
+    for (let i = 0; i < inner.pts.length; i++) {
+      const a = inner.pts[i];
+      const b = inner.pts[(i + 1) % inner.pts.length];
+      const n = inner.nrm[i];
+      if (!seaward(a, n) || Math.sin(i * 0.61) + 0.6 * Math.sin(i * 1.93) < k) continue;
+      B.lit.add(wallQuad(a, b, y0 + 0.05, y1 - 0.05, n), 0xf2e6d2, 0.42);
+    }
+  }
   furnish(B.litFine, E0, Y0, 7, 3.4, [sofaSet, dining, sofaSet, pianoSet, loungers], (p, n) => seaward(p, n) && !core0.contains(p.x - n.x * 3.4, p.y - n.y * 3.4));
   furnish(B.litFine, E1, Y1, 9, 3.2, [bedroom], (p, n) => seaward(p, n) && !core1.contains(p.x - n.x * 3.2, p.y - n.y * 3.2), 9);
   // The great room: a round sunken lounge under the drum, a fire column
@@ -439,6 +506,36 @@ export function buildHouse(field?: Heightfield): THREE.Group {
   balustrade(B, S1.offset(-0.45), Y1 + 0.38, (_p, n) => n.y > -0.5);
   balustrade(B, P0.offset(-0.3), Y0, (p) => p.y > crest(p.x) - 3);
 
+  // Planters along the upper terrace's seaward edge, hedged and grassed
+  {
+    const P = S1.offset(-1.5);
+    for (let i = 0; i < P.pts.length; i++) {
+      const a = P.pts[i];
+      const b = P.pts[(i + 1) % P.pts.length];
+      const n = P.nrm[i];
+      const mid = a.clone().add(b).multiplyScalar(0.5);
+      if (n.y < 0.15 || i % 9 > 5 || S2.contains(mid.x, mid.y) || E1.offset(1).contains(mid.x, mid.y) || mid.distanceTo(FIRE) < 7) continue;
+      B.concrete.add(beam(a, b, Y1 + 0.3, 0.6, 0.9, 0.02), WHITE);
+      B.stone.add(beam(a, b, Y1 + 0.58, 0.06, 0.74, 0.03), 0x2e2418);
+      sow(i % 2 ? 'hedge' : 'grass', mid.x, Y1 + 0.5, mid.y, i % 2 ? 0.65 : 1.1, 1.2);
+    }
+  }
+  // The fire pit lounge on the great room's roof: a curved bench round a bowl of flame
+  {
+    for (let i = 0; i < 22; i++) {
+      const a = -Math.PI * 0.18 + (i / 21) * Math.PI * 1.36;
+      B.outFine.add(box(0.85, 0.42, 0.7, FIRE.x + Math.cos(a) * 3.6, Y1 + 0.21, FIRE.y + Math.sin(a) * 3.6, -a), 0xd8d0c2);
+      B.outFine.add(box(0.85, 0.5, 0.18, FIRE.x + Math.cos(a) * 4.0, Y1 + 0.5, FIRE.y + Math.sin(a) * 4.0, -a), 0xd8d0c2);
+    }
+    B.concrete.add(new THREE.CylinderGeometry(1.0, 1.1, 0.45, 32).translate(FIRE.x, Y1 + 0.22, FIRE.y), 0x9a948a);
+    B.litFine.add(new THREE.CylinderGeometry(0.75, 0.75, 0.05, 32).translate(FIRE.x, Y1 + 0.47, FIRE.y), new THREE.Color(1, 0.5, 0.15), 9);
+    B.litFine.add(new THREE.ConeGeometry(0.55, 0.6, 9, 1, true).translate(FIRE.x, Y1 + 0.78, FIRE.y), new THREE.Color(1, 0.62, 0.22), 12);
+    umbrella(B.outFine, FIRE.x - 8, FIRE.y + 4, Y1);
+    umbrella(B.outFine, FIRE.x + 8.5, FIRE.y + 3, Y1);
+    loungers(B.outFine, FIRE.x - 8, FIRE.y + 4, Math.PI / 2 + 0.3, Y1);
+    loungers(B.outFine, FIRE.x + 8.5, FIRE.y + 3, Math.PI / 2 - 0.3, Y1);
+  }
+
   // Pool wing: deck on a dry-stone bastion, the infinity pool, a white parapet
   B.stone.add(slab(PD.offset(-0.1), PD_Y - 0.35, 9, 0.05), 0xa8a096);
   B.concrete.add(slab(PD, PD_Y, 0.35, 0.05, [POOL]), WHITE);
@@ -457,6 +554,17 @@ export function buildHouse(field?: Heightfield): THREE.Group {
     const inA = a.clone().addScaledVector(PD.nrm[i], -0.15);
     const inB = b.clone().addScaledVector(PD.nrm[(i + 1) % PD.pts.length], -0.15);
     B.concrete.add(beam(inA, inB, PD_Y + 0.45, 0.9, 0.3, 0.12), WHITE);
+  }
+  // Pale stone coping round the pool
+  B.stone.add(slab(POOL.offset(0.45), PD_Y + 0.04, 0.08, 0.02, [POOL]), 0xe6dfd0);
+  // The hot tub: a raised white drum, its water lit from below
+  {
+    const rim = Outline.circle(SPA.x, SPA.y, 1.85, 40);
+    const tub = Outline.circle(SPA.x, SPA.y, 1.5, 40);
+    B.concrete.add(slab(rim, PD_Y + 0.45, 0.5, 0.05, [tub]), WHITE);
+    B.stone.add(slab(Outline.circle(SPA.x, SPA.y, 1.95, 40), PD_Y + 0.5, 0.06, 0.02, [Outline.circle(SPA.x, SPA.y, 1.45, 40)]), 0xe6dfd0);
+    B.water.add(flat(tub, PD_Y + 0.33, true), 0xffffff);
+    B.litFine.add(new THREE.CircleGeometry(0.3, 12).rotateX(-Math.PI / 2).translate(SPA.x, PD_Y + 0.335, SPA.y), new THREE.Color(0.6, 0.95, 1), 6);
   }
   // The spillway: a dark wet lip below the infinity edge
   B.stone.add(box(21, 0.5, 1.2, 23, PD_Y - 0.55, 54.1), 0x3a4648);
@@ -570,6 +678,66 @@ export function buildHouse(field?: Heightfield): THREE.Group {
       B.litFine.add(box(0.4, 0.18, 0.05, COURT.x + Math.cos(a) * 4.22, 0.4, COURT.y + Math.sin(a) * 4.22, -a + Math.PI / 2), LAMP, 8);
     }
   }
+  // The front door: a lit glass portal in the street wall between two tall
+  // fins, a walk across from the court between lit reflecting channels
+  {
+    let best = 0;
+    E0.pts.forEach((p, i) => {
+      if (p.distanceTo(COURT) < E0.pts[best].distanceTo(COURT)) best = i;
+    });
+    const p = E0.pts[best];
+    const n = E0.nrm[best];
+    const yaw = -Math.atan2(n.y, n.x);
+    const t = new THREE.Vector2(-n.y, n.x);
+    const at = (along: number, out: number) => p.clone().addScaledVector(t, along).addScaledVector(n, out);
+    const door = at(0, 0.05);
+    B.litFine.add(box(0.02, 3.1, 4.6, door.x, Y0 + 1.55, door.y, yaw), WARM_WALL, 1.1);
+    const glass = at(0, 0.09);
+    B.glass.add(box(0.02, 3.1, 4.6, glass.x, Y0 + 1.55, glass.y, yaw));
+    for (const s of [-2.3, -0.75, 0.75, 2.3]) {
+      const m = at(s, 0.1);
+      B.metalFine.add(box(0.08, 3.1, 0.08, m.x, Y0 + 1.55, m.y, yaw), FRAME);
+    }
+    const head = at(0, 0.1);
+    B.metalFine.add(box(0.1, 0.1, 4.7, head.x, Y0 + 3.12, head.y, yaw), FRAME);
+    for (const s of [-3.2, 3.2]) {
+      const f = at(s, 0.9);
+      B.concrete.add(box(1.8, Y1 - 0.45 - Y0, 0.45, f.x, (Y0 + Y1 - 0.45) / 2, f.y, yaw), WHITE);
+      const l = at(s * 0.86, 0.08);
+      B.litFine.add(box(0.12, 0.08, 0.3, l.x, Y0 + 0.04, l.y, yaw), LAMP, 10);
+    }
+    // Walk and channels, from the deck's edge out to the court's paving
+    const walkEnd = p.distanceTo(COURT) - 13.8;
+    const runs: [number, number, number, number][] = [
+      [-1.6, 1.6, 0x2e2c28, 0.09],
+      [-3.4, -2.0, 0, 0],
+      [2.0, 3.4, 0, 0],
+    ];
+    for (const [s0, s1, col, lift] of runs) {
+      const q = (a: number, o: number) => {
+        const v = at(a, o);
+        return new THREE.Vector2(v.x, v.y);
+      };
+      const corners = [q(s0, 2.1), q(s1, 2.1), q(s1, walkEnd), q(s0, walkEnd)];
+      const o = Outline.fromPoints(corners);
+      if (col) {
+        B.stone.add(flat(o, lift, true), 0xe8e2d6);
+        for (let k = 0; k < 6; k++) {
+          // Joints across the walk
+          const j0 = q(s0, 2.1 + ((walkEnd - 2.1) * (k + 0.5)) / 6);
+          const j1 = q(s1, 2.1 + ((walkEnd - 2.1) * (k + 0.5)) / 6);
+          B.metal.add(beam(j0, j1, lift + 0.005, 0.01, 0.05), col);
+        }
+      } else {
+        B.stone.add(slab(o.offset(0.22), 0.28, 0.3, 0.03, [o]), 0xe0d8c8);
+        B.water.add(flat(o, 0.2, true), 0xffffff);
+        for (let k = 0; k < 4; k++) {
+          const l = q((s0 + s1) / 2, 2.6 + ((walkEnd - 3.1) * k) / 3);
+          B.litFine.add(new THREE.PlaneGeometry(0.3, 0.3).rotateX(-Math.PI / 2).translate(l.x, 0.205, l.y), new THREE.Color(0.6, 0.95, 1), 5);
+        }
+      }
+    }
+  }
   // Lawn round the house, fading out raggedly into the dry grass
   {
     const lawn: THREE.Vector3[] = [];
@@ -578,13 +746,7 @@ export function buildHouse(field?: Heightfield): THREE.Group {
     const dry = new THREE.Color(0.3, 0.25, 0.12);
     const c = new THREE.Color();
     const step = 2;
-    const inside = (x: number, z: number) => {
-      // Rounded box round the house, ragged at the edge
-      const dx = Math.max(0, Math.abs(x - 52) - 62);
-      const dz = Math.max(0, z < 20 ? 20 - z - 50 : 0);
-      const n = Math.sin(x * 0.31) * Math.sin(z * 0.27) * 3 + Math.sin(x * 0.11 + z * 0.17) * 4;
-      return 1 - THREE.MathUtils.smoothstep(Math.hypot(dx, dz) + n, -2, 8);
-    };
+    const inside = lawnAt;
     for (let x = -26; x < 130; x += step)
       for (let z = -44; z < 60; z += step) {
         const corners = [
@@ -607,16 +769,34 @@ export function buildHouse(field?: Heightfield): THREE.Group {
       }
     const lg = flip(new THREE.BufferGeometry().setFromPoints(lawn), new THREE.Vector3(0, 1, 0));
     lg.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+    // Shade as one smooth sward, not facets
+    const ln = lg.getAttribute('normal');
+    for (let i = 0; i < ln.count; i++) ln.setXYZ(i, ln.getX(i) * 0.3, 1, ln.getZ(i) * 0.3);
+    ln.needsUpdate = true;
     B.lawn.add(lg);
   }
 
   // Drive up into the hills, and paths
-  ribbon(B.stone, ground, [[64, -38], [69, -60], [84, -92], [102, -130], [108, -175], [98, -225], [92, -280], [100, -330]], 7, 0x34322e, 0.1, 0xd8d2c6);
-  ribbon(B.stone, ground, [[12, 10], [26, -6], [44, -16], [52, -22]], 2.4, 0xd8d0c0, 0.08);
-  ribbon(B.stone, ground, [[PAD_L.x + 7, PAD_L.y + 2], [14.5, 17]], 2.4, 0xd8d0c0, 0.08);
+  ribbon(B.stone, ground, DRIVE, 7, 0x34322e, 0.1, 0xd8d2c6);
+  for (const path of PATHS) {
+    ribbon(B.stone, ground, path, 2.4, 0xd8d0c0, 0.08);
+    // Low path lights, every 8 m on alternate sides
+    const curve = new THREE.CatmullRomCurve3(path.map(([x, z]) => new THREE.Vector3(x, 0, z)), false, 'centripetal');
+    const n = Math.max(1, Math.floor(curve.getLength() / 8));
+    for (let i = 0; i <= n; i++) {
+      const p = curve.getPointAt(i / n);
+      const t = curve.getTangentAt(i / n);
+      const s = i % 2 ? 1.8 : -1.8;
+      const x = p.x - t.z * s;
+      const z = p.z + t.x * s;
+      const y = ground(x, z);
+      B.metal.add(box(0.12, 0.5, 0.12, x, y + 0.25, z), FRAME);
+      B.litFine.add(box(0.14, 0.06, 0.14, x, y + 0.45, z), LAMP, 8);
+    }
+  }
   // Bollard lights along the drive
   {
-    const curve = new THREE.CatmullRomCurve3([[64, -38], [69, -60], [84, -92], [102, -130], [108, -175]].map(([x, z]) => new THREE.Vector3(x, 0, z)));
+    const curve = new THREE.CatmullRomCurve3(DRIVE.slice(0, 5).map(([x, z]) => new THREE.Vector3(x, 0, z)));
     const n = Math.floor(curve.getLength() / 14);
     for (let i = 0; i <= n; i++) {
       const p = curve.getPointAt(i / n);
@@ -654,6 +834,7 @@ export function buildHouse(field?: Heightfield): THREE.Group {
   fine.position.copy(centre).negate();
   keep(B.metalFine.build(M.metal), fine);
   keep(B.litFine.build(M.lit), fine);
+  keep(B.outFine.build(M.concrete), fine);
   const lod = new THREE.LOD();
   lod.position.copy(centre);
   lod.addLevel(fine, 0);
@@ -668,44 +849,92 @@ export function buildHouse(field?: Heightfield): THREE.Group {
     water.offset.set(t * 0.012, t * 0.007);
   };
 
-  // Planting
-  const at = (x: number, z: number, onDeck = false) => new THREE.Vector3(x, onDeck ? PD_Y : ground(x, z), z);
-  const plant = (geo: THREE.BufferGeometry, spots: [THREE.Vector3, number][]) => {
-    const mesh = new THREE.InstancedMesh(geo, M.foliage, spots.length);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    spots.forEach(([p, s], i) => {
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (p.x * 12.9898 + p.z * 78.233) % (Math.PI * 2));
-      mesh.setMatrixAt(i, m.compose(p, q, new THREE.Vector3(s, s, s)));
+  // Planting (drawn by the vegetation: see housePlants.ts)
+  {
+    const onDeck = (x: number, z: number) => PD.contains(x, z);
+    const lift = (x: number, z: number) => (onDeck(x, z) ? PD_Y : ground(x, z));
+    const uplight = (x: number, z: number, y: number) => {
+      B.litFine.add(box(0.3, 0.12, 0.3, x + 1.1, y + 0.06, z), LAMP, 9);
+    };
+    // Fan palms: round the lawn, the pool deck and the court, each washed by an uplight
+    const palms: [number, number, number][] = [
+      [9.6, 46.5, 1.3], [34.6, 51.2, 1.05], [-6, 6, 1.1], [116, 24, 1.35], [113, 38, 1.15], [119, 31, 0.95],
+      [52, -16, 1.1], [77, -15, 1.2], [40, -11, 1.0], [98, -14, 1.15], [-14, -12, 1.3], [128, 8, 1.05],
+      [84, 44, 1.1], [-10, 14, 0.95], [124, 18, 1.2], [46, -40, 1.1], [82, -40, 1.15],
+    ];
+    for (const [x, z, k] of palms) {
+      // Never up through a roof
+      if (S1.offset(1.5).contains(x, z)) continue;
+      const y = lift(x, z) - 0.15;
+      sow('palm', x, y, z, k);
+      uplight(x, z, y + 0.15);
+    }
+    // Italian cypress: an allée up the first stretch of the drive, and screens at the ends of the house
+    {
+      const curve = new THREE.CatmullRomCurve3(DRIVE.slice(0, 4).map(([x, z]) => new THREE.Vector3(x, 0, z)));
+      const n = 14;
+      for (let i = 0; i < n; i++) {
+        const u = 0.02 + (i / (n - 1)) * 0.5;
+        const p = curve.getPointAt(u);
+        const t = curve.getTangentAt(u);
+        for (const s of [-1, 1]) {
+          const x = p.x - t.z * s * 6.6;
+          const z = p.z + t.x * s * 6.6;
+          if (Math.hypot(x - COURT.x, z - COURT.y) < 15) continue;
+          sow('cypress', x, ground(x, z) - 0.2, z, 0.85 + ((i * 7 + (s + 1) * 3) % 5) * 0.06, 0.95);
+          // Agaves at their feet, between the trees
+          const ax = p.x - t.z * s * 5.0 + t.x * 3;
+          const az = p.z + t.x * s * 5.0 + t.z * 3;
+          if (i % 2 === 0 && Math.hypot(ax - COURT.x, az - COURT.y) > 15) sow('agave', ax, ground(ax, az), az, 0.9 + (i % 3) * 0.2);
+        }
+      }
+    }
+    for (const [x, z, k] of [[-2, -4, 1], [1.5, -9, 0.9], [-5, -16, 1.1], [120, -8, 1], [124, -2, 0.85], [29, -14, 0.95], [25, -20, 1.05], [118, 32, 0.9], [-8, -22, 1.0], [127, -14, 1.05]] as const) {
+      sow('cypress', x, ground(x, z) - 0.2, z, k);
+    }
+    // Olives in the court's paving, off the axes of the walk and the drive
+    for (const a of [0.25, 0.75, 1.25, 1.75]) {
+      const x = COURT.x + Math.cos(a * Math.PI) * 10.5;
+      const z = COURT.y + Math.sin(a * Math.PI) * 10.5;
+      sow('olive', x, 0.06, z, 1.0 + (a % 0.5) * 0.3);
+      B.metal.add(slab(Outline.circle(x, z, 1.3, 24), 0.08, 0.03, 0, [Outline.circle(x, z, 1.15, 24)]), 0x1a1a1a);
+      B.litFine.add(box(0.3, 0.1, 0.3, x + 1.0, 0.1, z), LAMP, 9);
+    }
+    // Coast live oaks shading the street side
+    for (const [x, z, k] of [[20, -42, 1.2], [110, -35, 1.3], [138, -22, 1.1], [-22, -34, 1.25], [36, -62, 1.15], [96, -62, 1.2], [-30, -6, 1.05], [140, 2, 1.0]] as const) {
+      sow('oak', x, ground(x, z) - 0.3, z, k);
+    }
+    // Foundation beds: clipped hedges along the house with agaves between, and the court's planter
+    let bed = 0;
+    alongOutline(E0.offset(5), 3.2, (p) => {
+      if (p.y > crest(p.x) - 2.5 || PD.contains(p.x, p.y) || p.distanceTo(SPIRAL) < 4 || p.distanceTo(PAD_L) < 9 || p.distanceTo(COURT) < 17) return;
+      const kind = bed++ % 4 === 3 ? 'agave' : 'hedge';
+      sow(kind, p.x, ground(p.x, p.y) - 0.1, p.y, kind === 'hedge' ? 0.8 + ((p.x * 7.1) % 0.4) : 1.1);
     });
-    mesh.computeBoundingSphere();
-    keep(mesh as unknown as THREE.Mesh);
-  };
-  plant(palmGeometry(), [
-    [at(37, 45, true), 1.05], [at(35.5, 49, true), 0.85], [at(-6, 6), 0.9], [at(116, 24), 1.1],
-    [at(113, 38), 0.95], [at(52, -16), 0.9], [at(77, -15), 1.0], [at(40, -11), 0.8], [at(98, -14), 0.95],
-    [at(-14, -12), 1.1], [at(128, 8), 0.85], [at(84, 44), 0.9],
-  ]);
-  plant(cypressGeometry(), [
-    [at(-2, -4), 1], [at(1.5, -9), 0.9], [at(-5, -16), 1.1], [at(120, -8), 1], [at(124, -2), 0.85], [at(29, -14), 0.95],
-    [at(25, -20), 1.05], [at(118, 32), 0.9],
-  ]);
-  const shrubs: [THREE.Vector3, number][] = [];
-  alongOutline(E0.offset(5), 4.2, (p) => {
-    if (p.y > crest(p.x) - 2.5 || PD.contains(p.x, p.y) || p.distanceTo(SPIRAL) < 4 || p.distanceTo(PAD_L) < 9) return;
-    shrubs.push([at(p.x, p.y), 0.8 + ((p.x * 7.1) % 0.6)]);
-  });
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2;
-    shrubs.push([at(COURT.x + Math.cos(a) * 2.6, COURT.y + Math.sin(a) * 2.6).setY(0.6), 0.7]);
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2;
+      sow(i % 3 ? 'hedge' : 'agave', COURT.x + Math.cos(a) * 2.7, 0.6, COURT.y + Math.sin(a) * 2.7, i % 3 ? 0.6 : 0.8);
+    }
+    // Dry grass and brush where the lawn gives out, kept off the paving and the edge
+    const rnd = seeded(41, 17);
+    const clear = (x: number, z: number) =>
+      P0.offset(1.5).contains(x, z) ||
+      PD.offset(1).contains(x, z) ||
+      Math.hypot(x - COURT.x, z - COURT.y) < 15 ||
+      Math.hypot(x - PAD_L.x, z - PAD_L.y) < 9 ||
+      toLine(x, z, DRIVE) < 5.5 ||
+      PATHS.some((l) => toLine(x, z, l) < 2) ||
+      z > crest(x) - 1.5;
+    for (let i = 0; i < 2600; i++) {
+      const x = -60 + rnd() * 220;
+      const z = -110 + rnd() * 170;
+      const k = lawnAt(x, z);
+      if (k > 0.35 || rnd() < k * 2.5 || clear(x, z)) continue;
+      const y = ground(x, z);
+      if (rnd() < 0.8) sow('grass', x, y - 0.05, z, 0.7 + rnd() * 0.7);
+      else sow('bush', x, y - 0.2, z, 0.5 + rnd() * 0.9);
+    }
   }
-  for (let i = 0; i < 24; i++) {
-    // Along the drive's first stretch
-    const z = -40 - i * 4.5;
-    const x = 64 + (i % 2 ? 6 : -6) + i * 0.6;
-    shrubs.push([at(x, z), 0.9 + (i % 3) * 0.2]);
-  }
-  plant(shrubGeometry(), shrubs);
 
   g.add(houseGroup);
 
@@ -728,5 +957,5 @@ export function buildHouse(field?: Heightfield): THREE.Group {
   padGroup.position.set(PAD.x, PAD_Y - 0.35, PAD.y);
   for (const m of [disc]) m.receiveShadow = true;
   g.add(padGroup);
-  return g;
+  return { group: g, garden };
 }

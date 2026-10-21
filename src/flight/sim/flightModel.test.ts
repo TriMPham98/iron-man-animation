@@ -57,7 +57,7 @@ describe('FlightModel', () => {
     expect(steps).toBeLessThan(14);
   });
 
-  it('jogs with Shift, backs up on S and sidesteps on A/D relative to the look', () => {
+  it("walks on W (Shift doesn't run), backs up on S and sidesteps on A/D relative to the look", () => {
     const go = (set: (i: ReturnType<typeof EMPTY_INPUT>) => void) => {
       const m = new FlightModel(flat());
       m.placeOnGround(0, 0, 0);
@@ -65,12 +65,13 @@ describe('FlightModel', () => {
       expect(m.grounded).toBe(true);
       return m;
     };
-    const jog = go((i) => {
+    const walk = go((i) => {
       i.throttle = 1;
       i.boost = true;
     });
-    expect(jog.speed).toBeGreaterThan(3);
-    expect(jog.boosting).toBe(false);
+    expect(walk.speed).toBeGreaterThan(1.2);
+    expect(walk.speed).toBeLessThan(1.6);
+    expect(walk.boosting).toBe(false);
     const back = go((i) => (i.throttle = -1));
     expect(back.pos.z).toBeLessThan(-1.5);
     // D: strafe to the suit's right (−X when facing +Z), still facing ahead
@@ -104,7 +105,6 @@ describe('FlightModel', () => {
     let highestBoot = 0;
     run(m, 6, (i) => {
       i.throttle = 1;
-      i.boost = true; // jogging into it: long strides reach past the wall face
       for (const f of m.gait.feet) highestBoot = Math.max(highestBoot, f.pos.y);
     });
     expect(highestBoot).toBeLessThan(0.5); // never a boot on the wall top
@@ -122,7 +122,7 @@ describe('FlightModel', () => {
     let was = true;
     run(m, 5, (i, t) => {
       i.throttle = 1;
-      i.boost = true; // jogging, Shift held through the hop
+      i.boost = true; // Shift held through the hop
       i.vertical = t > 1 && t < 1.8 ? 1 : 0;
       if (was && !m.grounded) takeoffs++;
       if (['landed', 'touchdown', 'heroLanding'].includes(m.contact)) landings++;

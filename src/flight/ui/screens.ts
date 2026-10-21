@@ -22,7 +22,6 @@ export const CONTROLS: { ground: Row[]; flight: Row[]; always: Row[] } = {
   ground: [
     ['MOUSE', 'look · turn'],
     ['W A S D', 'walk · sidestep'],
-    ['SHIFT', 'run'],
     ['E', 'take off'],
   ],
   flight: [

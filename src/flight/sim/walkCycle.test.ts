@@ -41,7 +41,7 @@ describe('walk cycle', () => {
     }
   });
 
-  it('keeps planted boots planted: no foot slide walking, jogging, strafing and turning', () => {
+  it('keeps planted boots planted: no foot slide walking, strafing and turning', () => {
     const m = new FlightModel(flat);
     m.placeOnGround(0, 0, 0);
     const input = EMPTY_INPUT();
@@ -52,7 +52,6 @@ describe('walk cycle', () => {
     let lowest = Infinity;
     for (let t = 0; t < 14; t += dt) {
       input.throttle = t < 4 ? 1 : t < 6 ? 0 : t < 9 ? 1 : 0;
-      input.boost = t > 6 && t < 9;
       input.lateral = t > 10 && t < 12 ? 1 : 0;
       const turn = t > 4.5 && t < 6 ? 2 : t > 12.5 ? -1.5 : 0;
       input.aim.set(Math.sin(turn), 0, Math.cos(turn));
@@ -81,14 +80,39 @@ describe('walk cycle', () => {
     expect(lowest).toBeGreaterThan(0.09);
   });
 
+  it('walks onto and off a raised deck without folding a leg', () => {
+    for (const rise of [0.35, 0.7]) {
+      const deck: GroundProbe = { ...flat, surface: (x, z) => (Math.hypot(x, z - 5) < 3 ? rise : 0) };
+      const m = new FlightModel(deck);
+      m.placeOnGround(0, 0, 0);
+      const input = EMPTY_INPUT();
+      let knee = 0;
+      let hip = 0;
+      let maxY = 0;
+      for (let t = 0; t < 10; t += 1 / 120) {
+        input.throttle = 1;
+        m.step(1 / 120, input);
+        const limbs = zeroLimbs();
+        m.gait.pose(m.pos, m.bodyQuaternion(), limbs, { lift: 0, pitch: 0, roll: 0, yaw: 0 });
+        knee = Math.max(knee, limbs.kneeL, limbs.kneeR);
+        hip = Math.max(hip, Math.abs(limbs.hipL), Math.abs(limbs.hipR));
+        maxY = Math.max(maxY, m.pos.y);
+      }
+      expect(m.grounded).toBe(true);
+      expect(m.pos.z).toBeGreaterThan(10); // over the deck and off the far side
+      expect(maxY).toBeGreaterThan(0.95 + rise);
+      expect(knee).toBeLessThan(2); // rad: a high step, never a knee folded flat
+      expect(hip).toBeLessThan(2);
+    }
+  });
+
   it('matches the stride to the speed', () => {
     const lengths: number[] = [];
-    for (const boost of [false, true]) {
+    for (const throttle of [1, 0.5]) {
       const m = new FlightModel(flat);
       m.placeOnGround(0, 0, 0);
       const input = EMPTY_INPUT();
-      input.throttle = 1;
-      input.boost = boost;
+      input.throttle = throttle;
       let s0 = 0;
       let z0 = 0;
       for (let t = 0; t < 6; t += 1 / 120) {
@@ -102,6 +126,6 @@ describe('walk cycle', () => {
     }
     expect(lengths[0]).toBeGreaterThan(0.5);
     expect(lengths[0]).toBeLessThan(0.75);
-    expect(lengths[1]).toBeGreaterThan(lengths[0] * 1.3);
+    expect(lengths[1]).toBeLessThan(lengths[0] * 0.85);
   });
 });

@@ -5,6 +5,7 @@ import { Ocean } from './ocean';
 import { Terrain } from './terrain';
 import { Vegetation } from './vegetation';
 import { buildHouse } from './house';
+import { GARDEN } from './housePlants';
 import { Clouds } from './clouds';
 import { hazeAll } from '../render/haze';
 
@@ -31,8 +32,9 @@ export class World {
     this.terrain = new Terrain(this.field, this.atmosphere.uniforms, this.field.texels);
     this.ocean = new Ocean(this.field, this.atmosphere.uniforms, renderer);
     this.vegetation = new Vegetation(this.field, this.atmosphere.uniforms, renderer);
-    const house = buildHouse(this.field);
+    const { group: house, garden } = buildHouse(this.field);
     hazeAll(house, this.atmosphere.uniforms);
+    this.vegetation.addGarden(GARDEN, garden);
     this.clouds = new Clouds(this.atmosphere.uniforms);
     this.group.add(this.terrain.group, this.ocean.mesh, this.vegetation.group, house, this.clouds.mesh);
     this.group.name = 'world';
