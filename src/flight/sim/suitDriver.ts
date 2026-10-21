@@ -251,9 +251,14 @@ const LAND_IN = 0.16;
 const LAND_LOOK_UP = 0.5;
 const LAND_RISE = 0.85;
 const LAND_UP = 1.45;
-/** Forward lean of the whole body (rad) and the torso channels in the three-point. */
-const LAND_LEAN = 0.4;
-const LAND_TORSO = { twist: -0.2, bend: 0.8, side: 0.4 };
+/**
+ * Forward lean of the whole body (rad) and the torso channels in the
+ * three-point. The suit's arms are short, so the shoulders must come right
+ * down for the fist to reach: most of the lean is the whole body about the
+ * hips (a flat back) rather than a hunch, and the torso stays square.
+ */
+const LAND_LEAN = 0.95;
+const LAND_TORSO = { twist: -0.1, bend: 0.5, side: 0.15 };
 /** Bind-space contact points: kneecap (right knee goes down), sole heel / toe, fist. */
 const KNEE_R: Array<[BoneName, [number, number, number]]> = [
   ['shin.R', [-0.14, 0.5, 0.075]],
@@ -992,23 +997,23 @@ export class SuitDriver {
    */
   private solveLanding(): NonNullable<SuitDriver['landPose']> {
     const limbs: Required<LimbOffsets> = {
-      // Left arm thrown back and up behind, fist clenched
-      armL: 0.75,
+      // Left arm swept back along the body and out, fist clenched
+      armL: 0.35,
       armR: 0.05,
-      armFlexL: 1.15,
+      armFlexL: 0.35,
       armFlexR: 0.4,
-      armTwistL: 0.5,
+      armTwistL: 0,
       armTwistR: 0.6,
-      elbowL: 0.22,
+      elbowL: 0.1,
       elbowR: 0.02,
       // Forward lean swings the legs back: the hip flexion carries it.
-      // Left: lunged out to the side and forward, knee well bent (its hip
-      // bend is solved to plant the boot). Right: the thigh back and
-      // out, the knee on the ground, the shin trailing
-      hipL: 1.9 + LAND_LEAN,
-      hipR: -1.0 + LAND_LEAN,
-      hipOutL: 0.5,
-      hipOutR: 0.3,
+      // Left: lunged forward with the knee up by the chest (its knee bend
+      // is solved to plant the boot). Right: the thigh back, the knee on
+      // the ground, the shin trailing
+      hipL: 2.0 + LAND_LEAN,
+      hipR: -0.75 + LAND_LEAN,
+      hipOutL: 0.35,
+      hipOutR: 0.15,
       kneeL: 1.55,
       kneeR: 1.0,
       ankleL: 0,
@@ -1089,19 +1094,23 @@ export class SuitDriver {
     // Lunge: the knee bend that plants the left boot (flat) on the ground.
     // Boot flat: the foot's pitch in the world is the body's lean + the ankle channel
     limbs.ankleL = -LAND_LEAN;
-    solve((x) => (limbs.kneeL = x), 1.0, 2.6, 2.1, () => at(SOLE('L')).y - kneeY());
+    solve((x) => (limbs.kneeL = x), 0.6, 2.6, limbs.hipL - LAND_LEAN, () => at(SOLE('L')).y - kneeY());
     // Toes of the kneeling leg tucked onto the ground
     solve((x) => (limbs.kneeR = x), 0.4, 1.8, 1.0, () => at(TOE_R).y - kneeY());
     // Fist down: the arm swings onto the ground; if it can't reach, the
     // torso folds further over it
-    fist: for (let i = 0; i < 10; i++) {
-      // The shoulder may bring the arm in under the chest or out a little
-      for (const abd of [0.05, -0.15, -0.35, 0.25]) {
+    for (let i = 0; i < 10; i++) {
+      // The shoulder brings the arm in under the chest as far as it helps
+      let best = { abd: 0, flex: 0, miss: Infinity };
+      for (const abd of [0.05, -0.1, -0.25, -0.4, -0.55]) {
         limbs.armR = abd;
-        const miss = solve((x) => (limbs.armFlexR = x), -2.2, 1.2, 0.2, () => at(FIST_R).y - KNUCKLE_PAD - kneeY());
-        if (miss < 0.004) break fist;
+        const miss = solve((x) => (limbs.armFlexR = x), -2.2, 1.2, -1.2, () => at(FIST_R).y - KNUCKLE_PAD - kneeY());
+        if (miss < best.miss - 1e-3) best = { abd, flex: limbs.armFlexR, miss };
       }
-      L.bend += 0.06;
+      limbs.armR = best.abd;
+      limbs.armFlexR = best.flex;
+      if (best.miss < 0.004) break;
+      L.bend += 0.04;
     }
     this.landBend = L.bend;
     return L;
