@@ -275,7 +275,7 @@ void main() {
 
   vec3 col = body * (1.0 - Fr) + refl * Fr + spec;
   col = mix(col, foamLit, foamMask * 0.95);
-  col = applyHaze(col, cameraPosition, vWorld);
+  col = applyHaze(col, cameraPosition, vWorld, sunVis);
   // Past the planet's horizon (the world is flat, the sky isn't) the sea
   // gives way to the sky's own colour below the horizon line
   float horizonD = sqrt(2.0 * 6.371e6 * max(cameraPosition.y, 2.0));

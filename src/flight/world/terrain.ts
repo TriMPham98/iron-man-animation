@@ -286,7 +286,7 @@ export class Terrain {
           reflectedLight.indirectDiffuse *= tAo;
           reflectedLight.indirectSpecular *= tAo;`,
         )
-        .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vTerrainPos);');
+        .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vTerrainPos, tSunVis);');
     };
     // Program cache key: one terrain program
     mat.customProgramCacheKey = () => 'cdlod-terrain';

@@ -901,7 +901,7 @@ export class Vegetation {
         shader.fragmentShader = shader.fragmentShader
           .replace('#include <common>', `#include <common>\n${NEAR_FRAG_PARS}`)
           .replace('#include <aomap_fragment>', SHADE_GLSL)
-          .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vInstWorld);');
+          .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vInstWorld, vegBake.r);');
       };
       mat.customProgramCacheKey = () => `vegetation-${key}`;
       return mat;
@@ -961,7 +961,7 @@ export class Vegetation {
         .replace('#include <color_fragment>', FELL_COLOR_GLSL)
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += vec3(5.0, 1.6, 0.35) * vCut.z * fellRim * fellRim;')
         .replace('#include <aomap_fragment>', SHADE_GLSL)
-        .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vInstWorld);');
+        .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vInstWorld, vegBake.r);');
     };
     fellMat.customProgramCacheKey = () => 'vegetation-felled';
     this.felling = new Felling(field, fellMat);
@@ -1021,7 +1021,7 @@ export class Vegetation {
         )
         .replace('#include <normal_fragment_maps>', '')
         .replace('#include <aomap_fragment>', SHADE_GLSL)
-        .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vInstWorld);');
+        .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vInstWorld, vegBake.r);');
     };
     impMat.customProgramCacheKey = () => 'vegetation-impostor';
     this.imp = new THREE.Mesh(geo, impMat);

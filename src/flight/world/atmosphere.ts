@@ -27,13 +27,22 @@ uniform vec3 uSunColor;
 uniform float uFogDensity;
 uniform float uFogFalloff;
 // Haze colour seen along a view ray: the sky at (or just above) the horizon
-// behind it, warmed toward the sun
-vec3 hazeColor(vec3 rd) {
+// behind it, warmed toward the sun. lit is how much of the air on the way
+// the sun reaches: land seen against the sun in its own shadow (a ridge
+// backlit at sunset) keeps the air's blue but loses the sun's forward glow,
+// which would otherwise hang over it as a bright column under the sun
+vec3 hazeColor(vec3 rd, float lit) {
   vec3 d = normalize(vec3(rd.x, max(rd.y, 0.015), rd.z));
   vec3 sky = textureLod(uSkyCube, d, 4.0).rgb;
   float s = max(dot(rd, uSunDir), 0.0);
-  return sky + uSunColor * (pow(s, 12.0) * 0.08 + pow(s, 3.0) * 0.015);
+  // Its shadow only falls across the air between when the sun is ahead
+  lit = mix(1.0, lit, smoothstep(0.0, 0.6, s));
+  // The same sky turned side-on to the sun: the air without the glow
+  vec2 side = normalize(vec2(-uSunDir.z, uSunDir.x)) * length(d.xz);
+  vec3 shade = min(sky, textureLod(uSkyCube, vec3(side.x, d.y, side.y), 4.0).rgb);
+  return mix(shade, sky, lit) + uSunColor * lit * (pow(s, 12.0) * 0.08 + pow(s, 3.0) * 0.015);
 }
+vec3 hazeColor(vec3 rd) { return hazeColor(rd, 1.0); }
 // Amount of air between the eye and a point (exponential height fog,
 // integrated analytically along the ray)
 float hazeAmount(vec3 ro, vec3 p) {
@@ -46,10 +55,11 @@ float hazeAmount(vec3 ro, vec3 p) {
   float fog = uFogDensity * exp(-y * b) * (abs(k) > 1e-5 ? (1.0 - exp(-dist * k)) / k : dist);
   return 1.0 - exp(-max(fog, 0.0));
 }
-vec3 applyHaze(vec3 col, vec3 ro, vec3 p) {
+vec3 applyHaze(vec3 col, vec3 ro, vec3 p, float lit) {
   float a = hazeAmount(ro, p);
-  return mix(col, hazeColor(normalize(p - ro)), a);
+  return mix(col, hazeColor(normalize(p - ro), lit), a);
 }
+vec3 applyHaze(vec3 col, vec3 ro, vec3 p) { return applyHaze(col, ro, p, 1.0); }
 `;
 
 /**
