@@ -25,6 +25,15 @@ const EYE_AT = [0, 1.77, 0.07] as const;
 /** Bind-space centre of the helmet shell and the radius that takes it all (m). */
 const HELMET_CLIP_AT = [0, 1.73, 0.02] as const;
 const HELMET_CLIP_R = 0.16;
+/**
+ * The pilot's neck and shoulders inside the collar (bind space, chest to
+ * neck, and radius): with the helmet cut away, a look down went in at the
+ * neck ring and on into the empty torso.
+ */
+const NECK_FROM = [0, 1.36, -0.02] as const;
+const NECK_TO = [0, 1.52, -0.02] as const;
+const NECK_R = 0.115;
+const UP = new THREE.Vector3(0, 1, 0);
 
 /**
  * One flight: the suit, its flight model and body language, the camera,
@@ -58,6 +67,12 @@ export class Game {
   private readonly _owed = new THREE.Vector3();
   private readonly _axis = new THREE.Vector3();
   private readonly _clip = new THREE.Vector3();
+  private readonly _neckTo = new THREE.Vector3();
+  /** Seals the collar in the helmet view (dark, like the suit's lining). */
+  private readonly neck = new THREE.Mesh(
+    new THREE.CapsuleGeometry(NECK_R, NECK_TO[1] - NECK_FROM[1], 6, 16),
+    new THREE.MeshStandardMaterial({ color: 0x14100f, metalness: 0.6, roughness: 0.55 }),
+  );
 
   constructor(
     readonly world: World,
@@ -77,9 +92,13 @@ export class Game {
       this.rig.shake += amount > 15 ? 1.4 : 0.25;
       this.particles.burst('spark', at, 6, 10, undefined, 1);
     }, world.atmosphere.uniforms);
-    scene.add(suit.group, this.particles.group, this.jets.group, this.combat.group);
+    this.neck.visible = false;
+    this.neck.receiveShadow = true;
+    scene.add(suit.group, this.neck, this.particles.group, this.jets.group, this.combat.group);
     patchLogDepth(suit.group);
+    patchLogDepth(this.neck);
     hazeAll(suit.group, world.atmosphere.uniforms);
+    hazeAll(this.neck, world.atmosphere.uniforms);
     eyeClipAll(suit.group, this.eyeClip);
     suit.forEachMesh((m) => {
       const mats = Array.isArray(m.material) ? m.material : [m.material];
@@ -171,12 +190,19 @@ export class Game {
     const sun = this.world.atmosphere.sun;
     sun.target.position.copy(this.model.pos);
     sun.position.copy(this.model.pos).addScaledVector(this.world.atmosphere.uniforms.uSunDir.value as THREE.Vector3, 120);
-    // In the helmet the pilot sees his own suit (arms, chest, boots) with
-    // the helmet itself cut away round the eye
+    // In the helmet the pilot sees his own suit (arms, chest, boots) from
+    // outside only, with the helmet itself cut away round the eye
     const helmet = this.rig.mode === 'helmet';
     this.suit.boneWorldPoint('head', HELMET_CLIP_AT, this._clip);
-    this.suit.showInterior(helmet);
     this.eyeClip.uEyeClip.value.set(this._clip.x, this._clip.y, this._clip.z, helmet ? HELMET_CLIP_R : 0);
+    this.neck.visible = helmet;
+    if (helmet) {
+      const a = this.suit.boneWorldPoint('chest', NECK_FROM, this.neck.position);
+      const b = this.suit.boneWorldPoint('neck', NECK_TO, this._neckTo);
+      b.sub(a);
+      a.addScaledVector(b, 0.5);
+      this.neck.quaternion.setFromUnitVectors(UP, b.normalize());
+    }
     const o = this.driver.outputs;
     this.jets.eye = helmet ? this.rig.camera.position : null;
     this.jets.update(dt, this.suit, { bootL: o.bootL, bootR: o.bootR, palmL: o.palmL, palmR: o.palmR, palmBoost: o.palmBoost }, this.ground, this.particles, this.model.vel);
