@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HOME, HOME_HEIGHT, type Heightfield } from './heightfield';
-import { FRAME_YAW, buildCliffGeometry, cliffHeight, crest, toLocal, toWorld } from './houseCliff';
+import { FRAME_YAW, buildCliffGeometry, cliffHeight, crest, faceOut, toLocal, toWorld } from './houseCliff';
 import { Batch, Footprint, Outline, alongOutline, beam, box, fascia, flat, houseMaterials, slab, strut, wallQuad, type P2 } from './houseKit';
 import { seeded, type GardenPlant } from './vegetation';
 
@@ -15,7 +15,7 @@ import { seeded, type GardenPlant } from './vegetation';
  * concrete struts raking back into the rock, the workshop's lit band below
  * it. Two white drums stand on the upper roof. At the west end an infinity
  * pool sits on a dry-stone bastion with a helical stair up to the terrace,
- * and a switchback stair runs down the face to a landing at the water.
+ * and a switchback stair runs down the face to the beach.
  * Behind: the round entry court with its sculpture, and the drive winding
  * up into the hills. The landing pad on the lawn beside the house is its
  * own piece (src/flight/world/landingPad.ts).
@@ -65,6 +65,11 @@ const PD_Y = 0.7;
 const POOL = roundedRect(13, 41.5, 33, 52.1, 1.2);
 /** Helical stair from the lawn up to the upper terrace. */
 const SPIRAL = new THREE.Vector2(13, 23);
+/** Cliff stair: its head off the pool deck's corner (x), the turns (x) and its width. */
+const STAIR_HEAD = 9.8;
+const STAIR_X0 = 5;
+const STAIR_X1 = -13;
+const STAIR_W = 1.5;
 /** Entry court. */
 const COURT = new THREE.Vector2(64, -26);
 /** Hot tub on the pool deck, by the infinity edge. */
@@ -553,6 +558,8 @@ export function buildHouse(field?: Heightfield): { group: THREE.Group; garden: G
     const b = PD.pts[(i + 1) % PD.pts.length];
     const mid = a.clone().add(b).multiplyScalar(0.5);
     if (infinity(mid)) continue;
+    // The gap for the cliff stair's head
+    if (Math.abs(mid.x - STAIR_HEAD) < 1.1 && mid.y > 46) continue;
     const inA = a.clone().addScaledVector(PD.nrm[i], -0.15);
     const inB = b.clone().addScaledVector(PD.nrm[(i + 1) % PD.pts.length], -0.15);
     B.concrete.add(beam(inA, inB, PD_Y + 0.45, 0.9, 0.3, 0.12), WHITE);
@@ -614,49 +621,119 @@ export function buildHouse(field?: Heightfield): { group: THREE.Group; garden: G
     B.concrete.add(back, WHITE);
   }
 
-  // Switchback stair down the cliff face to a landing at the water
-  {
-    const x0 = 5;
-    const x1 = -13;
+  // Switchback stair down the cliff face to the beach. Each flight stands
+  // off the rock (ledges and the slope below it included) and leans out
+  // with it; the next runs back alongside, a landing spanning the pair at
+  // each turn, tied back into the rock or propped on the slope below.
+  if (field) {
+    const W = STAIR_W;
+    const RAIL = 0x9a9c9e;
+    const yBeach = -50.5;
     const flights = 8;
-    const drop = 6.4;
-    let y = PD_Y - 0.3;
-    for (let f = 0; f < flights; f++) {
-      const xa = f % 2 === 0 ? x0 : x1;
-      const xb = f % 2 === 0 ? x1 : x0;
-      const ya = y;
-      const yb = y - drop;
-      // Stand off the face: furthest-out rock along this flight, plus a margin
-      let z = 0;
-      for (let k = 0; k <= 8; k++) {
-        const u = THREE.MathUtils.lerp(xa, xb, k / 8);
-        const yy = THREE.MathUtils.lerp(ya, yb, k / 8);
-        z = Math.max(z, crest(u) + Math.max(0, -yy) / 4.6 + 2.6);
+    const drop = (PD_Y - yBeach) / flights;
+    const slope = (u: number, v: number) => {
+      const w = toWorld(u, v);
+      return field.heightAt(w.x, w.y) - HOME_HEIGHT;
+    };
+    /** Outermost rock or ground (frame z) at a height, a stride either side along the cliff included. */
+    const wall = (u: number, y: number) => {
+      let v = 0;
+      for (const du of [-1.5, 0, 1.5]) {
+        let w = y < -0.6 ? faceOut(u + du, y) : crest(u + du);
+        while (w < 140 && slope(u + du, w) > y) w += 0.25;
+        v = Math.max(v, w);
       }
-      z += f * 0.25;
-      const n = 30;
+      return v;
+    };
+    /** Least centre-line z at (x, y) that keeps a flight, its stringer and rails off the rock. */
+    const clear = (x: number, y: number) => Math.max(wall(x, y - 1.4), wall(x, y), wall(x, y + 1.6)) + W / 2 + 0.8;
+    const rail = (ax: number, ay: number, az: number, bx: number, by: number, bz: number, posts: number) => {
+      B.metalFine.add(strut(new THREE.Vector3(ax, ay + 1, az), new THREE.Vector3(bx, by + 1, bz), 0.05, 0.05, 0.05, 0.05), RAIL);
+      for (let k = 0; k <= posts; k++) {
+        const t = k / posts;
+        B.metalFine.add(box(0.04, 1.0, 0.04, THREE.MathUtils.lerp(ax, bx, t), THREE.MathUtils.lerp(ay, by, t) + 0.5, THREE.MathUtils.lerp(az, bz, t)), RAIL);
+      }
+    };
+    /** A column up from the slope below the face, where it comes near enough to stand on. */
+    const prop = (x: number, y: number, z: number) => {
+      const g = slope(x, z);
+      if (cliffHeight(field, x, z) > g - 1 || faceOut(x, g) > z - 1.5) return;
+      if (y - g > 0.4 && y - g < 10) B.concrete.add(box(0.4, y - g + 0.6, 0.4, x, (y + g - 0.6) / 2, z), 0xd8d4cc);
+    };
+
+    // Lay the flights out: each starts outboard of the last, then leans out as far as the rock below needs
+    const runs: { xa: number; xb: number; ya: number; yb: number; za: number; zb: number }[] = [];
+    let z = 0;
+    for (let f = 0; f < flights; f++) {
+      const xa = f === 0 ? STAIR_HEAD - 1.1 : f % 2 === 0 ? STAIR_X0 : STAIR_X1;
+      const xb = f % 2 === 0 ? STAIR_X1 : STAIR_X0;
+      const ya = PD_Y - f * drop;
+      const yb = ya - drop;
+      const at = (t: number) => clear(THREE.MathUtils.lerp(xa, xb, t), THREE.MathUtils.lerp(ya, yb, t));
+      let za = f === 0 ? 0 : z + W + 0.3;
+      for (let k = 0; k <= 2; k++) za = Math.max(za, at(k / 10));
+      let zb = za;
+      for (let k = 3; k <= 12; k++) zb = Math.max(zb, za + (at(k / 12) - za) / (k / 12));
+      runs.push({ xa, xb, ya, yb, za, zb });
+      z = zb;
+    }
+
+    // The head: a pier off the pool deck's corner, through a gap in the parapet
+    {
+      const { xa, za } = runs[0];
+      let zIn = za;
+      while (zIn > za - 12 && !PD.contains(STAIR_HEAD, zIn)) zIn -= 0.25;
+      const z0 = zIn - 0.6;
+      const z1 = za + W / 2;
+      B.concrete.add(box(2.2, 0.35, z1 - z0, STAIR_HEAD, PD_Y - 0.175, (z0 + z1) / 2), 0xe8e4dc);
+      rail(xa + 0.05, PD_Y, zIn, xa + 0.05, PD_Y, za - W / 2, 3);
+      rail(xa + 2.15, PD_Y, zIn, xa + 2.15, PD_Y, za + W / 2 - 0.05, 4);
+      rail(xa, PD_Y, za + W / 2 - 0.05, xa + 2.15, PD_Y, za + W / 2 - 0.05, 2);
+    }
+
+    runs.forEach(({ xa, xb, ya, yb, za, zb }, f) => {
+      const dx = xb - xa;
+      const dz = zb - za;
+      const run = Math.hypot(dx, dz);
+      const yaw = -Math.atan2(dz, dx);
+      const n = Math.round(run / 0.62);
       for (let s = 0; s < n; s++) {
         const t = (s + 0.5) / n;
-        B.concrete.add(box(0.62, 0.1, 1.5, THREE.MathUtils.lerp(xa, xb, t), THREE.MathUtils.lerp(ya, yb, t), z), 0xe8e4dc);
+        B.concrete.add(box(run / n + 0.02, 0.1, W, xa + dx * t, THREE.MathUtils.lerp(ya, yb, t), za + dz * t, yaw), 0xe8e4dc);
       }
-      B.concrete.add(strut(new THREE.Vector3(xa, ya - 0.3, z), new THREE.Vector3(xb, yb - 0.3, z), 1.5, 0.35, 1.5, 0.35), 0xe0dcd4);
-      // Landing at the turn, tied back to the rock
-      B.concrete.add(box(2.4, 0.3, 3.2, xb, yb - 0.15, z + 0.6), 0xe0dcd4);
-      B.concrete.add(box(1.0, 0.8, Math.max(0.5, z - crest(xb) + 1), xb, yb - 0.5, (z + crest(xb) + Math.max(0, -yb) / 4.6) / 2 - 0.5), 0xd8d4cc);
-      // Rail on the outer side
-      const len = Math.abs(xb - xa);
-      const dirAng = Math.atan2(yb - ya, xb - xa);
-      B.metalFine.add(new THREE.BoxGeometry(Math.hypot(len, drop), 0.05, 0.05).rotateZ(dirAng).translate((xa + xb) / 2, (ya + yb) / 2 + 1.0, z + 0.72), 0x9a9c9e);
-      for (let k = 0; k <= 6; k++) {
-        const t = k / 6;
-        B.metalFine.add(box(0.04, 1.0, 0.04, THREE.MathUtils.lerp(xa, xb, t), THREE.MathUtils.lerp(ya, yb, t) + 0.5, z + 0.72), 0x9a9c9e);
+      B.concrete.add(strut(new THREE.Vector3(xa, ya - 0.3, za), new THREE.Vector3(xb, yb - 0.3, zb), W, 0.35, W, 0.35), 0xe0dcd4);
+      // Rails both sides
+      for (const side of [-1, 1]) {
+        const ox = (-dz / run) * (W / 2 - 0.05) * side;
+        const oz = (dx / run) * (W / 2 - 0.05) * side;
+        rail(xa + ox, ya, za + oz, xb + ox, yb, zb + oz, 6);
       }
-      y = yb;
-    }
-    // The landing at the bottom, on the rocks just above the swell
-    const zEnd = crest(x0) + 56 / 4.6 + 4;
-    B.concrete.add(box(9, 1.2, 6, x0 - 2, -52.6, zEnd), 0xd0ccc4);
-    B.concrete.add(box(2.4, Math.max(1, -52 - y), 2.4, x0, (y - 52) / 2, zEnd - 3), 0xd0ccc4);
+      // Props where the slope comes up under the flight
+      for (const t of [0.35, 0.7]) prop(xa + dx * t, THREE.MathUtils.lerp(ya, yb, t) - 0.45, za + dz * t);
+
+      const sgn = Math.sign(dx);
+      const next = runs[f + 1];
+      if (next) {
+        // Landing at the turn, spanning this flight and the next one out
+        const z0 = zb - W / 2;
+        const z1 = next.za + W / 2;
+        const xe = xb + sgn * 1.8;
+        B.concrete.add(box(2.1, 0.3, z1 - z0, xb + sgn * 0.75, yb - 0.15, (z0 + z1) / 2), 0xe0dcd4);
+        rail(xe - sgn * 0.05, yb, z0, xe - sgn * 0.05, yb, z1, 3);
+        rail(xb, yb, z0 + 0.05, xe, yb, z0 + 0.05, 2);
+        rail(xb, yb, z1 - 0.05, xe, yb, z1 - 0.05, 2);
+        // Tied back into the rock, or propped from the slope
+        const rock = wall(xb + sgn * 0.75, yb - 0.7) - 0.6;
+        if (z0 - rock > 0.2 && z0 - rock < 6) B.concrete.add(box(1.0, 0.8, z0 - rock, xb + sgn * 0.75, yb - 0.7, (z0 + rock) / 2), 0xd8d4cc);
+        else prop(xb + sgn * 0.75, yb - 0.3, (z0 + z1) / 2);
+      } else {
+        // The foot: a plinth on the sand
+        const cx = xb + sgn * 1.2;
+        let g = yBeach;
+        for (const [ox, oz] of [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]]) g = Math.min(g, ground(cx + ox, zb + oz));
+        B.concrete.add(box(3.2, yBeach - g + 0.8, 3.2, cx, (yBeach + g - 0.8) / 2, zb), 0xd0ccc4);
+      }
+    });
   }
 
   // Entry court: pale paving with dark ring joints, a planted drum with the sculpture

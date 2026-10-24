@@ -89,6 +89,11 @@ function relief(u: number, y: number): number {
   return lip + mass * smooth(-1, -8, y);
 }
 
+/** How far out (frame z) the rock face stands at a height below the lip, ledges and buttresses included. */
+export function faceOut(u: number, y: number): number {
+  return crest(u) - Math.min(y, -0.6) / steep(u) + relief(u, y) * smooth(0, -3, y);
+}
+
 /**
  * Height (frame y) of the rock top / face at a frame point as the mesh lies,
  * or −∞ where it doesn't stand above the heightfield: toward the ends it
