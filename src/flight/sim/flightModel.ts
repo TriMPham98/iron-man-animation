@@ -227,6 +227,23 @@ const AUTOLAND_T_END = 1.8;
 const AUTOLAND_LEAN = 6;
 /** Least lift it keeps on the way down (× g): on next to none, the lean swung wild on every touch across. */
 const AUTOLAND_LIFT = 0.5;
+/**
+ * Auto-land's boosted return: handed the suit on a fast pass that would
+ * carry it further than {@link HOME_R} (m) out before it stopped, it doesn't
+ * brake to a stop out there and crawl back at hover speed — it stays in
+ * flight, boosts round onto the pad and back in, and only flares into the
+ * run-in once a stop from where it is would leave it within
+ * {@link HOME_LEAD} (m) short of the centre (and no more than
+ * {@link HOME_PAST} past it). The stop it reckons on (m/s²), the height it
+ * flies the leg at over the deck, and the least it keeps over anything
+ * under or ahead of it (m).
+ */
+const HOME_R = 600;
+const HOME_LEAD = 80;
+const HOME_PAST = 150;
+const HOME_DECEL = 42;
+const HOME_ALT = 80;
+const HOME_CLEAR = 40;
 
 const UP = new THREE.Vector3(0, 1, 0);
 const clamp = THREE.MathUtils.clamp;
@@ -344,6 +361,10 @@ export class FlightModel {
   padPull = 0;
   /** The hover computer is flying the suit down onto the landing aid's centre. */
   autoLand = false;
+  /** Auto-land is flying the boosted leg back to the pad (see {@link HOME_R}), not the run-in. */
+  homing = false;
+  /** The pilot's input as auto-land's boosted leg flies it. */
+  private readonly homeIn = EMPTY_INPUT();
   /** The line the body leans to under auto-land, and how fast it's swinging (see {@link leanLine}). */
   private readonly lean = new THREE.Vector3(0, 1, 0);
   private readonly leanVel = new THREE.Vector3();
@@ -417,6 +438,7 @@ export class FlightModel {
     this.guideSide = 0;
     this.padPull = 0;
     this.autoLand = false;
+    this.homing = false;
     this.gait.attach(this.pos, heading, this.ground);
   }
 
@@ -485,6 +507,8 @@ export class FlightModel {
       this.speedCmd = 0;
     }
     this.airT += dt;
+    input = this.homeInput(input);
+    const landing = this.autoLand && !this.homing;
     if (!input.boost) this.boostLatch = false;
     const falling = input.vertical < FALL_STICK && this.power > 0.5;
     this.freefall += ((falling ? 1 : 0) - this.freefall) * approach(dt, falling ? 0.25 : 0.4);
@@ -520,11 +544,11 @@ export class FlightModel {
     // (a fall is not flight, however fast it gets)
     // X drops it out of flight at once (not once the throttle has run
     // down): the body is the brakes' now, free to swing round onto the aim
-    const wantFlight = !falling && !input.brake && !this.autoLand && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.stance));
+    const wantFlight = !falling && !input.brake && !landing && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.stance));
     const flightGoal = wantFlight && !this.grounded ? 1 : 0;
     // Already quick (out of a flare), the body swings straight back over
     const riseTau = THREE.MathUtils.lerp(0.55, 0.3, smooth(40, 120, speed));
-    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? riseTau : this.autoLand ? 0.2 : input.brake ? 0.6 : 0.4);
+    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? riseTau : landing ? 0.2 : input.brake ? 0.6 : 0.4);
     if (this.grounded) this.flightness = 0;
     const fl = smooth(0.05, 0.95, this.flightness);
 
@@ -747,7 +771,7 @@ export class FlightModel {
     // Height first, then what thrust is left goes to the horizontal (a real
     // VTOL computer never trades altitude for a stop)
     // (auto-land runs the boots hotter, as the boost does: it's in a hurry)
-    const hoverMax = THRUST_MAX * (this.autoLand ? AUTOLAND_THRUST : 1.1) * ceilingK;
+    const hoverMax = THRUST_MAX * (landing ? AUTOLAND_THRUST : 1.1) * ceilingK;
     const hoverAcc = vWant.sub(this.vel).multiplyScalar(1.6);
     // Braking, a firmer hold on the horizontal: the stop settles, not drifts
     if (input.brake) {
@@ -757,8 +781,8 @@ export class FlightModel {
     // Hands off over the pad: hold the hover over its centre
     this.padPull += (this.padCapture(input, fl, carrying) - this.padPull) * approach(dt, 0.2);
     const aid = this.landingAid;
-    if (!this.autoLand) this.landOn = false;
-    if (aid && this.autoLand) {
+    if (!landing) this.landOn = false;
+    if (aid && landing) {
       this.padPull = 1;
       this.autoLandAcc(aid, hoverAcc, dt);
     } else if (aid && this.padPull > 1e-3) {
@@ -777,7 +801,7 @@ export class FlightModel {
     const hvNow = Math.hypot(this.vel.x, this.vel.z);
     const against = hoverAcc.x * this.vel.x + hoverAcc.z * this.vel.z < 0;
     // (auto-land has the boots' full authority sideways: it planned its stop)
-    const fastPull = this.autoLand ? hoverMax : against ? HOVER_BRAKE_FAST * Math.max(this.airbrake, input.stance ? 1 : 0) : HOVER_BRAKE_FAST;
+    const fastPull = landing ? hoverMax : against ? HOVER_BRAKE_FAST * Math.max(this.airbrake, input.stance ? 1 : 0) : HOVER_BRAKE_FAST;
     // (braking, the palms already pull against the travel: the boots leave
     // them room, or the stop bit harder again as the boots got their full
     // authority back at the slow end)
@@ -873,7 +897,7 @@ export class FlightModel {
     // (auto-land leans to a line swung smoothly round after the thrust, so
     // the body rolls from the run-in into the stop as one move: the plan
     // re-flown every step still trims the push in small quick corrections)
-    const leanTo = this.leanLine(thrustDir, dt);
+    const leanTo = this.leanLine(thrustDir, landing, dt);
     if (fl < 0.95 && !this.grounded && !falling && !input.stance) {
       const upNow = this.up(this._u);
       this._q.setFromUnitVectors(upNow, leanTo);
@@ -1213,13 +1237,52 @@ export class FlightModel {
   }
 
   /**
+   * Auto-land's boosted leg home: decide whether it's flying one (see
+   * {@link HOME_R}), and if so fly it as a pilot would — the boost lit,
+   * looking at the pad, holding the leg's height — in place of the input.
+   */
+  private homeInput(input: FlightInput): FlightInput {
+    const aid = this.landingAid;
+    if (!this.autoLand || !aid || this.power < 0.5) {
+      this.homing = false;
+      return input;
+    }
+    const ex = aid.x - this.pos.x;
+    const ez = aid.z - this.pos.z;
+    const d = Math.hypot(ex, ez);
+    const hv = Math.hypot(this.vel.x, this.vel.z);
+    // Where a stop from here would leave it, and how far short of the
+    // centre that is along the way in (− past it)
+    const stop = (hv * hv) / (2 * HOME_DECEL);
+    const sx = hv > 1e-3 ? this.pos.x + (this.vel.x / hv) * stop : this.pos.x;
+    const sz = hv > 1e-3 ? this.pos.z + (this.vel.z / hv) * stop : this.pos.z;
+    const closing = d > 1e-3 ? (ex * this.vel.x + ez * this.vel.z) / d : 0;
+    if (!this.homing) this.homing = Math.hypot(aid.x - sx, aid.z - sz) > HOME_R;
+    // (and lined up on it, so the flare comes out of straight flight, not the turn)
+    else if (closing > 0.97 * hv && d - stop < HOME_LEAD && d - stop > -HOME_PAST) this.homing = false;
+    if (!this.homing) return input;
+    const i = this.homeIn;
+    // At the leg's height, clear of what's under it and coming up ahead
+    // (pitched for it over a few seconds' flying, never steeply)
+    const g = this.ground;
+    const floor = Math.max(g.surface(this.pos.x, this.pos.z), g.surface(this.pos.x + this.vel.x * 3, this.pos.z + this.vel.z * 3));
+    const hGoal = Math.max(aid.y + HOME_ALT, floor + HOME_CLEAR);
+    const dy = clamp((hGoal - this.pos.y) / Math.max(150, this.speed * 2), -0.35, 0.35);
+    i.aim.set(ex / Math.max(d, 1e-3), dy, ez / Math.max(d, 1e-3)).normalize();
+    i.boost = true;
+    i.brake = i.stance = false;
+    i.lateral = i.forward = i.vertical = i.throttle = 0;
+    return i;
+  }
+
+  /**
    * The line the body leans to: the thrust itself, or under auto-land the
    * thrust followed through a critically damped spring ({@link AUTOLAND_LEAN}).
    */
-  private leanLine(thrustDir: THREE.Vector3, dt: number): THREE.Vector3 {
+  private leanLine(thrustDir: THREE.Vector3, landing: boolean, dt: number): THREE.Vector3 {
     const l = this.lean;
     const v = this.leanVel;
-    if (!this.autoLand) {
+    if (!landing) {
       l.copy(thrustDir);
       v.set(0, 0, 0);
       return thrustDir;

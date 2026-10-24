@@ -821,6 +821,49 @@ describe('FlightModel', () => {
     }
   });
 
+  it('auto-land boosts back round from a supersonic pass instead of braking far out and crawling home', () => {
+    const pass = (speed: number) => {
+      const m = new FlightModel(flat());
+      m.landingAid = { x: 0, z: 0, y: 0 };
+      m.pos.set(-100, 100, 0);
+      m.vel.set(speed, 0, 0);
+      m.q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+      m.grounded = false;
+      m.airT = 2;
+      m.flightness = 1;
+      m.posture = 1.42;
+      m.speedCmd = Math.min(speed, 270);
+      m.autoLand = true;
+      let far = 0;
+      let boosted = 0;
+      let t = 0;
+      const kinds: string[] = [];
+      const input = EMPTY_INPUT();
+      input.aim.set(1, 0, 0);
+      for (; t < 60 && !m.grounded; t += 1 / 120) {
+        input.brake = m.speed > 45;
+        // (the look swings round after the travel, as the game's does)
+        if (m.homing) input.aim.lerp(new THREE.Vector3(m.vel.x, 0, m.vel.z).normalize(), 1 - Math.exp(-1 / 60)).normalize();
+        m.step(1 / 120, input);
+        far = Math.max(far, Math.hypot(m.pos.x, m.pos.z));
+        if (m.boosting) boosted += 1 / 120;
+        if (m.contact !== 'none' && m.contact !== 'footstep') kinds.push(m.contact);
+      }
+      return { far, boosted, t, kinds, off: Math.hypot(m.pos.x, m.pos.z) };
+    };
+    // Mach 1.2: braked to a stop, it ran out 1.4 km and took 45 s back
+    const fast = pass(400);
+    expect(fast.boosted).toBeGreaterThan(3);
+    expect(fast.far).toBeLessThan(1000);
+    expect(fast.t).toBeLessThan(25);
+    expect(fast.kinds).toEqual(['landed']);
+    expect(fast.off).toBeLessThan(0.2);
+    // A pass it can stop from close in is flown as before: no boost
+    const slow = pass(200);
+    expect(slow.boosted).toBe(0);
+    expect(slow.kinds).toEqual(['landed']);
+  });
+
   it('auto-land swings the lean round smoothly, never flicks it from the run-in to the stop', () => {
     const cases = [
       { pos: [130, 50, 0], vel: [-60, 0, 0], flight: true },
