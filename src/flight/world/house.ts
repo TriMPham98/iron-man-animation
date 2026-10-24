@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HOME, HOME_HEIGHT, type Heightfield } from './heightfield';
 import { FRAME_YAW, buildCliffGeometry, cliffHeight, crest, faceOut, toLocal, toWorld } from './houseCliff';
-import { Batch, Footprint, Outline, alongOutline, beam, box, fascia, flat, houseMaterials, slab, strut, wallQuad, type P2 } from './houseKit';
+import { Batch, Footprint, Outline, alongOutline, beam, box, fascia, flat, houseMaterials, polyGeo, slab, strut, wallQuad, type P2 } from './houseKit';
 import { seeded, type GardenPlant } from './vegetation';
-import { CURB, DRIVE, buildDrive, courtGeometry, pathGeometry, walkGeometry, type DrivePath } from './drive';
+import { COURT, COURT_R, CURB, DRIVE, buildDrive, courtGeometry, pathGeometry, walkGeometry, type DrivePath } from './drive';
 
 /**
  * The house on the bluff, after the Stark house in Iron Man (2008) and Iron
@@ -71,8 +71,6 @@ const STAIR_HEAD = 9.8;
 const STAIR_X0 = 5;
 const STAIR_X1 = -13;
 const STAIR_W = 1.5;
-/** Entry court. */
-const COURT = new THREE.Vector2(64, -26);
 /** Hot tub on the pool deck, by the infinity edge. */
 const SPA = new THREE.Vector2(36.4, 46.4);
 /** Fire pit and lounge on the great room's roof. */
@@ -701,7 +699,7 @@ export function buildHouse(field?: Heightfield, drive?: DrivePath): { group: THR
   // Entry court: pale paving with dark ring joints, a planted drum with the sculpture
   {
     // (the paving itself is drawn with the drive: see drive.ts)
-    paving.push(courtGeometry(COURT, 4.15, 14, 0.06));
+    paving.push(courtGeometry(COURT, 4.15, COURT_R, 0.06));
     B.concrete.add(slab(Outline.circle(COURT.x, COURT.y, 4.2, 48), 0.75, 0.75, 0.06, [Outline.circle(COURT.x, COURT.y, 3.8, 48)]), WHITE);
     B.stone.add(flat(Outline.circle(COURT.x, COURT.y, 3.85, 48), 0.6, true), 0x3a2e22);
     // The bronze: three swelling lobes
@@ -746,8 +744,31 @@ export function buildHouse(field?: Heightfield, drive?: DrivePath): { group: THR
       const l = at(s * 0.86, 0.08);
       B.litFine.add(box(0.12, 0.08, 0.3, l.x, Y0 + 0.04, l.y, yaw), LAMP, 10);
     }
+    // A pivoting timber leaf in the middle bay, a long bronze pull on it
+    const leaf = at(0, 0.13);
+    B.lit.add(box(0.07, 3.0, 1.44, leaf.x, Y0 + 1.52, leaf.y, yaw), WOOD);
+    const pull = at(0.5, 0.21);
+    B.metalFine.add(box(0.05, 1.7, 0.05, pull.x, Y0 + 1.45, pull.y, yaw), 0x6a5236);
+    // A planted urn either side of the door, on the deck
+    for (const s of [-2.62, 2.62]) {
+      const u = at(s, 1.1);
+      B.concrete.add(new THREE.CylinderGeometry(0.34, 0.26, 0.75, 16).translate(u.x, Y0 + 0.375, u.y), WHITE);
+      B.stone.add(new THREE.CircleGeometry(0.3, 16).rotateX(-Math.PI / 2).translate(u.x, Y0 + 0.7, u.y), 0x2a2118);
+      sow('agave', u.x, Y0 + 0.66, u.y, 0.55);
+    }
+    // Downlights in the soffit over the threshold
+    for (const out of [0.9, 2.1, 3.1])
+      for (const s of [-1.1, 1.1]) {
+        const d = at(s, out);
+        B.litFine.add(new THREE.PlaneGeometry(0.22, 0.22).rotateX(Math.PI / 2).translate(d.x, Y1 - 0.47, d.y), LAMP, 16);
+      }
+    // A floating limestone step off the deck's edge, lit from the shadow gap under its nose
+    const step = at(0, 2.45);
+    B.stone.add(box(0.55, 0.12, 5.4, step.x, Y0 - 0.1, step.y, yaw), 0xe6dfd2);
+    const nose = at(0, 2.74);
+    B.litFine.add(box(0.02, 0.04, 5.2, nose.x, Y0 - 0.19, nose.y, yaw), LAMP, 6);
     // Walk and channels, from the deck's edge out to the court's paving
-    const walkEnd = p.distanceTo(COURT) - 13.8;
+    const walkEnd = p.distanceTo(COURT) - COURT_R + 0.2;
     const runs: [number, number, boolean, number][] = [
       [-1.6, 1.6, true, 0.09],
       [-3.4, -2.0, false, 0],
@@ -769,6 +790,47 @@ export function buildHouse(field?: Heightfield, drive?: DrivePath): { group: THR
           const l = q((s0 + s1) / 2, 2.6 + ((walkEnd - 3.1) * k) / 3);
           B.litFine.add(new THREE.PlaneGeometry(0.3, 0.3).rotateX(-Math.PI / 2).translate(l.x, 0.205, l.y), new THREE.Color(0.6, 0.95, 1), 5);
         }
+        // A bronze spout at the house end, a sheet of water falling from it
+        const sp = q((s0 + s1) / 2, 2.35);
+        B.metalFine.add(box(0.3, 0.06, s1 - s0 - 0.3, sp.x, 0.42, sp.y, yaw), 0x6a5236);
+        const fall = q((s0 + s1) / 2, 2.52);
+        B.litFine.add(box(0.03, 0.2, s1 - s0 - 0.4, fall.x, 0.3, fall.y, yaw), new THREE.Color(0.6, 0.95, 1), 1.6);
+      }
+    }
+    // Planted beds either side, in a stone kerb, from the deck out to the court's rim:
+    // a clipped hedge along the channel, agaves and grasses behind, uplit
+    const D = p.distanceTo(COURT);
+    for (const sg of [-1, 1]) {
+      // Strips from the deck's edge to the rim: soil in a kerb of stone beams
+      const rimAt = (s: number) => D - Math.sqrt((COURT_R + 0.45) ** 2 - s * s);
+      const soil: THREE.Vector3[] = [];
+      const ring: THREE.Vector2[] = [];
+      for (let k = 0; k < 6; k++) {
+        const [sa, sb] = [3.95 + (4.7 * k) / 6, 3.95 + (4.7 * (k + 1)) / 6].map((v) => sg * v);
+        const [a, b, c, d] = [at(sa, 2.5), at(sb, 2.5), at(sb, rimAt(sb)), at(sa, rimAt(sa))].map((v) => new THREE.Vector3(v.x, 0.18, v.y));
+        soil.push(a, b, c, a, c, d);
+        ring.push(at(sa, rimAt(sa)));
+      }
+      const corner = sg * 8.65;
+      ring.push(at(corner, rimAt(corner)), at(corner, 2.5), at(sg * 3.95, 2.5), at(sg * 3.95, rimAt(sg * 3.95)));
+      B.lawn.add(polyGeo(soil, new THREE.Vector3(0, 1, 0)), 0x2b3417);
+      for (let k = 0; k < ring.length - 1; k++) B.stone.add(beam(ring[k], ring[k + 1], 0.13, 0.26, 0.24, 0.24), 0xe0d8c8);
+      for (let k = 0; k < 5; k++) {
+        const len = rimAt(4.5) - 3.1;
+        const h = at(sg * 4.5, 2.9 + (len * k) / 4);
+        sow('hedge', h.x, 0.1, h.y, 0.62);
+      }
+      const rnd = seeded(sg > 0 ? 7 : 11, 3);
+      for (let k = 0; k < 9; k++) {
+        const s = sg * (5.4 + rnd() * 2.8);
+        const rim = rimAt(s) - 0.8;
+        const v = at(s, 3.2 + rnd() * (rim - 3.2));
+        if (k % 3 === 0) sow('agave', v.x, 0.16, v.y, 0.7 + rnd() * 0.4);
+        else sow('grass', v.x, 0.12, v.y, 0.6 + rnd() * 0.3);
+      }
+      for (const out of [3.4, D - 13]) {
+        const u = at(sg * 6.4, out);
+        B.litFine.add(box(0.26, 0.1, 0.26, u.x, 0.22, u.y), LAMP, 9);
       }
     }
   }
@@ -860,7 +922,7 @@ export function buildHouse(field?: Heightfield, drive?: DrivePath): { group: THR
   keep(B.lit.build(M.lit));
   const pool = keep(B.water.build(M.water));
   keep(B.lawn.build(M.foliage));
-  if (drive && field) keep(buildDrive(drive, field.uniforms, COURT, 14, paving));
+  if (drive && field) keep(buildDrive(drive, field.uniforms, COURT, COURT_R, paving));
   const glass = keep(B.glass.build(M.glass));
   glass.renderOrder = 1;
   // Fine detail: gone at range
@@ -942,7 +1004,7 @@ export function buildHouse(field?: Heightfield, drive?: DrivePath): { group: THR
     // Foundation beds: clipped hedges along the house with agaves between, and the court's planter
     let bed = 0;
     alongOutline(E0.offset(5), 3.2, (p) => {
-      if (p.y > crest(p.x) - 2.5 || PD.contains(p.x, p.y) || p.distanceTo(SPIRAL) < 4 || p.distanceTo(PAD_L) < 9 || p.distanceTo(COURT) < 17) return;
+      if (p.y > crest(p.x) - 2.5 || PD.contains(p.x, p.y) || p.distanceTo(SPIRAL) < 4 || p.distanceTo(PAD_L) < 9 || p.distanceTo(COURT) < 19.5) return;
       const kind = bed++ % 4 === 3 ? 'agave' : 'hedge';
       sow(kind, p.x, ground(p.x, p.y) - 0.1, p.y, kind === 'hedge' ? 0.8 + ((p.x * 7.1) % 0.4) : 1.1);
     });

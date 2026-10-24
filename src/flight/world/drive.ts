@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { HOME_HEIGHT, type Heightfield } from './heightfield';
-import { toWorld } from './houseCliff';
+import { toLocal, toWorld } from './houseCliff';
 import type { P2 } from './houseKit';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { NOISE_GLSL } from './noiseGlsl';
@@ -21,6 +21,12 @@ import { NOISE_GLSL } from './noiseGlsl';
 
 /** The drive's line (house frame), from the court up into the hills. */
 export const DRIVE: P2[] = [[64, -38], [69, -60], [84, -92], [102, -130], [108, -175], [98, -225], [92, -280], [100, -330]];
+/** The entry court (house frame) and its paving's radius (m). */
+export const COURT = new THREE.Vector2(64, -26);
+export const COURT_R = 14;
+/** The forecourt is levelled out to here across the walk (m), and from the court up under the deck. */
+const FORE_HALF = 9;
+const FORE_Z1 = 0;
 /** Half-widths (m): asphalt, the sett gutter, the curb's back. */
 const ASPHALT = 3.6;
 const GUTTER = 4.2;
@@ -72,11 +78,13 @@ export function gradeDrive(field: Heightfield): DrivePath {
   // The bed: weight, weight × height, distance across — rasterised segment by segment
   const world = pts.map((p) => toWorld(p.x, p.y));
   const reach = FALLOFF + 3;
+  // The forecourt's corners, so the box takes in its falloff too
+  const fore = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => toWorld(COURT.x + a * (COURT_R + 4), b > 0 ? FORE_Z1 + 4 : COURT.y - COURT_R - 4));
   let x0 = Infinity;
   let z0 = Infinity;
   let x1 = -Infinity;
   let z1 = -Infinity;
-  for (const p of world) {
+  for (const p of [...world, ...fore]) {
     x0 = Math.min(x0, p.x - reach);
     z0 = Math.min(z0, p.y - reach);
     x1 = Math.max(x1, p.x + reach);
@@ -110,12 +118,26 @@ export function gradeDrive(field: Heightfield): DrivePath {
       }
     }
   }
+  const smoother = (s: number) => 1 - s * s * s * (s * (s * 6 - 15) + 10);
   const data = new Float32Array(nx * nz * 4);
+  const l = new THREE.Vector2();
   for (let i = 0; i < nx * nz; i++) {
-    const s = THREE.MathUtils.clamp((dist[i] - FLAT) / (FALLOFF - FLAT), 0, 1);
-    const k = 1 - s * s * s * (s * (s * 6 - 15) + 10);
+    let k = smoother(THREE.MathUtils.clamp((dist[i] - FLAT) / (FALLOFF - FLAT), 0, 1));
+    let h = bed[i];
+    // The forecourt: the court and the strip from it to the front door, set
+    // just under the paving so no hump of hillside shows through it
+    toLocal(x0 + ((i % nx) + 0.5) * TEXEL, z0 + (Math.floor(i / nx) + 0.5) * TEXEL, l);
+    const out = Math.min(
+      l.distanceTo(COURT) - COURT_R - 1,
+      Math.max(Math.abs(l.x - COURT.x) - FORE_HALF, COURT.y - l.y, l.y - FORE_Z1),
+    );
+    const kc = smoother(THREE.MathUtils.clamp(out / 10, 0, 1));
+    if (kc > k) {
+      h = HOME_HEIGHT - 0.08;
+      k = kc;
+    }
     data[i * 4] = k;
-    data[i * 4 + 1] = k * bed[i];
+    data[i * 4 + 1] = k * h;
     data[i * 4 + 2] = dist[i];
   }
   const texture = new THREE.DataTexture(data, nx, nz, THREE.RGBAFormat, THREE.FloatType);
