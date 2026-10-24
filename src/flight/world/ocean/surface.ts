@@ -25,6 +25,29 @@ const SHORE_GLSL = /* glsl */ `
 float shoreAmp(float depth) { return mix(0.25, 1.0, smoothstep(0.0, 12.0, depth)); }
 `;
 
+/** Coarsest mip of the 256² sky cube (1×1 a face). */
+const ENV_MAXMIP = '8.0';
+
+/**
+ * The sea's sky light, straight up (x = 0) and averaged round the
+ * hemisphere (x = 1): the same everywhere on the water, so it's drawn into
+ * two texels once at boot and handed to the surface as uniforms rather than
+ * read with five cube taps on every pixel.
+ */
+export const SKY_AMBIENT_FRAG = /* glsl */ `
+uniform samplerCube uSkyCube;
+const float ENV_MAXMIP = ${ENV_MAXMIP};
+void main() {
+  vec3 skyUp = textureLod(uSkyCube, vec3(0.0, 1.0, 0.0), ENV_MAXMIP).rgb;
+  vec3 skyHemi = skyUp * 0.4 + 0.15 * (
+      textureLod(uSkyCube, vec3(0.94, 0.34, 0.0), ENV_MAXMIP - 1.0).rgb +
+      textureLod(uSkyCube, vec3(-0.94, 0.34, 0.0), ENV_MAXMIP - 1.0).rgb +
+      textureLod(uSkyCube, vec3(0.0, 0.34, 0.94), ENV_MAXMIP - 1.0).rgb +
+      textureLod(uSkyCube, vec3(0.0, 0.34, -0.94), ENV_MAXMIP - 1.0).rgb);
+  gl_FragColor = vec4(gl_FragCoord.x < 1.0 ? skyUp : skyHemi, 1.0);
+}
+`;
+
 export const SURFACE_VERT = /* glsl */ `
 precision highp sampler2DArray;
 attribute vec4 aNode; // x0, z0, size, lod
@@ -87,6 +110,8 @@ uniform vec4 uWater;      // body scatter colour, unresolved slope variance
 uniform vec4 uSss;        // subsurface colour, strength
 uniform vec4 uFoamP;      // J threshold, J gain, intensity, -
 uniform vec4 uTune;       // sky radiance clamp, glitter clamp, body gain, -
+uniform vec3 uSkyUp;      // the sky overhead, and averaged round the hemisphere
+uniform vec3 uSkyHemi;    // (baked off the sky cube: SKY_AMBIENT_FRAG)
 varying vec3 vWorld;
 varying vec2 vXZ;
 varying float vHeight;
@@ -94,7 +119,7 @@ varying float vAmp;
 ${TERRAIN_SAMPLE_GLSL}
 ${ATMOSPHERE_GLSL}
 const float PI = 3.14159265358979;
-const float ENV_MAXMIP = 8.0;
+const float ENV_MAXMIP = ${ENV_MAXMIP};
 const float ENV_TEXELS_PER_RAD = 256.0 / 1.5708;
 
 float fresnelWater(float c) {
@@ -170,12 +195,8 @@ void main() {
   // Cliff and ridge shadows on the water
   float sunVis = texture2D(uBake, xz / uWorld + 0.5).r;
   vec3 sunE = uSunColor * sunVis;
-  vec3 skyUp = textureLod(uSkyCube, vec3(0.0, 1.0, 0.0), ENV_MAXMIP).rgb;
-  vec3 skyHemi = skyUp * 0.4 + 0.15 * (
-      textureLod(uSkyCube, vec3(0.94, 0.34, 0.0), ENV_MAXMIP - 1.0).rgb +
-      textureLod(uSkyCube, vec3(-0.94, 0.34, 0.0), ENV_MAXMIP - 1.0).rgb +
-      textureLod(uSkyCube, vec3(0.0, 0.34, 0.94), ENV_MAXMIP - 1.0).rgb +
-      textureLod(uSkyCube, vec3(0.0, 0.34, -0.94), ENV_MAXMIP - 1.0).rgb);
+  vec3 skyUp = uSkyUp;
+  vec3 skyHemi = uSkyHemi;
   vec3 skyN = textureLod(uSkyCube, nrm, ENV_MAXMIP - 1.0).rgb;
 
   // ---- sun glitter: anisotropic Gaussian slope distribution ----

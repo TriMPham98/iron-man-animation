@@ -1,11 +1,12 @@
 import * as THREE from 'three';
+import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { withLogDepth } from '../render/depth';
 import { HEIGHT_RES, WORLD_SIZE } from './config';
 import type { Heightfield } from './heightfield';
 import { Cdlod, landTest } from './ocean/cdlod';
 import { FOAM_LEVELS, OceanSim } from './ocean/sim';
 import { seaHeightAt } from './ocean/spectrum';
-import { SURFACE_FRAG, SURFACE_VERT } from './ocean/surface';
+import { SKY_AMBIENT_FRAG, SURFACE_FRAG, SURFACE_VERT } from './ocean/surface';
 
 /**
  * The Pacific: a Tessendorf FFT sea (four cascades from a kilometre swell
@@ -62,6 +63,36 @@ function gridGeometry(): THREE.InstancedBufferGeometry {
   return geo;
 }
 
+/**
+ * Reads the sea's sky light off the (boot-baked, never changing) sky cube
+ * into uSkyUp / uSkyHemi: two texels drawn with the same lookups the surface
+ * shader used to make on every pixel.
+ */
+function bakeSkyAmbient(renderer: THREE.WebGLRenderer, sky: THREE.CubeTexture, uniforms: Record<string, THREE.IUniform>): void {
+  const rt = new THREE.WebGLRenderTarget(2, 1, { type: THREE.HalfFloatType, depthBuffer: false });
+  const quad = new FullScreenQuad(
+    new THREE.ShaderMaterial({
+      uniforms: { uSkyCube: { value: sky } },
+      vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: SKY_AMBIENT_FRAG,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  const prev = renderer.getRenderTarget();
+  renderer.setRenderTarget(rt);
+  quad.render(renderer);
+  const px = new Uint16Array(8);
+  renderer.readRenderTargetPixels(rt, 0, 0, 2, 1, px);
+  renderer.setRenderTarget(prev);
+  const texel = (i: number) => new THREE.Vector3(...[0, 1, 2].map((c) => THREE.DataUtils.fromHalfFloat(px[i * 4 + c])));
+  (uniforms.uSkyUp.value as THREE.Vector3).copy(texel(0));
+  (uniforms.uSkyHemi.value as THREE.Vector3).copy(texel(1));
+  quad.material.dispose();
+  quad.dispose();
+  rt.dispose();
+}
+
 export class Ocean {
   readonly mesh: THREE.Mesh;
   private readonly uniforms: Record<string, THREE.IUniform>;
@@ -98,7 +129,10 @@ export class Ocean {
       uFoamP: { value: new THREE.Vector4(0.48, 2.5, 1.0, 0) },
       // sky reflection clamp, glitter clamp, body gain
       uTune: { value: new THREE.Vector4(8, 400, 1.6, 0) },
+      uSkyUp: { value: new THREE.Vector3() },
+      uSkyHemi: { value: new THREE.Vector3() },
     };
+    if (renderer) bakeSkyAmbient(renderer, atmosphere.uSkyCube.value, this.uniforms);
     const mat = withLogDepth(
       new THREE.ShaderMaterial({
         vertexShader: SURFACE_VERT,

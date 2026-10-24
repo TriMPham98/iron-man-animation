@@ -170,7 +170,15 @@ export class FlightPost {
       depthBuffer: true,
     });
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.32, 0.5, 1.3);
-    this.bloom.blendMaterial.visible = false;
+    // The glow is added in the final pass, so the pass's own last step (blend
+    // it back over the scene) is skipped outright: drawn invisible, it still
+    // rendered into the multisampled scene target and paid a full-resolution
+    // resolve for nothing (~0.75 ms on an M1 Pro)
+    const quad = (this.bloom as unknown as { fsQuad: FullScreenQuad }).fsQuad;
+    const draw = quad.render.bind(quad);
+    quad.render = (r) => {
+      if (quad.material !== this.bloom.blendMaterial) draw(r);
+    };
     // The bright pass reads the frame at quarter resolution, one tap per
     // texel: a lone glint off a wave crest or the armour (HDR in the
     // thousands) lands in a single texel and blurs out as a glowing square.
