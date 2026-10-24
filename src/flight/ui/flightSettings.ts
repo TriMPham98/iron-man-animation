@@ -74,6 +74,12 @@ export function bindFlightSettings(app: FlightApp): void {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape' && !e.repeat && !document.pointerLockElement) pause();
   });
+  // Leaving the window (Mission Control, Task View, an app switch) stops
+  // the flight even when there's no pointer lock to lose
+  window.addEventListener('blur', pause);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') pause();
+  });
   let startWas = true;
   const pollStart = () => {
     requestAnimationFrame(pollStart);
