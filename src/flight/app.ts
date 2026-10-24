@@ -16,6 +16,8 @@ import type { Screens } from './ui/screens';
 import { bindFlightSettings } from './ui/flightSettings';
 import { SUN_DIR } from './world/config';
 import { World } from './world/world';
+import { PAD, PAD_Y } from './world/house';
+import type { PadGrade } from './world/landingPad';
 
 /**
  * The flight sim as an object the page can build, warm and start: on its
@@ -199,11 +201,13 @@ export class FlightApp {
     });
     const game = this.game;
     const { hud } = this;
+    hud.pad = new THREE.Vector3(PAD.x, PAD_Y, PAD.y);
     game.events.on((e) => {
       this.sounds.on(e, game.model);
       if (e.kind === 'jarvis' && e.text) hud.say(e.text);
       if (e.kind === 'kill') hud.kill();
       if (e.kind === 'repulsorHit' && e.value) hud.hit();
+      if (e.kind === 'padLanding') hud.padLanding(e.text as PadGrade, e.value ?? 0);
     });
     screens.onSettings = () => this.applySettings();
     this.applySettings();

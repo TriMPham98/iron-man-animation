@@ -13,6 +13,10 @@ export type SimEventKind =
   | 'heroLanding'
   | 'footstep'
   | 'splash'
+  /** Set down on the pad: value = offset from its centre (m), text = the grade. */
+  | 'padLanding'
+  /** The hover computer has (value 1) or has let go of (0) the pad. */
+  | 'padCapture'
   | 'sonicBoom'
   | 'boostStart'
   | 'boostEnd'

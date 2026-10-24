@@ -6,6 +6,7 @@ import type { FlightModel } from '../sim/flightModel';
 import { CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
 import type { GroundProbe } from '../sim/flightModel';
 import type { SuitWireframe } from './suitWireframe';
+import { BULLSEYE_R, CENTRED_R, type PadGrade } from '../world/landingPad';
 
 /**
  * JARVIS's heads-up display, drawn on a 2D canvas over the frame each
@@ -14,6 +15,8 @@ import type { SuitWireframe } from './suitWireframe';
  * altitude tapes, heading), suit status (armour, thrust, g), the arsenal,
  * target brackets with lock diamonds and lead pips, off-screen arrows,
  * a heading-up radar, incoming-missile warnings and JARVIS's voice as text.
+ * Coming in to the pad: its marker and range, then a landing scope (the
+ * suit's offset over the deck, its marks and drift), and the set-down's grade.
  */
 
 const CYAN = 'rgba(126, 232, 255, 0.92)';
@@ -26,6 +29,10 @@ const MONO = '"JetBrains Mono", ui-monospace, Menlo, monospace';
 const JARVIS = 'Michroma, "Eurostile", sans-serif';
 /** m/s → knots. */
 const KNOTS = 1.943844;
+/** Landing scope: the half-width it shows (m), the deck's radius (m). */
+const SCOPE_M = 8;
+const PAD_EDGE = 7;
+const GRADE_TEXT: Record<PadGrade, string> = { bullseye: 'BULLSEYE', centred: 'CENTRED', onPad: 'ON PAD' };
 
 interface Line {
   text: string;
@@ -51,6 +58,13 @@ export class Hud {
   /** How to call a wave, for the prompt under the radar (the touch overlay has a button). */
   waveKey = 'N';
   private killFlash = 0;
+  /** The landing pad's centre on its deck, if there's one to bring the suit in to. */
+  pad: THREE.Vector3 | null = null;
+  /** The last set-down on the pad, its age (s), best offset and bullseye run. */
+  private landing: { grade: PadGrade; offset: number; best: boolean; t: number } | null = null;
+  private bestOffset = Infinity;
+  private bullseyes = 0;
+  private scopeAlpha = 0;
   private hitMarker = 0;
   /** The suit's thrusters (0–1 each), for the helmet's suit diagram. */
   jets: { bootL: number; bootR: number; palmL: number; palmR: number } | null = null;
@@ -90,6 +104,14 @@ export class Hud {
     this.killFlash = 1;
   }
 
+  /** Set down on the pad, `offset` m from its centre. */
+  padLanding(grade: PadGrade, offset: number): void {
+    const best = offset < this.bestOffset;
+    this.bestOffset = Math.min(this.bestOffset, offset);
+    this.bullseyes = grade === 'bullseye' ? this.bullseyes + 1 : 0;
+    this.landing = { grade, offset, best: best && grade !== 'onPad', t: 0 };
+  }
+
   hit(): void {
     this.hitMarker = 1;
   }
@@ -123,6 +145,7 @@ export class Hud {
     this.drawLadder(g, cam, cx, cy, s);
     this.drawReticle(g, cx, cy, s);
     this.drawMarkers(g, cam, m, s);
+    this.drawPadMarker(g, cam, m, s);
     this.drawTargets(g, cam, m, combat, s);
     this.drawWarnings(g, cam, m, combat, s);
     // Head-mounted panels (they ride the sway in the helmet)
@@ -137,6 +160,8 @@ export class Hud {
     this.drawStatus(g, m, combat, s);
     this.drawWeapons(g, combat, s);
     this.drawRadar(g, cam, m, combat, s);
+    this.drawScope(g, dt, cam, m, s);
+    this.drawLanding(g, dt, s);
     this.drawLines(g, s);
     g.restore();
     g.globalAlpha = 1;
@@ -319,6 +344,169 @@ export class Hud {
       g.lineTo(nose.x + k, nose.y - k * 0.4);
       g.stroke();
     }
+  }
+
+  /** The pad out in the world: a marker on it with its range, while the suit's in the air. */
+  private drawPadMarker(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, m: FlightModel, s: number): void {
+    const pad = this.pad;
+    if (!pad || m.grounded) return;
+    const d = Math.hypot(m.pos.x - pad.x, m.pos.z - pad.z);
+    // (close in, the scope takes over)
+    if (d < 12 || d > 4000) return;
+    const p = this.project(pad, cam);
+    if (!p) return;
+    const a = THREE.MathUtils.smoothstep(d, 12, 30);
+    const k = 6 * s;
+    g.globalAlpha = this.alpha * a;
+    g.strokeStyle = CYAN;
+    g.lineWidth = 1.2;
+    g.beginPath();
+    g.moveTo(p.x, p.y - k);
+    g.lineTo(p.x + k, p.y);
+    g.lineTo(p.x, p.y + k);
+    g.lineTo(p.x - k, p.y);
+    g.closePath();
+    g.stroke();
+    this.text(g, 'PAD', p.x, p.y - k - 8 * s, 7 * s, CYAN, 'center', JARVIS);
+    this.text(g, d < 1000 ? `${Math.round(d)} m` : `${(d / 1000).toFixed(1)} km`, p.x, p.y + k + 9 * s, 9 * s, CYAN_DIM, 'center');
+    g.globalAlpha = this.alpha;
+  }
+
+  /**
+   * Landing scope under the reticle, close in over the pad: the deck seen
+   * from above, turned with the view (up is where the camera looks), its
+   * edge and centre marks, the suit's place over it and its drift.
+   */
+  private drawScope(g: CanvasRenderingContext2D, dt: number, cam: THREE.PerspectiveCamera, m: FlightModel, s: number): void {
+    const pad = this.pad;
+    let goal = 0;
+    let dx = 0;
+    let dz = 0;
+    let h = 0;
+    if (pad && !m.grounded) {
+      dx = m.pos.x - pad.x;
+      dz = m.pos.z - pad.z;
+      h = m.pos.y - m.hipHeight() - pad.y;
+      const d = Math.hypot(dx, dz);
+      goal = (1 - THREE.MathUtils.smoothstep(d, 18, 30)) * (1 - THREE.MathUtils.smoothstep(h, 45, 60)) * (h > -0.5 ? 1 : 0);
+    }
+    this.scopeAlpha += (goal - this.scopeAlpha) * (1 - Math.exp(-dt / 0.2));
+    if (this.scopeAlpha < 0.01 || !pad) return;
+    const cx = this.w / 2;
+    const cy = this.h / 2 + 112 * s;
+    const R = 38 * s;
+    const px = R / SCOPE_M;
+    // The view's heading: screen up is the camera's look, flattened
+    const f = cam.getWorldDirection(this._v);
+    const yaw = Math.atan2(f.x, f.z);
+    const toScope = (x: number, z: number): [number, number] => {
+      // right = f × up, so a point's across is its dot with (−fz, fx)
+      const fwd = x * Math.sin(yaw) + z * Math.cos(yaw);
+      const right = -x * Math.cos(yaw) + z * Math.sin(yaw);
+      return [cx + right * px, cy - fwd * px];
+    };
+    const held = m.padPull;
+    g.globalAlpha = this.alpha * this.scopeAlpha;
+    g.lineWidth = 1;
+    // Frame and the deck's marks
+    g.fillStyle = 'rgba(0, 18, 28, 0.35)';
+    g.beginPath();
+    g.arc(cx, cy, R + 4 * s, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = CYAN_FAINT;
+    g.beginPath();
+    g.arc(cx, cy, R + 4 * s, 0, Math.PI * 2);
+    g.stroke();
+    g.strokeStyle = CYAN_DIM;
+    g.beginPath();
+    g.arc(cx, cy, PAD_EDGE * px, 0, Math.PI * 2);
+    g.stroke();
+    g.strokeStyle = held > 0.5 ? CYAN : CYAN_DIM;
+    g.lineWidth = 1.2;
+    g.beginPath();
+    g.arc(cx, cy, CENTRED_R * px, 0, Math.PI * 2);
+    g.stroke();
+    g.strokeStyle = WHITE;
+    g.beginPath();
+    g.arc(cx, cy, BULLSEYE_R * px, 0, Math.PI * 2);
+    g.stroke();
+    for (let i = 0; i < 4; i++) {
+      const a = (i * Math.PI) / 2;
+      g.strokeStyle = CYAN_FAINT;
+      g.beginPath();
+      g.moveTo(cx + Math.cos(a) * (CENTRED_R + 0.6) * px, cy + Math.sin(a) * (CENTRED_R + 0.6) * px);
+      g.lineTo(cx + Math.cos(a) * (PAD_EDGE - 0.5) * px, cy + Math.sin(a) * (PAD_EDGE - 0.5) * px);
+      g.stroke();
+    }
+    // The suit over the deck, and where its drift takes it in a second
+    const off = Math.hypot(dx, dz);
+    const col = off <= BULLSEYE_R ? WHITE : off <= CENTRED_R ? CYAN : AMBER;
+    let [sx, sy] = toScope(dx, dz);
+    const [vx, vy] = toScope(dx + m.vel.x, dz + m.vel.z);
+    const out = Math.hypot(sx - cx, sy - cy);
+    if (out > R) {
+      sx = cx + ((sx - cx) * R) / out;
+      sy = cy + ((sy - cy) * R) / out;
+    }
+    g.strokeStyle = col;
+    g.lineWidth = 1.4;
+    if (Math.hypot(vx - sx, vy - sy) > 2 && out <= R) {
+      g.beginPath();
+      g.moveTo(sx, sy);
+      g.lineTo(cx + THREE.MathUtils.clamp(vx - cx, -R, R), cy + THREE.MathUtils.clamp(vy - cy, -R, R));
+      g.stroke();
+    }
+    g.fillStyle = col;
+    g.beginPath();
+    g.arc(sx, sy, 3.2 * s, 0, Math.PI * 2);
+    g.fill();
+    // Readouts: offset, height over the deck, and the capture
+    this.text(g, `${off.toFixed(1)} m`, cx - R - 10 * s, cy, 9 * s, col, 'right');
+    this.text(g, `${Math.max(0, h).toFixed(h < 10 ? 1 : 0)} ▾`, cx + R + 10 * s, cy, 9 * s, CYAN, 'left');
+    const label = held > 0.5 ? 'PAD · HOLD' : 'PAD';
+    this.text(g, label, cx, cy - R - 12 * s, 7 * s, held > 0.5 ? WHITE : CYAN_DIM, 'center', JARVIS);
+    if (held < 0.5 && off < 16) this.text(g, 'HANDS OFF TO HOLD', cx, cy + R + 13 * s, 6 * s, CYAN_FAINT, 'center', JARVIS);
+    g.globalAlpha = this.alpha;
+  }
+
+  /** The set-down's grade, a beat over the reticle. */
+  private drawLanding(g: CanvasRenderingContext2D, dt: number, s: number): void {
+    const l = this.landing;
+    if (!l) return;
+    l.t += dt;
+    if (l.t > 3.4) {
+      this.landing = null;
+      return;
+    }
+    const a = Math.min(1, l.t / 0.12) * (l.t > 2.6 ? 1 - (l.t - 2.6) / 0.8 : 1);
+    const cx = this.w / 2;
+    const cy = this.h / 2;
+    const col = l.grade === 'bullseye' ? WHITE : l.grade === 'centred' ? CYAN : CYAN_DIM;
+    g.globalAlpha = this.alpha * a;
+    // A ring thrown off the reticle, wider the better the landing
+    if (l.grade !== 'onPad' && l.t < 0.8) {
+      const u = l.t / 0.8;
+      g.strokeStyle = col;
+      g.lineWidth = 1.6;
+      g.globalAlpha = this.alpha * (1 - u);
+      g.beginPath();
+      g.arc(cx, cy, (15 + (l.grade === 'bullseye' ? 90 : 50) * (1 - Math.pow(1 - u, 3))) * s, 0, Math.PI * 2);
+      g.stroke();
+      g.globalAlpha = this.alpha * a;
+    }
+    // The word lands with a little overshoot, spaced wide
+    const pop = 1 + 0.25 * Math.exp(-l.t * 9) * Math.cos(l.t * 30);
+    const y = cy - 78 * s;
+    g.save();
+    g.translate(cx, y);
+    g.scale(pop, pop);
+    (g as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${4 * s}px`;
+    this.text(g, GRADE_TEXT[l.grade], 0, 0, (l.grade === 'onPad' ? 13 : 18) * s, col, 'center', JARVIS);
+    g.restore();
+    const run = l.grade === 'bullseye' && this.bullseyes > 1 ? `  ·  ×${this.bullseyes}` : '';
+    this.text(g, `${l.offset.toFixed(2)} m OFF CENTRE${run}`, cx, y + 20 * s, 9 * s, CYAN_DIM, 'center');
+    if (l.best && this.bestOffset < Infinity) this.text(g, 'BEST LANDING', cx, y + 34 * s, 7 * s, AMBER, 'center', JARVIS);
+    g.globalAlpha = this.alpha;
   }
 
   private drawLadder(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, cx: number, cy: number, s: number): void {

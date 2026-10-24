@@ -89,14 +89,35 @@ function relief(u: number, y: number): number {
   return lip + mass * smooth(-1, -8, y);
 }
 
-/** Height (frame y) of the rock top / face at a frame point, or −∞ off it. */
-export function cliffHeight(u: number, v: number): number {
+/**
+ * Height (frame y) of the rock top / face at a frame point as the mesh lies,
+ * or −∞ where it doesn't stand above the heightfield: toward the ends it
+ * sinks into the slope.
+ */
+export function cliffHeight(field: Heightfield, u: number, v: number): number {
   if (u < U0 || u > U1 || v < 8) return -Infinity;
-  const w = blend(u);
-  if (w < 0.6) return -Infinity;
   const a = crest(u);
-  if (v <= a) return 0;
-  return -(v - a) * steep(u);
+  const y = v <= a ? -0.35 * smooth(a - 4, a, v) : -(v - a) * steep(u);
+  const w = toWorld(u, v, _w);
+  const g = field.heightAt(w.x, w.y) - HOME_HEIGHT;
+  const top = THREE.MathUtils.lerp(g - 0.6, y, blend(u, y));
+  return top > g ? top : -Infinity;
+}
+
+const _l = new THREE.Vector2();
+const _w = new THREE.Vector2();
+/**
+ * Whether the rock stands above `ground` (world m) at a world point or
+ * within `reach` m of it: the heightfield under the bluff lies well below
+ * the rock, so anything grown there would be buried, or poke out of the face.
+ */
+export function rockOver(field: Heightfield, x: number, z: number, ground: number, reach: number): boolean {
+  const l = toLocal(x, z, _l);
+  const u = l.x;
+  const v = l.y;
+  for (const du of [-reach, 0, reach])
+    for (const dv of [-reach, 0, reach]) if (HOME_HEIGHT + cliffHeight(field, u + du, v + dv) > ground + 0.5) return true;
+  return false;
 }
 
 const ROCK_TOP = 12;

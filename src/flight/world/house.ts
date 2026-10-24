@@ -17,8 +17,8 @@ import { seeded, type GardenPlant } from './vegetation';
  * pool sits on a dry-stone bastion with a helical stair up to the terrace,
  * and a switchback stair runs down the face to a landing at the water.
  * Behind: the round entry court with its sculpture, and the drive winding
- * up into the hills. The landing pad sits on the lawn beside the house,
- * ringed in the reactor's blue.
+ * up into the hills. The landing pad on the lawn beside the house is its
+ * own piece (src/flight/world/landingPad.ts).
  *
  * Everything static is merged per material (a dozen draw calls);
  * furniture, mullions, rails and the small lights drop out beyond ~900 m.
@@ -30,6 +30,8 @@ import { seeded, type GardenPlant } from './vegetation';
 /** Where the suit stands (world xz) and the pad's height. */
 export const PAD = new THREE.Vector2(HOME.x, HOME.y + 14);
 export const PAD_Y = HOME_HEIGHT + 0.35;
+/** The pad deck's radius (m): the suit stands on it out to here. */
+export const PAD_R = 7;
 
 // ── Plan (house frame: x along the cliff, z out to sea, y up from the terrace) ──
 
@@ -126,15 +128,15 @@ const _l = new THREE.Vector2();
  * Tops of the built surfaces (pad deck, roofs, terraces, the rock of the
  * bluff) at a point, or −∞: the flight model lands on them like ground.
  */
-export function structureTop(x: number, z: number): number {
-  if (Math.hypot(x - PAD.x, z - PAD.y) < 7) return PAD_Y;
+export function structureTop(field: Heightfield, x: number, z: number): number {
+  if (Math.hypot(x - PAD.x, z - PAD.y) < PAD_R) return PAD_Y;
   const l = toLocal(x, z, _l);
   if (l.x < -100 || l.x > 180 || l.y < -40 || l.y > 140) return -Infinity;
   let top = -Infinity;
   for (const f of FOOTPRINTS) {
     if (f.top > top && f.test(l.x, l.y)) top = f.top;
   }
-  const rock = cliffHeight(l.x, l.y);
+  const rock = cliffHeight(field, l.x, l.y);
   return HOME_HEIGHT + Math.max(top, rock);
 }
 
@@ -385,7 +387,7 @@ export function buildHouse(field?: Heightfield): { group: THREE.Group; garden: G
   const ground = (x: number, z: number) => {
     const w = toWorld(x, z);
     const t = field ? field.heightAt(w.x, w.y) - HOME_HEIGHT : 0;
-    return Math.max(t, cliffHeight(x, z));
+    return field ? Math.max(t, cliffHeight(field, x, z)) : t;
   };
 
   // The bluff
@@ -938,24 +940,5 @@ export function buildHouse(field?: Heightfield): { group: THREE.Group; garden: G
 
   g.add(houseGroup);
 
-  // Landing pad
-  const dark = new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.6, metalness: 0.3 });
-  const ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.5, 1.6, 2.2) });
-  const padGroup = new THREE.Group();
-  const disc = new THREE.Mesh(new THREE.CylinderGeometry(7, 7.4, 0.7, 64), dark);
-  const ring = new THREE.Mesh(new THREE.RingGeometry(5.6, 5.85, 96).rotateX(-Math.PI / 2), ringMat);
-  ring.position.y = 0.36;
-  const inner = new THREE.Mesh(new THREE.RingGeometry(1.5, 1.62, 64).rotateX(-Math.PI / 2), ringMat);
-  inner.position.y = 0.36;
-  const ticks: THREE.BufferGeometry[] = [];
-  for (let i = 0; i < 24; i++) {
-    const a = (i / 24) * Math.PI * 2;
-    ticks.push(new THREE.PlaneGeometry(0.12, i % 6 === 0 ? 0.9 : 0.4).rotateX(-Math.PI / 2).rotateY(-a).translate(Math.sin(a) * 6.4, 0.361, Math.cos(a) * 6.4));
-  }
-  const tickMesh = new THREE.Mesh(mergeGeometries(ticks), ringMat);
-  padGroup.add(disc, ring, inner, tickMesh);
-  padGroup.position.set(PAD.x, PAD_Y - 0.35, PAD.y);
-  for (const m of [disc]) m.receiveShadow = true;
-  g.add(padGroup);
   return { group: g, garden };
 }

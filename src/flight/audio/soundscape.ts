@@ -128,6 +128,7 @@ const DEBOUNCE: Partial<Record<SimEvent['kind'], number>> = {
   landed: 0.4,
   touchdown: 0.4,
   heroLanding: 0.4,
+  padLanding: 0.4,
   splash: 0.15,
   boostStart: 0.3,
 };
@@ -289,6 +290,24 @@ export class Soundscape {
         break;
       case 'splash':
         if (at) this.splash(at, e.value ?? 5);
+        break;
+      case 'padCapture':
+        // The pad has the suit: one soft tick (nothing when it lets go)
+        if (e.value) A.play(SFX.lockTick, { ui: true, gain: 0.22, rate: 0.8 });
+        break;
+      case 'padLanding':
+        // The pad's clamps take the boots; the closer to the mark, the
+        // fuller the answer: the deck ringing under them, the HUD's chime
+        if (e.text === 'onPad') {
+          A.play(SFX.weaponLock, { at, gain: 0.3, ref: 6, delay: 0.06 });
+        } else if (e.text === 'centred') {
+          A.play(SFX.weaponLock, { at, gain: 0.55, ref: 6, delay: 0.06 });
+          A.play(SFX.killConfirm, { ui: true, gain: 0.2, rate: 0.85, delay: 0.18 });
+        } else {
+          A.play(SFX.weaponLock, { at, gain: 0.7, ref: 6, delay: 0.06 });
+          A.play(SFX.metalResonate, { at, gain: 0.4, ref: 8, delay: 0.1, duration: 2.2 });
+          A.play(SFX.killConfirm, { ui: true, gain: 0.32, delay: 0.16 });
+        }
         break;
       case 'sonicBoom':
         // DCS-style: silent in the helmet (the pilot flies ahead of his own

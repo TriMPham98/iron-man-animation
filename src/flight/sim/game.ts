@@ -5,7 +5,8 @@ import { Particles } from '../fx/particles';
 import { SonicBoomFx } from '../fx/sonicBoom';
 import { GVaporFx } from '../fx/gVapor';
 import { patchLogDepth } from '../render/depth';
-import { PAD } from '../world/house';
+import { PAD, PAD_R, PAD_Y } from '../world/house';
+import { gradeLanding } from '../world/landingPad';
 import { hazeAll } from '../render/haze';
 import { createEyeClip, eyeClipAll } from '../render/eyeClip';
 import type { World } from '../world/world';
@@ -61,6 +62,8 @@ export class Game {
   readonly sonic: SonicBoomFx;
   readonly gVapor: GVaporFx;
   private wasBoosting = false;
+  /** The pad capture is holding (with hysteresis, for the cue). */
+  private padHeld = false;
   private frameDt = 0;
   /** 0–1: how cleanly the air runs head-to-toe down the body (the vapour only forms then). */
   private cleanFlow = 1;
@@ -82,6 +85,7 @@ export class Game {
   ) {
     this.ground = groundProbe(world.field);
     this.model = new FlightModel(this.ground);
+    this.model.landingAid = { x: PAD.x, z: PAD.y, y: PAD_Y };
     this.rig = new CameraRig(camera);
     this.particles = new Particles(world.atmosphere.uniforms);
     this.sonic = new SonicBoomFx(world.atmosphere.uniforms);
@@ -182,6 +186,7 @@ export class Game {
       this.particles.burst('spark', strike.at, 14, 6, new THREE.Vector3(0, 1, 0), 1);
     }
     this.suit.update(dt);
+    this.world.pad.update(dt, this.model);
     // Shots leave the suit's hardware where it is drawn this frame
     if (this.controls) this.combat.afterPose();
     this.suit.boneWorldPoint('head', EYE_AT, this.head);
@@ -220,6 +225,9 @@ export class Game {
     this.wasGrounded = m.grounded;
     if (m.boosting !== this.wasBoosting) this.events.emit(m.boosting ? 'boostStart' : 'boostEnd', { at: m.pos });
     this.wasBoosting = m.boosting;
+    const held = m.padPull > (this.padHeld ? 0.3 : 0.7);
+    if (held !== this.padHeld) this.events.emit('padCapture', { at: m.pos, value: held ? 1 : 0 });
+    this.padHeld = held;
     if (this.sonic.crossed(m.speed / SPEED_OF_SOUND, this.frameDt)) {
       // The pilot still doesn't hear his own boom; the shock does jolt the
       // picture, the same kick as the first flight sim
@@ -275,6 +283,28 @@ export class Game {
       this.particles.burst('mist', below, 8, 3, new THREE.Vector3(0, 0.6, 0), 1, { scale: 2 });
     } else if (m.contact === 'touchdown') {
       this.particles.burst('dust', below, 10, 5, new THREE.Vector3(0, 0.2, 0), 1);
+    }
+    if (m.contact === 'landed' || m.contact === 'touchdown' || m.contact === 'heroLanding') this.gradePad(below);
+  }
+
+  /** Set down on the pad: graded on how near its centre the boots came down. */
+  private gradePad(below: THREE.Vector3): void {
+    const m = this.model;
+    const offset = Math.hypot(m.pos.x - PAD.x, m.pos.z - PAD.y);
+    if (offset >= PAD_R || Math.abs(below.y - 0.1 - PAD_Y) > 0.05) return;
+    const grade = gradeLanding(offset);
+    this.world.pad.landed(grade);
+    this.events.emit('padLanding', { at: m.pos, value: offset, text: grade });
+    if (grade === 'onPad') return;
+    // The boots' wash blown flat across the deck, out from the mark
+    const n = grade === 'bullseye' ? 14 : 8;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      this.particles.emit('dust', below, new THREE.Vector3(Math.cos(a) * 12, 0.2, Math.sin(a) * 12), { scale: 0.3, life: 0.4 });
+    }
+    if (grade === 'bullseye') {
+      this.rig.shake += 0.35;
+      this.particles.burst('spark', below, 10, 4, new THREE.Vector3(0, 1, 0), 1);
     }
   }
 }

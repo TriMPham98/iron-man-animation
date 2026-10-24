@@ -190,6 +190,18 @@ const GUIDE_ASTERN = 2.7;
 /** Above this, the air is too thin and the suit starts icing (m). */
 export const ICING_ALT = 9000;
 export const CEILING = 11500;
+/**
+ * Pad capture: hovering hands-off over a landing pad (no stick, throttle at
+ * idle), the hover computer holds the suit over its centre so a plain
+ * descent sets it down there. Reach across (m) and above the deck (m), and
+ * the hold's spring (1/s²), damping (1/s) and most it pushes (m/s²). Any
+ * horizontal stick lets go at once; it never touches the climb or descent.
+ */
+export const PAD_CAPTURE_R = 16;
+export const PAD_CAPTURE_H = 40;
+const PAD_HOLD_K = 5;
+const PAD_HOLD_D = 4.2;
+const PAD_HOLD_MAX = 10;
 
 const UP = new THREE.Vector3(0, 1, 0);
 const clamp = THREE.MathUtils.clamp;
@@ -209,6 +221,13 @@ export interface GroundProbe {
   /** True if the surface there is water. */
   isWater(x: number, z: number): boolean;
   normal(x: number, z: number, out: THREE.Vector3): THREE.Vector3;
+}
+
+/** A landing pad the hover computer can capture over: centre (x, z) and deck height y. */
+export interface LandingAid {
+  x: number;
+  z: number;
+  y: number;
 }
 
 export type ContactKind = 'none' | 'landed' | 'touchdown' | 'heroLanding' | 'splash' | 'footstep';
@@ -262,6 +281,10 @@ export class FlightModel {
   freefall = 0;
   /** 0–1: the palms firing against the travel (X), eased. */
   palmBrake = 0;
+  /** The pad the hover computer captures over, if there is one. */
+  landingAid: LandingAid | null = null;
+  /** 0–1: how firmly the pad capture is holding the hover over its centre. */
+  padPull = 0;
   /** Last contact this step, and its impact speed (m/s). */
   contact: ContactKind = 'none';
   impactSpeed = 0;
@@ -325,6 +348,7 @@ export class FlightModel {
     this.swingTurn = 0;
     this.leanPrev = 0;
     this.guideSide = 0;
+    this.padPull = 0;
     this.gait.attach(this.pos, heading, this.ground);
   }
 
@@ -660,6 +684,16 @@ export class FlightModel {
     if (input.brake) {
       hoverAcc.x *= BRAKE_SETTLE / 1.6;
       hoverAcc.z *= BRAKE_SETTLE / 1.6;
+    }
+    // Hands off over the pad: hold the hover over its centre
+    this.padPull += (this.padCapture(input, fl, carrying) - this.padPull) * approach(dt, 0.2);
+    const aid = this.landingAid;
+    if (aid && this.padPull > 1e-3) {
+      const ax = (aid.x - this.pos.x) * PAD_HOLD_K - this.vel.x * PAD_HOLD_D;
+      const az = (aid.z - this.pos.z) * PAD_HOLD_K - this.vel.z * PAD_HOLD_D;
+      const k = Math.min(1, PAD_HOLD_MAX / Math.max(1e-6, Math.hypot(ax, az)));
+      hoverAcc.x = THREE.MathUtils.lerp(hoverAcc.x, ax * k, this.padPull);
+      hoverAcc.z = THREE.MathUtils.lerp(hoverAcc.z, az * k, this.padPull);
     }
     hoverAcc.y = clamp(hoverAcc.y + GRAVITY, 0, hoverMax);
     // Well over hover speed (flaring out of flight) the boots only lean back
@@ -1034,6 +1068,7 @@ export class FlightModel {
     this.swingTurn = 0;
     this.palmBrake *= 1 - approach(dt, 0.12);
     this.freefall = 0;
+    this.padPull = 0;
     this.trimRoll *= 1 - approach(dt, 0.2);
     this.trimPitch *= 1 - approach(dt, 0.2);
     this.gLoad += (1 - this.gLoad) * approach(dt, 0.2);
@@ -1049,6 +1084,21 @@ export class FlightModel {
         this.impactSpeed = strike;
       }
     }
+  }
+
+  /** 0–1: how much the pad capture should hold this step (see {@link PAD_CAPTURE_R}). */
+  private padCapture(input: FlightInput, fl: number, carrying: boolean): number {
+    const aid = this.landingAid;
+    if (!aid || this.power < 0.5) return 0;
+    const handsOff =
+      Math.abs(input.forward) < 0.05 && Math.abs(input.lateral) < 0.05 && input.throttle <= 0 && !input.stance && !this.boosting && !carrying && this.speedCmd < 3;
+    if (!handsOff) return 0;
+    const d = Math.hypot(aid.x - this.pos.x, aid.z - this.pos.z);
+    const h = this.pos.y - this.hipHeight() - aid.y;
+    if (h < -0.5) return 0;
+    // (passing through quick it's not a landing: only a hover is caught)
+    const hv = Math.hypot(this.vel.x, this.vel.z);
+    return smooth(PAD_CAPTURE_R, PAD_CAPTURE_R * 0.6, d) * smooth(PAD_CAPTURE_H, PAD_CAPTURE_H * 0.7, h) * smooth(14, 8, hv) * (1 - fl);
   }
 
   private collide(input: FlightInput): void {

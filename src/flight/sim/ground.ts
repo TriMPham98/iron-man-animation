@@ -6,8 +6,8 @@ import type { GroundProbe } from './flightModel';
 /** The heightfield (and the house and pad on it) as the flight model, camera and FX see it. */
 export function groundProbe(field: Heightfield): GroundProbe {
   return {
-    surface: (x, z) => Math.max(field.surfaceAt(x, z), structureTop(x, z)),
-    isWater: (x, z) => field.heightAt(x, z) < 0 && structureTop(x, z) === -Infinity,
-    normal: (x, z, out: THREE.Vector3) => (structureTop(x, z) > field.surfaceAt(x, z) ? out.set(0, 1, 0) : field.normalAt(x, z, out)),
+    surface: (x, z) => Math.max(field.surfaceAt(x, z), structureTop(field, x, z)),
+    isWater: (x, z) => field.heightAt(x, z) < 0 && structureTop(field, x, z) === -Infinity,
+    normal: (x, z, out: THREE.Vector3) => (structureTop(field, x, z) > field.surfaceAt(x, z) ? out.set(0, 1, 0) : field.normalAt(x, z, out)),
   };
 }

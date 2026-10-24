@@ -5,6 +5,7 @@ import { Ocean } from './ocean';
 import { Terrain } from './terrain';
 import { Vegetation } from './vegetation';
 import { buildHouse } from './house';
+import { LandingPad } from './landingPad';
 import { GARDEN } from './housePlants';
 import { Clouds } from './clouds';
 import { hazeAll } from '../render/haze';
@@ -17,6 +18,7 @@ export class World {
   readonly ocean: Ocean;
   readonly vegetation: Vegetation;
   readonly clouds: Clouds;
+  readonly pad: LandingPad;
   /** 0–1: the eye is inside a cloud. */
   inCloud = 0;
   readonly group = new THREE.Group();
@@ -34,9 +36,11 @@ export class World {
     this.vegetation = new Vegetation(this.field, this.atmosphere.uniforms, renderer);
     const { group: house, garden } = buildHouse(this.field);
     hazeAll(house, this.atmosphere.uniforms);
+    this.pad = new LandingPad();
+    hazeAll(this.pad.group, this.atmosphere.uniforms);
     this.vegetation.addGarden(GARDEN, garden);
     this.clouds = new Clouds(this.atmosphere.uniforms);
-    this.group.add(this.terrain.group, this.ocean.mesh, this.vegetation.group, house, this.clouds.mesh);
+    this.group.add(this.terrain.group, this.ocean.mesh, this.vegetation.group, house, this.pad.group, this.clouds.mesh);
     this.group.name = 'world';
     scene.add(this.group);
   }

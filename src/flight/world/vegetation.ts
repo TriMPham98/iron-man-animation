@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { ATMOSPHERE_GLSL } from './atmosphere';
 import { FELL, Felling } from './felling';
 import { HOME, coastZ, type Heightfield } from './heightfield';
+import { rockOver } from './houseCliff';
 
 /**
  * The Malibu cover: chaparral and grey coastal sage on the dry slopes,
@@ -1107,6 +1108,8 @@ export class Vegetation {
       const h = F.heightAt(x, z);
       if (h < 2.5 || h > 1500) continue;
       if (homeD(x, z) < 90) continue;
+      // Nothing under (or growing out of) the house's rock
+      if (homeD(x, z) < 320 && rockOver(F, x, z, h, 8)) continue;
       F.normalAt(x, z, _n);
       const slope = 1 - _n.y;
       if (slope > 0.42) continue;
@@ -1172,6 +1175,7 @@ export class Vegetation {
       const z = (c.cz + rt()) * CELL;
       const h = F.heightAt(x, z);
       if (h < 4.5 || h > 1300 || Math.hypot(x - HOME.x, z - HOME.y) < 90) continue;
+      if (Math.hypot(x - HOME.x, z - HOME.y) < 320 && rockOver(F, x, z, h, 1)) continue;
       F.normalAt(x, z, _n);
       const slope = 1 - _n.y;
       if (slope > 0.5 || rt() > 1 - slope * 1.2) continue;

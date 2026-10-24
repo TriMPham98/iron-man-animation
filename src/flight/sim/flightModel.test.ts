@@ -763,4 +763,27 @@ describe('FlightModel', () => {
       }
     }
   });
+
+  it('sets down on the pad centre from a hands-off descent off to one side, and lets go on any stick', () => {
+    const land = (aid: boolean, lateral = 0) => {
+      const m = new FlightModel(flat());
+      if (aid) m.landingAid = { x: 0, z: 0, y: 0 };
+      m.pos.set(6, 14, -4);
+      m.vel.set(2, 0, 1.5);
+      m.grounded = false;
+      m.airT = 2;
+      let at: THREE.Vector3 | null = null;
+      run(m, 8, (i) => {
+        i.vertical = at ? 0 : -0.3;
+        i.lateral = lateral;
+        if (!at && m.contact !== 'none') at = m.pos.clone();
+      });
+      expect(at).not.toBeNull();
+      return Math.hypot(at!.x, at!.z);
+    };
+    expect(land(true)).toBeLessThan(0.5);
+    // Without a pad, or with the pilot strafing, it lands wherever it drifts
+    expect(land(false)).toBeGreaterThan(5);
+    expect(land(true, 0.5)).toBeGreaterThan(5);
+  });
 });
