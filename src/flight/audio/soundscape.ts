@@ -291,6 +291,13 @@ export class Soundscape {
       case 'splash':
         if (at) this.splash(at, e.value ?? 5);
         break;
+      case 'autoLand':
+        // Handed over: the HUD's lock and the boots trimming; handed back: a click
+        if (e.value) {
+          A.play(SFX.lockTone, { ui: true, gain: 0.25, duration: 0.35 });
+          A.play(SFX.servoWhir, { at: m.pos, gain: 0.35, ref: 6, delay: 0.1 });
+        } else A.play(SFX.lockTick, { ui: true, gain: 0.2, rate: 0.7 });
+        break;
       case 'padCapture':
         // The pad has the suit: one soft tick (nothing when it lets go)
         if (e.value) A.play(SFX.lockTick, { ui: true, gain: 0.22, rate: 0.8 });

@@ -57,6 +57,13 @@ export class Hud {
   minScale = 0;
   /** How to call a wave, for the prompt under the radar (the touch overlay has a button). */
   waveKey = 'N';
+  /** How to hand the suit to auto-land (the touch overlay's button says LAND). */
+  landKey = 'L';
+  /** Auto-land: on offer, flying, or neither (set by the app each frame). */
+  autoLand: 'ready' | 'active' | null = null;
+  private promptAlpha = 0;
+  private promptT = 0;
+  private promptState: 'ready' | 'active' = 'ready';
   private killFlash = 0;
   /** The landing pad's centre on its deck, if there's one to bring the suit in to. */
   pad: THREE.Vector3 | null = null;
@@ -162,6 +169,7 @@ export class Hud {
     this.drawRadar(g, cam, m, combat, s);
     this.drawScope(g, dt, cam, m, s);
     this.drawLanding(g, dt, s);
+    this.drawAutoLand(g, dt, m, s);
     this.drawLines(g, s);
     g.restore();
     g.globalAlpha = 1;
@@ -466,6 +474,92 @@ export class Hud {
     const label = held > 0.5 ? 'PAD · HOLD' : 'PAD';
     this.text(g, label, cx, cy - R - 12 * s, 7 * s, held > 0.5 ? WHITE : CYAN_DIM, 'center', JARVIS);
     if (held < 0.5 && off < 16) this.text(g, 'HANDS OFF TO HOLD', cx, cy + R + 13 * s, 6 * s, CYAN_FAINT, 'center', JARVIS);
+    g.globalAlpha = this.alpha;
+  }
+
+  /**
+   * The auto-land prompt under the scope: a key cap and AUTO-LAND while
+   * it's on offer (popping in when the pad comes in range), then, once
+   * handed over, what it's doing and how to take the suit back.
+   */
+  private drawAutoLand(g: CanvasRenderingContext2D, dt: number, m: FlightModel, s: number): void {
+    const state = this.autoLand;
+    if (state) {
+      if (state !== this.promptState || this.promptAlpha < 0.01) this.promptT = 0;
+      this.promptState = state;
+    }
+    this.promptT += dt;
+    this.promptAlpha += ((state ? 1 : 0) - this.promptAlpha) * (1 - Math.exp(-dt / (state ? 0.12 : 0.25)));
+    if (this.promptAlpha < 0.01) return;
+    const active = this.promptState === 'active';
+    const pad = this.pad;
+    const cx = this.w / 2;
+    const cy = this.h / 2 + 192 * s;
+    // Pops in with a little overshoot
+    const pop = 1 + 0.18 * Math.exp(-this.promptT * 10) * Math.cos(this.promptT * 26);
+    const padConnected = [...(navigator.getGamepads?.() ?? [])].some((p) => p && p.connected);
+    const key = this.landKey === 'L' && padConnected ? 'L · D-PAD ▼' : this.landKey;
+    const title = 'AUTO-LAND';
+    const sub = active ? `${key}  TAKE CONTROL` : 'PAD IN RANGE';
+    g.save();
+    g.translate(cx, cy);
+    g.scale(pop, pop);
+    g.globalAlpha = this.alpha * this.promptAlpha;
+    g.shadowBlur = 0;
+    g.font = `500 ${10 * s}px ${MONO}`;
+    const keyW = Math.max(18 * s, g.measureText(key).width + 12 * s);
+    const W = active ? 196 * s : keyW + 132 * s;
+    const H = 34 * s;
+    const x0 = -W / 2;
+    const y0 = -H / 2;
+    const accent = active ? CYAN : AMBER;
+    // Panel, with a breathing edge while it waits for the key
+    const breathe = active ? 0.9 : 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(this.promptT * 5));
+    g.fillStyle = 'rgba(0, 16, 26, 0.55)';
+    g.fillRect(x0, y0, W, H);
+    g.strokeStyle = accent;
+    g.globalAlpha = this.alpha * this.promptAlpha * breathe;
+    g.lineWidth = 1.2;
+    g.strokeRect(x0, y0, W, H);
+    g.globalAlpha = this.alpha * this.promptAlpha;
+    // Corner ticks
+    const t = 5 * s;
+    g.lineWidth = 2;
+    for (const [x, y, dx, dy] of [
+      [x0, y0, 1, 1],
+      [x0 + W, y0, -1, 1],
+      [x0, y0 + H, 1, -1],
+      [x0 + W, y0 + H, -1, -1],
+    ]) {
+      g.beginPath();
+      g.moveTo(x, y + dy * t);
+      g.lineTo(x, y);
+      g.lineTo(x + dx * t, y);
+      g.stroke();
+    }
+    if (active) {
+      // Working: a scanning bar along the foot, and the distance still to go
+      const u = (this.promptT * 0.8) % 1;
+      g.fillStyle = CYAN;
+      g.fillRect(x0 + u * (W - 30 * s), y0 + H - 2 * s, 30 * s, 2 * s);
+      const d = pad ? Math.hypot(m.pos.x - pad.x, m.pos.z - pad.z) : 0;
+      const h = pad ? Math.max(0, m.pos.y - m.hipHeight() - pad.y) : 0;
+      this.text(g, title, x0 + 10 * s, -5 * s, 9 * s, WHITE, 'left', JARVIS);
+      this.text(g, `${d.toFixed(d < 10 ? 1 : 0)} m  ▾${h.toFixed(h < 10 ? 1 : 0)}`, x0 + W - 10 * s, -5 * s, 9 * s, CYAN, 'right');
+      this.text(g, sub, x0 + 10 * s, 8 * s, 6.5 * s, CYAN_DIM, 'left', JARVIS);
+    } else {
+      // The key cap, then the offer
+      const kx = x0 + 9 * s;
+      g.fillStyle = 'rgba(255, 184, 77, 0.16)';
+      g.fillRect(kx, -10 * s, keyW, 20 * s);
+      g.strokeStyle = AMBER;
+      g.lineWidth = 1.2;
+      g.strokeRect(kx, -10 * s, keyW, 20 * s);
+      this.text(g, key, kx + keyW / 2, 0.5 * s, 10 * s, WHITE, 'center');
+      this.text(g, title, kx + keyW + 10 * s, -5 * s, 10 * s, WHITE, 'left', JARVIS);
+      this.text(g, sub, kx + keyW + 10 * s, 8 * s, 6.5 * s, AMBER, 'left', JARVIS);
+    }
+    g.restore();
     g.globalAlpha = this.alpha;
   }
 

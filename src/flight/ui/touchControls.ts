@@ -34,6 +34,7 @@ const CLUSTER: Button[] = [
 const TOP: Button[] = [
   { act: 'pause', label: 'II' },
   { act: 'camera', label: 'CAM' },
+  { act: 'land', label: 'LAND' },
 ];
 const ALL = new Map([...CLUSTER, ...TOP].map((b) => [b.act, b]));
 
@@ -89,6 +90,11 @@ export class TouchControls {
   /** The WAVE button shows only while a wave can be called. */
   setWaveReady(on: boolean): void {
     this.root.classList.toggle('tc-wave-ready', on);
+  }
+
+  /** The LAND button shows only while auto-land can take the suit down (or is, to hand it back). */
+  setLandReady(on: boolean): void {
+    this.root.classList.toggle('tc-land-ready', on);
   }
 
   setOpacity(v: number): void {

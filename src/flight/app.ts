@@ -403,6 +403,7 @@ export class FlightApp {
         this.input.touchMode = true;
         this.touch = new TouchControls(this.input, this.opts.canvas.parentElement ?? document.body, () => this.pauseMenu());
         this.hud.waveKey = 'WAVE';
+        this.hud.landKey = 'LAND';
         this.syncViewport(true);
       }
     }
@@ -480,10 +481,12 @@ export class FlightApp {
     if (this.touch) {
       this.touch.setActive(this.engaged && !this.paused && !director && !this.autopilot);
       this.touch.setWaveReady(game.combat.waveReady);
+      this.touch.setLandReady(game.autoLand || game.autoLandReady);
       hud.bottomInset = this.touch.bottomInset;
       hud.minScale = 0.55;
     }
     hud.jets = game.driver.outputs;
+    hud.autoLand = !this.engaged || director ? null : game.autoLand ? 'active' : game.autoLandReady ? 'ready' : null;
     hud.draw(dt, camera, game.model, game.combat, game.ground, game.rig.mode === 'helmet');
     this.sounds.update(dt, game.model, game.combat, camera, game.rig.mode === 'helmet', game.combat.weapons.unibeamOn);
     this.post.render(dt, this.lens);

@@ -202,6 +202,18 @@ export const PAD_CAPTURE_H = 40;
 const PAD_HOLD_K = 5;
 const PAD_HOLD_D = 4.2;
 const PAD_HOLD_MAX = 10;
+/**
+ * Auto-land (the pilot hands it over near the pad): the hover computer
+ * flies the suit in over the centre and sets it down. Fastest it crosses
+ * (m/s), the stop it plans for (m/s²), the glide slope down to the deck
+ * (m of height per m out), the clearance it keeps over anything on the
+ * way (m), and the sink it touches down at (m/s).
+ */
+const AUTOLAND_SPEED = 24;
+const AUTOLAND_DECEL = 5;
+const AUTOLAND_SLOPE = 0.8;
+const AUTOLAND_CLEAR = 6;
+const AUTOLAND_SINK = 0.7;
 
 const UP = new THREE.Vector3(0, 1, 0);
 const clamp = THREE.MathUtils.clamp;
@@ -285,6 +297,8 @@ export class FlightModel {
   landingAid: LandingAid | null = null;
   /** 0–1: how firmly the pad capture is holding the hover over its centre. */
   padPull = 0;
+  /** The hover computer is flying the suit down onto the landing aid's centre. */
+  autoLand = false;
   /** Last contact this step, and its impact speed (m/s). */
   contact: ContactKind = 'none';
   impactSpeed = 0;
@@ -349,6 +363,7 @@ export class FlightModel {
     this.leanPrev = 0;
     this.guideSide = 0;
     this.padPull = 0;
+    this.autoLand = false;
     this.gait.attach(this.pos, heading, this.ground);
   }
 
@@ -452,7 +467,7 @@ export class FlightModel {
     // (a fall is not flight, however fast it gets)
     // X drops it out of flight at once (not once the throttle has run
     // down): the body is the brakes' now, free to swing round onto the aim
-    const wantFlight = !falling && !input.brake && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.stance));
+    const wantFlight = !falling && !input.brake && !this.autoLand && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.stance));
     const flightGoal = wantFlight && !this.grounded ? 1 : 0;
     // Already quick (out of a flare), the body swings straight back over
     const riseTau = THREE.MathUtils.lerp(0.55, 0.3, smooth(40, 120, speed));
@@ -688,7 +703,10 @@ export class FlightModel {
     // Hands off over the pad: hold the hover over its centre
     this.padPull += (this.padCapture(input, fl, carrying) - this.padPull) * approach(dt, 0.2);
     const aid = this.landingAid;
-    if (aid && this.padPull > 1e-3) {
+    if (aid && this.autoLand) {
+      this.padPull = 1;
+      this.autoLandAcc(aid, hoverAcc);
+    } else if (aid && this.padPull > 1e-3) {
       const ax = (aid.x - this.pos.x) * PAD_HOLD_K - this.vel.x * PAD_HOLD_D;
       const az = (aid.z - this.pos.z) * PAD_HOLD_K - this.vel.z * PAD_HOLD_D;
       const k = Math.min(1, PAD_HOLD_MAX / Math.max(1e-6, Math.hypot(ax, az)));
@@ -1084,6 +1102,35 @@ export class FlightModel {
         this.impactSpeed = strike;
       }
     }
+  }
+
+  /**
+   * Auto-land guidance: across to the centre no faster than it can stop,
+   * down a glide slope to the deck (clear of anything on the way), and onto
+   * it only once over the mark, at a walking sink.
+   */
+  private autoLandAcc(aid: LandingAid, out: THREE.Vector3): void {
+    const ex = aid.x - this.pos.x;
+    const ez = aid.z - this.pos.z;
+    const d = Math.hypot(ex, ez);
+    const vGo = Math.min(AUTOLAND_SPEED, Math.sqrt(2 * AUTOLAND_DECEL * d), 1.5 * d);
+    const k = d > 1e-4 ? vGo / d : 0;
+    out.x = (ex * k - this.vel.x) * 2.5;
+    out.z = (ez * k - this.vel.z) * 2.5;
+    const h = this.pos.y - this.hipHeight() - aid.y;
+    // What's under it and coming up ahead (the house, the bluff), over the deck
+    const g = this.ground;
+    const ax = this.pos.x + this.vel.x * 2;
+    const az = this.pos.z + this.vel.z * 2;
+    const floor = Math.max(g.surface(this.pos.x, this.pos.z), g.surface(ax, az)) - aid.y;
+    const clear = d > 8 ? floor + AUTOLAND_CLEAR : -Infinity;
+    const hGoal = Math.max(Math.min(h, AUTOLAND_SLOPE * d), clear);
+    let vy = clamp((hGoal - h) * 1.2, -7, 5);
+    // Over the mark: keep sinking to the deck; low and still off it, wait
+    if (d < 1 && h > hGoal - 0.05) vy = Math.min(vy, -AUTOLAND_SINK);
+    if (h < 1.5 && d > 0.25) vy = Math.max(vy, 0);
+    vy = Math.max(vy, -Math.max(AUTOLAND_SINK, h * 0.8));
+    out.y = (vy - this.vel.y) * 3;
   }
 
   /** 0–1: how much the pad capture should hold this step (see {@link PAD_CAPTURE_R}). */

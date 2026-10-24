@@ -35,6 +35,9 @@ const NECK_FROM = [0, 1.36, -0.02] as const;
 const NECK_TO = [0, 1.52, -0.02] as const;
 const NECK_R = 0.115;
 const UP = new THREE.Vector3(0, 1, 0);
+/** Auto-land is on offer within this far of the pad (m) and this high over it (m). */
+export const AUTOLAND_RANGE = 150;
+export const AUTOLAND_CEILING = 120;
 
 /**
  * One flight: the suit, its flight model and body language, the camera,
@@ -64,6 +67,10 @@ export class Game {
   private wasBoosting = false;
   /** The pad capture is holding (with hysteresis, for the cue). */
   private padHeld = false;
+  /** The suit is flying itself down onto the pad (L: {@link toggleAutoLand}). */
+  autoLand = false;
+  /** The pilot has let go since auto-land took over (from then on a hand on the controls takes it back). */
+  private autoLandLetGo = false;
   private frameDt = 0;
   /** 0–1: how cleanly the air runs head-to-toe down the body (the vapour only forms then). */
   private cleanFlow = 1;
@@ -119,6 +126,7 @@ export class Game {
   reset(): void {
     // Heading toward the sun-side horizon over the water (south-west)
     const heading = Math.atan2(-0.55, 1);
+    this.stopAutoLand(false);
     this.model.placeOnGround(PAD.x, PAD.y, heading);
     this.rig.lookHeading(heading, -0.05);
   }
@@ -142,6 +150,48 @@ export class Game {
     }
     // Backing up in a hover: S with the throttle already closed
     i.forward = c.forward + (c.throttle < 0 && this.model.speedCmd < 1 ? -1 : 0);
+    if (c.pressed.has('KeyL')) this.toggleAutoLand();
+    // A hand on the stick, the throttle or the boost takes it back (once
+    // they've been let go: whatever was held as L went in doesn't count)
+    if (this.autoLand) {
+      const hands = Math.abs(c.lateral) > 0.3 || Math.abs(c.vertical) > 0.5 || Math.abs(c.forward) > 0.3 || Math.abs(c.throttle) > 0.3 || c.boost;
+      if (!hands) this.autoLandLetGo = true;
+      else if (this.autoLandLetGo) this.stopAutoLand(true);
+    }
+    if (this.autoLand) {
+      // (the brakes and palms take the speed off a fast arrival)
+      i.lateral = i.vertical = i.throttle = i.forward = 0;
+      i.boost = false;
+      i.brake = this.model.speed > 20;
+    }
+    this.model.autoLand = this.autoLand;
+  }
+
+  /** Auto-land can be handed the suit now: in the air, near the pad, systems up. */
+  get autoLandReady(): boolean {
+    const m = this.model;
+    if (this.autoLand || m.grounded || m.power < 0.5 || this.combat.down > 0) return false;
+    const h = m.pos.y - m.hipHeight() - PAD_Y;
+    return Math.hypot(m.pos.x - PAD.x, m.pos.z - PAD.y) < AUTOLAND_RANGE && h > -1 && h < AUTOLAND_CEILING;
+  }
+
+  /** Hand the suit to auto-land (or take it back). */
+  toggleAutoLand(): void {
+    if (this.autoLand) this.stopAutoLand(true);
+    else if (this.autoLandReady) {
+      this.autoLand = true;
+      this.autoLandLetGo = false;
+      this.events.emit('autoLand', { at: this.model.pos, value: 1 });
+      this.events.emit('jarvis', { text: 'Auto-land engaged. Bringing you in, sir.' });
+    }
+  }
+
+  private stopAutoLand(byPilot: boolean): void {
+    if (!this.autoLand) return;
+    this.autoLand = false;
+    this.model.autoLand = false;
+    this.events.emit('autoLand', { at: this.model.pos, value: 0 });
+    if (byPilot) this.events.emit('jarvis', { text: 'Auto-land off. You have control.' });
   }
 
   update(dt: number): void {
@@ -161,6 +211,8 @@ export class Game {
     if (steps >= 12) this.acc = 0;
 
     this.watchFlight();
+    // Down (or knocked out of the sky): it's done
+    if (this.autoLand && (this.model.grounded || this.combat.down > 0)) this.stopAutoLand(!this.model.grounded);
     const aim = this.rig.aim(this._aim);
     // Weapons sight from the pilot's eye; a planted camera isn't where he is
     const eye = this.rig.mode === 'flyby' || this.rig.mode === 'attract' ? this.head : this.rig.camera.position;

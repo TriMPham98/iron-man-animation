@@ -17,6 +17,8 @@ export type SimEventKind =
   | 'padLanding'
   /** The hover computer has (value 1) or has let go of (0) the pad. */
   | 'padCapture'
+  /** Auto-land engaged (value 1) or handed back / done (0). */
+  | 'autoLand'
   | 'sonicBoom'
   | 'boostStart'
   | 'boostEnd'

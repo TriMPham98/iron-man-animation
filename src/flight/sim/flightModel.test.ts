@@ -786,4 +786,38 @@ describe('FlightModel', () => {
     expect(land(false)).toBeGreaterThan(5);
     expect(land(true, 0.5)).toBeGreaterThan(5);
   });
+
+  it('auto-lands dead on the pad centre, gently, from a fast pass or a hover off to one side', () => {
+    const cases = [
+      { pos: [90, 45, -60], vel: [0, 0, 70], flight: true },
+      { pos: [-12, 20, 8], vel: [3, 0, 0], flight: false },
+      { pos: [30, 2, 0], vel: [0, 0, 0], flight: false },
+    ];
+    for (const c of cases) {
+      const m = new FlightModel(flat());
+      m.landingAid = { x: 0, z: 0, y: 0 };
+      m.pos.set(c.pos[0], c.pos[1], c.pos[2]);
+      m.vel.set(c.vel[0], c.vel[1], c.vel[2]);
+      m.grounded = false;
+      m.airT = 2;
+      if (c.flight) {
+        m.flightness = 1;
+        m.posture = 1.42;
+        m.speedCmd = 70;
+      }
+      m.autoLand = true;
+      const kinds: string[] = [];
+      let at: THREE.Vector3 | null = null;
+      run(m, 30, (i) => {
+        i.brake = m.speed > 20;
+        if (!at && m.contact !== 'none' && m.contact !== 'footstep') {
+          kinds.push(m.contact);
+          at = m.pos.clone();
+        }
+      });
+      expect(at).not.toBeNull();
+      expect(kinds).toEqual(['landed']);
+      expect(Math.hypot(at!.x, at!.z)).toBeLessThan(0.1);
+    }
+  });
 });

@@ -13,7 +13,8 @@ import { applyTouch, TouchState } from './touchMath';
  * (release to fire), Space unibeam, F flares, G forearm launchers.
  * On a pad: right stick aims, left stick strafes / rolls (and moves in a
  * hover), triggers are throttle and brake, A/X climb/descend, L3 boost,
- * RB repulsors, LB missiles, Y unibeam, B flares, R3 camera.
+ * RB repulsors, LB missiles, Y unibeam, B flares, R3 camera, D-pad down
+ * auto-land (near the pad; L on the keys).
  * On a touch screen the on-screen buttons hold the same key codes, the
  * stick is analog throttle and roll / strafe (its outer ring boosts, and
  * launches from the ground), a drag aims, and in a hover the look's pitch
@@ -192,6 +193,7 @@ export class Input {
     edge(9, 'Escape');
     edge(8, 'KeyH');
     edge(12, 'KeyN');
+    edge(13, 'KeyL');
     c.vertical = Math.max(-1, Math.min(1, c.vertical));
     c.throttle = Math.max(-1, Math.min(1, c.throttle));
   }
