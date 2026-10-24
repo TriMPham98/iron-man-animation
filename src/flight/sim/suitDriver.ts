@@ -413,7 +413,10 @@ export class SuitDriver {
     if (Math.abs(psi) < 2.7) this.aimSign = Math.sign(psi) || 1;
     else if (Math.sign(psi) !== this.aimSign) psi += Math.PI * 2 * this.aimSign;
     const elev = Math.asin(clamp(ab.y, -1, 1));
-    arms.aimSide = Math.abs(psi) > 0.6 ? Math.sign(psi) : 0;
+    // Any shot clearly off to one side goes from that side's hand: the far
+    // hand reached across in front of the visor (alternating hands only
+    // near dead ahead, or steeply up or down where the bearing means little)
+    arms.aimSide = Math.abs(psi) > 0.2 && Math.hypot(ab.x, ab.z) > 0.35 ? Math.sign(psi) : 0;
     const aimK = smooth01(Math.max(arms.aimL, arms.aimR)) * (1 - crouch);
 
     // ── Turns: the whole body ─────────────────────────────────────────
@@ -745,12 +748,16 @@ export class SuitDriver {
       // fold small and let the shoulder carry the recoil
       const elbow = 0.08 + 0.45 * punch;
       // Shoulders sit ~19 cm off the centre line: aim from there a little
-      // toward the centre so the shot converges. The forearm rolls palm-down
-      // on the way up and the wrist bends right back, so the flat hand
-      // stands fingers-up with the palm square to the shot; solved on the
-      // left arm (the right is its mirror image)
+      // toward the centre so the shot converges; a low or high shot swings
+      // out to the arm's own side instead (straight down the front, the
+      // flat hand pressed down under the chin read as chest compressions;
+      // straight up, both hands met over the visor, cross-eyed). The
+      // forearm rolls palm-down on the way up and the wrist bends right
+      // back, so the flat hand stands fingers-up with the palm square to
+      // the shot; solved on the left arm (the right is its mirror image)
       const tc = _tgt.copy(ab).applyQuaternion(chestQ);
-      const tgt = clampReach(tc.set(s * tc.x - 0.03, tc.y, tc.z).normalize());
+      const out = 0.5 * smooth01((Math.abs(tc.y) - 0.3) / 0.6);
+      const tgt = clampReach(tc.set(s * tc.x - 0.03 + out, tc.y, tc.z).normalize());
       const palm = suit.palms[0] ?? { at: [0.35, 0.96, 0.03], normal: [-0.94, -0.34, -0.04] };
       const [abd, flex, aimWrist] = aimArm(palm.at, palm.normal, tgt, AIM_TWIST, elbow, 1.4);
       // Flat, firm hand: fingers straight and together, a slight natural splay
@@ -899,7 +906,8 @@ export class SuitDriver {
     // After the springs: the legs are solved onto planted boots (walkCycle.ts)
     if (m.gait.weight > 1e-3) {
       let twist = 0;
-      ({ lift, pitch, roll, yaw, twist = 0 } = m.gait.pose(m.pos, bodyQ, limbs, { lift, pitch, roll, yaw }));
+      const free = [1 - smooth01(arms.aimL), 1 - smooth01(arms.aimR)] as const;
+      ({ lift, pitch, roll, yaw, twist = 0 } = m.gait.pose(m.pos, bodyQ, limbs, { lift, pitch, roll, yaw }, free));
       spineYaw += twist;
     }
 

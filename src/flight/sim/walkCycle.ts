@@ -528,9 +528,12 @@ export class Gait {
    * solved onto the boots, arms swung on top — given the root channels the
    * rest of the body language chose (`root`: hip yaw toward a shot, …);
    * returns the root to draw with (bob, lean and sway added). `pos` / `q`
-   * are the body's as drawn this frame.
+   * are the body's as drawn this frame. `armsFree` (left, right; 0–1) is
+   * how much of each arm the walk may have: an arm raised on a shot keeps
+   * its line (the swing and the elbow roll laid on top bent it back across
+   * the chest).
    */
-  pose(pos: THREE.Vector3, q: THREE.Quaternion, limbs: Required<LimbOffsets>, root: RootPose = ZERO_ROOT): RootPose {
+  pose(pos: THREE.Vector3, q: THREE.Quaternion, limbs: Required<LimbOffsets>, root: RootPose = ZERO_ROOT, armsFree: readonly [number, number] = [1, 1]): RootPose {
     const w = this.weight;
     if (w <= 1e-3) return root;
     const sf = this.swingFrac;
@@ -586,17 +589,19 @@ export class Gait {
     const swingA = 0.22 * this.active;
     const swL = Math.cos(armPh) * swingA;
     const swR = -swL;
-    limbs.armFlexL += swL * w;
-    limbs.armFlexR += swR * w;
+    const wL = w * armsFree[0];
+    const wR = w * armsFree[1];
+    limbs.armFlexL += swL * wL;
+    limbs.armFlexR += swR * wR;
     const elbow = 0.22 + 0.06 * this.active;
-    limbs.elbowL += (elbow + 0.3 * Math.max(0, -swL)) * w;
-    limbs.elbowR += (elbow + 0.3 * Math.max(0, -swR)) * w;
+    limbs.elbowL += (elbow + 0.3 * Math.max(0, -swL)) * wL;
+    limbs.elbowR += (elbow + 0.3 * Math.max(0, -swR)) * wR;
     // In from the flight pose's spread, but clear of the body: the suit's
     // arms ride out on the bulk of the armour
-    limbs.armL += -0.15 * w;
-    limbs.armR += -0.15 * w;
-    limbs.armTwistL += ARM_TWIST * w;
-    limbs.armTwistR += ARM_TWIST * w;
+    limbs.armL += -0.15 * wL;
+    limbs.armR += -0.15 * wR;
+    limbs.armTwistL += ARM_TWIST * wL;
+    limbs.armTwistR += ARM_TWIST * wR;
     return out;
   }
 
