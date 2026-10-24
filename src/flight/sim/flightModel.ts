@@ -87,9 +87,31 @@ const DRAG = 2.4e-4;
  */
 const WAVE_PEAK = 1.25;
 const WAVE_RESIDUE = 0.3;
-/** Body lift: how hard the velocity is pulled onto the nose (1/m), and the g cap. */
+/** Body lift: how hard the velocity is pulled onto the nose (1/m). */
 const LIFT = 0.028;
-const G_LIMIT = 13;
+/**
+ * The pull the Mk II will hold (g). No g-suit and no wing, just a pilot
+ * strapped into a prototype: about what a fighter pilot grunts through.
+ */
+export const G_LIMIT = 9;
+/** How fast the pull may build (g/s), as a fly-by-wire jet ramps it on for the pilot; it lets go three times as quick. */
+const G_ONSET = 7;
+/** Most it pushes (negative g) nose down. */
+const G_PUSH = 3;
+/**
+ * Bank-to-turn: with no wing to skid round on, the suit rolls its back (the
+ * lift) into the turn, then pulls. Steepest bank (rad), the pull it'll make
+ * before the roll gets there (g), and the flat skid the boots can vector (g).
+ */
+const BANK_MAX = 1.45;
+const ROLL_PULL_G = 2.5;
+const SKID_G = 2;
+/** Turn the bank is set for: rad/s of turn per radian the aim is off the travel. */
+const TURN_GAIN = 1;
+/** …and the climb it holds on the bank: per radian the aim is above or below the travel. */
+const CLIMB_GAIN = 3;
+/** Steepest angle of attack the body flies at before it just mushes (rad): its drag-due-to-lift tops out there. */
+const AOA_MAX = 0.35;
 /** Hover speed limits (m/s). */
 const HOVER_SPEED = 22;
 const CLIMB_SPEED = 16;
@@ -209,6 +231,10 @@ export class FlightModel {
   throttle = 0;
   /** Yaw acceleration (rad/s², flight frame, + = left): eased, never stepped. */
   yawAcc = 0;
+  /** Pitch rate the flight computer is asking for (rad/s, + = nose up): ramped, so the g builds. */
+  private pitchCmd = 0;
+  /** Diving onto an aim well below: rolled for a push, not a pull. */
+  private pushOver = false;
   /** Lateral thrust trim for the HUD and the palms (−1…1). */
   trimRoll = 0;
   trimPitch = 0;
@@ -278,6 +304,8 @@ export class FlightModel {
     this.q.setFromAxisAngle(UP, heading);
     this.omega.set(0, 0, 0);
     this.yawAcc = 0;
+    this.pitchCmd = 0;
+    this.pushOver = false;
     this.posture = 0;
     this.postureVel = 0;
     this.flightness = 0;
@@ -446,16 +474,91 @@ export class FlightModel {
       const rhoNow = Math.exp(-Math.max(0, this.pos.y) / 8500);
       aoa = Math.asin(clamp(need / (LIFT * rhoNow * liftK * speed * speed), -0.12, 0.12)) * smooth(0.2, 0.5, liftK);
     }
-    // Turn limits: quick in a hover; in flight the g limit caps the rate at speed
-    const gRate = (G_LIMIT * GRAVITY) / Math.max(60, speed);
-    // (mid-swing the body isn't flying the path: it whips round with it;
-    // in the stance it stands and turns on the spot like a hover)
+    // Bank for the turn, as a jet sets it: the lift has to carry the turn the
+    // aim asks for and hold the suit up against gravity, so the back rolls
+    // toward their sum — tan(bank) = turn pull / 1 g — and the pull does
+    // the turning, not a yaw skid. (A dive or a zoom is a pitch, no bank)
+    const bank = Math.atan2(l.y, u.y); // + = right wing low (left wing up)
+    let bankTurn = 0;
+    // (climbing or diving steeply there's little gravity across the path to
+    // bank against, and a bank that steep with the nose high rolled it past
+    // the vertical onto its back; mid-swing the carve banks it, not the wing)
+    let bankMax = THREE.MathUtils.lerp(BANK_MAX, 1.15, this.swing);
+    if (speed > 20) {
+      const vDir = this._v.copy(this.vel).divideScalar(speed);
+      const levelL = this._n.crossVectors(UP, vDir);
+      const flatK = levelL.length();
+      bankMax = Math.min(bankMax, THREE.MathUtils.lerp(BANK_MAX, 1.15, smooth(0.35, 0.75, Math.abs(vDir.y))));
+      if (flatK > 0.3) {
+        levelL.divideScalar(flatK);
+        // The aim off the travel, round (+ right) and up, as angles
+        const ahead = aim.dot(vDir);
+        const offRight = Math.atan2(-aim.dot(levelL), ahead);
+        const offUp = Math.atan2((aim.y - ahead * vDir.y) / flatK, ahead);
+        // (no steeper than the pull it's building to: banked past the g,
+        // the lift can't hold it up and it sinks into the turn)
+        const pulling = Math.min(G_LIMIT, Math.max(ROLL_PULL_G, (Math.abs(this.pitchCmd) * speed) / GRAVITY + 1.5)) * GRAVITY;
+        // (a nudge of a few degrees the boots' skid takes, wings level: banked
+        // for it, a roll-out a hair past the heading rolled hard the other way)
+        const skid = SKID_G * GRAVITY * 0.5;
+        const right = clamp(Math.sign(offRight) * Math.max(0, Math.abs(offRight) * TURN_GAIN * speed - skid), -pulling, pulling);
+        // The climb is held on the bank: sinking under the aim, it rolls
+        // a little out of the turn so the lift holds it up (the pull alone,
+        // square to the horizon, can't). A hair above the aim it doesn't roll
+        // in for it (a roll-out a hair past the heading and a hair high
+        // flicked over into a steep bank the other way); well round, the turn
+        // comes first and the climb waits (pulled straight up for an aim high
+        // behind, it went up and over onto its back)
+        const climbRoom = pulling * Math.max(0.2, 1 - Math.abs(offRight) / 0.9);
+        const upward = clamp(offUp * CLIMB_GAIN * speed, -0.3 * GRAVITY, climbRoom);
+        // Well below the aim and all but round onto it, it pushes over instead: the
+        // back rolls away from the turn so the push (G_PUSH at most) carries
+        // the nose down onto it. Banked into the turn, the aim sat off the
+        // wing where neither the pull nor the push reached it, and it hung
+        // (only all but round: it turns on the pull, never a push)
+        if (offUp < -0.35 && Math.abs(offRight) < 0.35) this.pushOver = true;
+        else if (offUp > -0.15 || Math.abs(offRight) > 0.6) this.pushOver = false;
+        if (this.pushOver) {
+          const down = Math.min(-offUp * CLIMB_GAIN * speed, (G_PUSH + 1) * GRAVITY) - GRAVITY * flatK;
+          bankTurn = Math.atan2(-right, Math.max(down, 0.3 * GRAVITY));
+        } else bankTurn = Math.atan2(right, GRAVITY * flatK + upward);
+      }
+    }
+    // Slow, there's too little air on the body to bank against: it turns on
+    // the boots' vectoring, banked over by the look like a hover; and
+    // mid-swing the carve throws it round the same way
+    const vectored = Math.max(this.swing, 1 - smooth(50, 100, speed));
+    bankTurn = THREE.MathUtils.lerp(bankTurn, clamp(-yawErr * 2.4, -1.25, 1.25), vectored);
+    const bankGoal = clamp(bankTurn * fl - this.swingTurn * 1.2, -bankMax, bankMax);
+    (this as any).dbg = [yawErr, pitchErr, bankGoal, aoa];
+    // Turn limits: quick in a hover; in flight the g limit caps the rate at
+    // speed, and until the back has rolled round into the turn it only pulls
+    // a couple of g — roll, then pull
     const flTurn = input.stance ? 0 : fl * (1 - this.swing);
+    const rolled = smooth(0.2, 0.7, Math.abs(bankGoal - bank) * flTurn);
+    const gRate = (THREE.MathUtils.lerp(G_LIMIT, ROLL_PULL_G, rolled) * GRAVITY) / Math.max(60, speed);
     const maxPitch = THREE.MathUtils.lerp(2.6, Math.min(2.4, gRate), flTurn);
-    const maxYaw = THREE.MathUtils.lerp(3.2, Math.min(1.6, gRate * 0.8), flTurn);
+    const minPitch = THREE.MathUtils.lerp(2.6, Math.min(2.4, (G_PUSH * GRAVITY) / Math.max(60, speed)), flTurn);
+    const skidYaw = THREE.MathUtils.lerp(SKID_G, G_LIMIT * 0.8, vectored);
+    const maxYaw = THREE.MathUtils.lerp(3.2, Math.min(1.6, (skidYaw * GRAVITY) / Math.max(60, speed)), flTurn);
     // (in the stance the body stands upright whatever the aim: the beam
     // swings, not the suit)
-    const wantPitch = input.stance ? 0 : clamp((pitchErr + aoa) * 5.5, -maxPitch, maxPitch) * THREE.MathUtils.lerp(0.25, 1, fl);
+    // The pull builds at the onset limit, not on the first frame: a
+    // flight-path turn of rate ω pulls v·ω, so the pitch rate ramps at
+    // G_ONSET·g / v (quicker letting go; a hover's not limited). Coming up
+    // on the aim it lets go in time to stop on it (√(2·a·err), as the yaw):
+    // still pulling hard as it got there, it ran past and zoomed
+    // (slow, the nose is only pointing the boots — the body's not pulling
+    // on the air — so it swings round as a hover's would)
+    const onset = THREE.MathUtils.lerp(40, (G_ONSET * GRAVITY) / Math.max(60, speed), flTurn * (1 - vectored));
+    const pitchStop = Math.sqrt(2 * onset * 3 * 0.75 * Math.abs(pitchErr + aoa));
+    const pitchGoal = input.stance
+      ? 0
+      : clamp((pitchErr + aoa) * 5.5, -Math.min(minPitch, pitchStop), Math.min(maxPitch, pitchStop)) * THREE.MathUtils.lerp(0.25, 1, fl);
+    const loading = Math.abs(pitchGoal) > Math.abs(this.pitchCmd) && pitchGoal * this.pitchCmd >= 0;
+    const ramp = onset * (loading ? 1 : 3) * dt;
+    this.pitchCmd += clamp(pitchGoal - this.pitchCmd, -ramp, ramp);
+    const wantPitch = this.pitchCmd;
     // Yaw is flown like a body with inertia, not a rate dial: the suit
     // builds into a turn over ~¼ s (the boots vector, then it swings),
     // carries it, and brakes smoothly onto the heading — a time-optimal
@@ -467,7 +570,6 @@ export class FlightModel {
     const yawAccGoal = clamp((wantYaw - this.omega.y) / 0.07, -yawAccMax, yawAccMax);
     this.yawAcc += (yawAccGoal - this.yawAcc) * approach(dt, YAW_EASE);
     // Bank: into the turn in flight (coordinated), level in a hover; A/D roll
-    const bank = Math.atan2(l.y, u.y); // + = right wing low (left wing up)
     const nearVertical = Math.abs(f.y) > 0.93;
     let wantRoll: number;
     if (input.stance) {
@@ -481,7 +583,6 @@ export class FlightModel {
       wantRoll = 0;
     } else {
       // (swinging the speed round, it banks hard into the carve)
-      const bankGoal = clamp(-yawErr * 2.4 * fl - this.swingTurn * 1.2, -1.25, 1.25);
       if (Math.abs(bank) > 2.4) {
         // Inverted: the bank angle flips ±π frame to frame — keep rolling the
         // way we already are rather than dithering on the seam
@@ -721,8 +822,11 @@ export class FlightModel {
       const ll = lift.length();
       if (ll > gCap) lift.multiplyScalar(gCap / ll);
       acc.add(lift);
-      // Induced drag: turning costs energy
-      acc.addScaledVector(this.vel, -(Math.min(ll, gCap) * 0.045) / Math.max(speed, 1));
+      // Induced drag: the body's push on the air tilts back with the angle
+      // it meets it at (L·tan α), so a hard pull slow, nose well up, mushes
+      // and bleeds; quick, the same g barely costs (a floor for the flaps)
+      const alpha = Math.min(AOA_MAX, Math.acos(clamp(this.vel.dot(fNow) / speed, -1, 1)));
+      acc.addScaledVector(this.vel, -(Math.min(ll, gCap) * Math.max(0.045, Math.tan(alpha))) / Math.max(speed, 1));
     }
     // Strafe / climb trim from the palms in flight
     if (fl > 0.5) acc.addScaledVector(UP, Math.max(0, input.vertical) * 6 * fl);
