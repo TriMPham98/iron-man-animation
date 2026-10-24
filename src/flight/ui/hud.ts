@@ -62,6 +62,9 @@ export class Hud {
   landKey = 'L';
   /** Auto-land: on offer, flying, or neither (set by the app each frame). */
   autoLand: 'ready' | 'active' | null = null;
+  /** TEMP: on the ground and free to lift off (set by the app each frame). */
+  takeoff = false;
+  private takeoffAlpha = 0;
   private promptAlpha = 0;
   private promptT = 0;
   private promptState: 'ready' | 'active' = 'ready';
@@ -158,6 +161,7 @@ export class Hud {
     this.drawRadar(g, cam, m, combat, s);
     this.drawScope(g, dt, cam, m, s);
     this.drawAutoLand(g, dt, m, s);
+    this.drawTakeoff(g, dt, s);
     this.drawLines(g, s);
     g.restore();
     g.globalAlpha = 1;
@@ -600,6 +604,39 @@ export class Hud {
       this.text(g, title, kx + keyW + 10 * s, -5 * s, 10 * s, WHITE, 'left', JARVIS);
       this.text(g, sub, kx + keyW + 10 * s, 8 * s, 6.5 * s, AMBER, 'left', JARVIS);
     }
+    g.restore();
+    g.globalAlpha = this.alpha;
+  }
+
+  /** TEMP: a key cap and TAKE OFF under the scope while the suit stands on the ground. */
+  private drawTakeoff(g: CanvasRenderingContext2D, dt: number, s: number): void {
+    this.takeoffAlpha += ((this.takeoff ? 1 : 0) - this.takeoffAlpha) * (1 - Math.exp(-dt / (this.takeoff ? 0.12 : 0.25)));
+    if (this.takeoffAlpha < 0.01) return;
+    const padConnected = [...(navigator.getGamepads?.() ?? [])].some((p) => p && p.connected);
+    const key = padConnected ? 'E · Ⓐ' : 'E';
+    g.save();
+    g.translate(this.w / 2, this.h / 2 + 192 * s);
+    g.globalAlpha = this.alpha * this.takeoffAlpha;
+    g.shadowBlur = 0;
+    g.font = `500 ${10 * s}px ${MONO}`;
+    const keyW = Math.max(18 * s, g.measureText(key).width + 12 * s);
+    const W = keyW + 96 * s;
+    const H = 34 * s;
+    const x0 = -W / 2;
+    g.fillStyle = 'rgba(0, 16, 26, 0.55)';
+    g.fillRect(x0, -H / 2, W, H);
+    g.strokeStyle = CYAN;
+    g.globalAlpha = this.alpha * this.takeoffAlpha * (0.55 + 0.45 * (0.5 + 0.5 * Math.sin(this.time * 5)));
+    g.lineWidth = 1.2;
+    g.strokeRect(x0, -H / 2, W, H);
+    g.globalAlpha = this.alpha * this.takeoffAlpha;
+    const kx = x0 + 9 * s;
+    g.fillStyle = 'rgba(126, 232, 255, 0.14)';
+    g.fillRect(kx, -10 * s, keyW, 20 * s);
+    g.strokeRect(kx, -10 * s, keyW, 20 * s);
+    this.text(g, key, kx + keyW / 2, 0.5 * s, 10 * s, WHITE, 'center');
+    this.text(g, 'TAKE OFF', kx + keyW + 10 * s, -5 * s, 10 * s, WHITE, 'left', JARVIS);
+    this.text(g, 'HOLD TO CLIMB', kx + keyW + 10 * s, 8 * s, 6.5 * s, CYAN_DIM, 'left', JARVIS);
     g.restore();
     g.globalAlpha = this.alpha;
   }
