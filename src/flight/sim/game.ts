@@ -137,11 +137,13 @@ export class Game {
     // Boosting home under auto-land, the look swings round after the travel,
     // so the chase stays behind the suit through the turn and the way in
     // (and the hover at the end faces the pad, not back along the pass)
+    // On the run-in the suit turns to face the pad, and the look follows it round
     const m = this.model;
-    if (this.autoLand && m.homing && Math.hypot(m.vel.x, m.vel.z) > 5) {
+    const homing = m.homing && Math.hypot(m.vel.x, m.vel.z) > 5;
+    if (this.autoLand && (homing || !m.homing)) {
       const f = this.rig.aim(this._aim);
-      const off = Math.atan2(m.vel.x, m.vel.z) - Math.atan2(f.x, f.z);
-      this.rig.turn(Math.atan2(Math.sin(off), Math.cos(off)) * (1 - Math.exp(-this.frameDt / 0.5)), 0);
+      const off = (homing ? Math.atan2(m.vel.x, m.vel.z) : m.heading) - Math.atan2(f.x, f.z);
+      this.rig.turn(Math.atan2(Math.sin(off), Math.cos(off)) * (1 - Math.exp(-this.frameDt / (homing ? 0.5 : 0.8))), 0);
     }
     this.rig.zoom = THREE.MathUtils.clamp(this.rig.zoom + c.zoom * 0.08, 0.6, 2.2);
     const i = this.input;

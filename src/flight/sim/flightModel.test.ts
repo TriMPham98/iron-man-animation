@@ -829,6 +829,36 @@ describe('FlightModel', () => {
     }
   });
 
+  it('auto-land turns the suit to face the pad, and holds that heading over the mark', () => {
+    const m = new FlightModel(flat());
+    m.landingAid = { x: 0, z: 0, y: 0 };
+    m.pos.set(40, 20, 30);
+    m.grounded = false;
+    m.airT = 2;
+    // Facing straight away from the pad, the pilot looking off to the side
+    m.q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(40, 30));
+    m.autoLand = true;
+    const input = EMPTY_INPUT();
+    input.aim.set(0, 0.3, -1).normalize();
+    let worst = 0;
+    let t = 0;
+    for (; t < 30 && !m.grounded; t += 1 / 120) {
+      m.step(1 / 120, input);
+      const d = Math.hypot(m.pos.x, m.pos.z);
+      if (t > 3 && d > 4) {
+        const off = Math.atan2(-m.pos.x, -m.pos.z) - m.heading;
+        worst = Math.max(worst, Math.abs(Math.atan2(Math.sin(off), Math.cos(off))));
+      }
+    }
+    expect(m.grounded).toBe(true);
+    expect(worst).toBeLessThan(0.1);
+    // (down on the heading it came in on, not spun round over the centre)
+    const off = Math.atan2(-40, -30) - m.heading;
+    expect(Math.abs(Math.atan2(Math.sin(off), Math.cos(off)))).toBeLessThan(0.1);
+    // (and the pilot's own look is left alone)
+    expect(input.aim.z).toBeLessThan(-0.9);
+  });
+
   it('auto-land boosts back round from a supersonic pass instead of braking far out and crawling home', () => {
     const pass = (speed: number) => {
       const m = new FlightModel(flat());

@@ -243,6 +243,8 @@ const AUTOLAND_SLIP = 0.03;
 const AUTOLAND_LEAN = 6;
 /** Least lift it keeps on the way down (× g): on next to none, the lean swung wild on every touch across. */
 const AUTOLAND_LIFT = 0.5;
+/** Auto-land turns the suit to face the pad while it's further off the centre than this (m); closer, it holds the heading it came in on. */
+const AUTOLAND_FACE_R = 3;
 /**
  * Auto-land's boosted return: handed the suit on a fast pass that would
  * carry it further than {@link HOME_R} (m) out before it stopped, it doesn't
@@ -381,6 +383,9 @@ export class FlightModel {
   homing = false;
   /** The pilot's input as auto-land's boosted leg flies it. */
   private readonly homeIn = EMPTY_INPUT();
+  /** The pilot's input as auto-land's run-in flies it, and the heading it faces the pad on (rad). */
+  private readonly landIn = EMPTY_INPUT();
+  private landFace = 0;
   /** The line the body leans to under auto-land, and how fast it's swinging (see {@link leanLine}). */
   private readonly lean = new THREE.Vector3(0, 1, 0);
   private readonly leanVel = new THREE.Vector3();
@@ -527,6 +532,7 @@ export class FlightModel {
     this.airT += dt;
     input = this.homeInput(input);
     const landing = this.autoLand && !this.homing;
+    if (landing) input = this.faceInput(input);
     if (!input.boost) this.boostLatch = false;
     const falling = input.vertical < FALL_STICK && this.power > 0.5;
     this.freefall += ((falling ? 1 : 0) - this.freefall) * approach(dt, falling ? 0.25 : 0.4);
@@ -1301,6 +1307,25 @@ export class FlightModel {
     i.boost = true;
     i.brake = i.stance = false;
     i.lateral = i.forward = i.vertical = i.throttle = 0;
+    return i;
+  }
+
+  /**
+   * Auto-land's run-in faces the pad: the body turns to look at the centre
+   * (level, whichever way the pilot's looking), and once it's over the mark
+   * it holds the heading it came in on rather than spinning on the spot.
+   */
+  private faceInput(input: FlightInput): FlightInput {
+    const aid = this.landingAid;
+    if (!aid) return input;
+    const ex = aid.x - this.pos.x;
+    const ez = aid.z - this.pos.z;
+    if (!this.landOn) this.landFace = this.heading;
+    if (Math.hypot(ex, ez) > AUTOLAND_FACE_R) this.landFace = Math.atan2(ex, ez);
+    const i = this.landIn;
+    const aim = i.aim;
+    Object.assign(i, input, { aim });
+    aim.set(Math.sin(this.landFace), 0, Math.cos(this.landFace));
     return i;
   }
 
