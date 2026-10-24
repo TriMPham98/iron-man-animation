@@ -183,6 +183,16 @@ const ALBEDO = /* glsl */ `
   float rockK = smoothstep(0.32, 0.56, slope + (grain - 0.5) * 0.16 + slopeDetail * 0.12);
   vec3 col = mix(veg, rock, rockK);
 
+  // The drive's verge: compacted gravel off the curb, then a cleared strip
+  // of short dry grass before the cover closes in
+  vec4 bed = roadBed(xz);
+  if (bed.z < 30.0) {
+    float d = bed.z + (grain - 0.5) * 0.9 + (fine - 0.5) * 1.4;
+    vec3 gravel = mix(vec3(0.34, 0.3, 0.24), vec3(0.46, 0.4, 0.31), grain) * (0.9 + 0.2 * fine);
+    col = mix(col, mix(grass, vec3(0.5, 0.43, 0.29), 0.45), smoothstep(11.0, 8.5, d) * 0.7);
+    col = mix(col, gravel, smoothstep(6.4, 5.3, d));
+  }
+
   // Beach: pale sand, darker and glossy where the swash wets it
   vec3 sand = mix(vec3(0.52, 0.43, 0.31), vec3(0.62, 0.53, 0.39), grain);
   float beach = smoothstep(4.5 + mid * 3.0, 1.5, hgt) * (1.0 - smoothstep(0.25, 0.45, slope));

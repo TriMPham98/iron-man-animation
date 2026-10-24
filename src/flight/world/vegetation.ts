@@ -1108,6 +1108,8 @@ export class Vegetation {
       const h = F.heightAt(x, z);
       if (h < 2.5 || h > 1500) continue;
       if (homeD(x, z) < 90) continue;
+      // The drive and its verges are kept clear
+      if (F.roadDistance(x, z) < 11) continue;
       // Nothing under (or growing out of) the house's rock
       if (homeD(x, z) < 320 && rockOver(F, x, z, h, 8)) continue;
       F.normalAt(x, z, _n);
@@ -1176,6 +1178,7 @@ export class Vegetation {
       const h = F.heightAt(x, z);
       if (h < 4.5 || h > 1300 || Math.hypot(x - HOME.x, z - HOME.y) < 90) continue;
       if (Math.hypot(x - HOME.x, z - HOME.y) < 320 && rockOver(F, x, z, h, 1)) continue;
+      if (F.roadDistance(x, z) < 7) continue;
       F.normalAt(x, z, _n);
       const slope = 1 - _n.y;
       if (slope > 0.5 || rt() > 1 - slope * 1.2) continue;

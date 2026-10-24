@@ -217,10 +217,22 @@ float terrainDetail(vec2 xz) {
   return texture2D(uDetail, xz / uDetailSpan).r + 0.45 * texture2D(uDetail, xz / (uDetailSpan * 0.37) + 0.31).r;
 }
 float terrainGraded(vec2 xz) { return smoothstep(45.0, 140.0, length(xz - uHome)); }
+// The drive's bed: (weight, weight × graded height, distance across, 0) on
+// a fine grid over the drive's box, zero outside it
+uniform sampler2D uRoad;
+uniform vec4 uRoadBox; // x0, z0, 1 / width, 1 / depth
+vec4 roadBed(vec2 xz) {
+  vec2 uv = (xz - uRoadBox.xy) * uRoadBox.zw;
+  if (uv.x <= 0.0 || uv.y <= 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return vec4(0.0, 0.0, 99.0, 0.0);
+  return texture2D(uRoad, uv);
+}
 float terrainHeight(vec2 xz) {
   float b = terrainBase(xz);
   // The house terrace is graded smooth
-  return b + terrainDetail(xz) * detailAmp(b) * terrainGraded(xz);
+  float h = b + terrainDetail(xz) * detailAmp(b) * terrainGraded(xz);
+  // Cut and fill under the drive
+  vec4 r = roadBed(xz);
+  return h * (1.0 - r.x) + r.y;
 }
 // Surface normal from the baked base normals and the detail gradients:
 // three texture reads instead of two dozen
@@ -229,7 +241,19 @@ vec3 terrainNormal(vec2 xz, float h, out float slopeDetail) {
   vec2 g = -nb.xz / max(nb.y, 0.05);
   vec2 gd = texture2D(uDetailGrad, xz / uDetailSpan).rg + (0.45 / 0.37) * texture2D(uDetailGrad, xz / (uDetailSpan * 0.37) + 0.31).rg;
   slopeDetail = length(gd);
-  g += gd * detailAmp(h) * terrainGraded(xz);
+  float graded = terrainGraded(xz);
+  g += gd * detailAmp(h) * graded;
+  // The drive's cuts and embankments: d/dx of h·(1 − w) + w·H
+  vec4 r = roadBed(xz);
+  if (r.x > 0.0) {
+    const float e = 0.5;
+    vec4 rx = roadBed(xz + vec2(e, 0.0));
+    vec4 rz = roadBed(xz + vec2(0.0, e));
+    float b = terrainBase(xz);
+    float raw = b + terrainDetail(xz) * detailAmp(b) * graded;
+    g = g * (1.0 - r.x) + (vec2(rx.y - r.y, rz.y - r.y) - raw * vec2(rx.x - r.x, rz.x - r.x)) / e;
+    slopeDetail *= 1.0 - r.x;
+  }
   return normalize(vec3(-g.x, 1.0, -g.y));
 }
 `;
@@ -312,7 +336,26 @@ function bilinear(data: Float32Array, n: number, u: number, v: number, wrap: boo
   return a + (b - a) * tx + (c - a) * ty + (a - b - c + d) * tx * ty;
 }
 
+/**
+ * A graded bed (the drive's): RGBA per texel over an axis-aligned box —
+ * blend weight, weight × bed height, distance across the road (m), unused.
+ */
+export interface RoadGrade {
+  x0: number;
+  z0: number;
+  /** Texels across (x) and down (z), and their size (m). */
+  nx: number;
+  nz: number;
+  texel: number;
+  data: Float32Array;
+  texture: THREE.Texture;
+}
+
+const NO_ROAD = new THREE.DataTexture(new Float32Array([0, 0, 99, 0]), 1, 1, THREE.RGBAFormat, THREE.FloatType);
+NO_ROAD.needsUpdate = true;
+
 export class Heightfield {
+  private road: RoadGrade | null = null;
   readonly heightTex: THREE.Texture;
   readonly bakeTex: THREE.Texture;
   readonly detailTex: THREE.DataTexture;
@@ -351,7 +394,45 @@ export class Heightfield {
       uDetailSpan: { value: DETAIL_SPAN },
       uHome: { value: HOME },
       uHeightRes: { value: HEIGHT_RES },
+      uRoad: { value: NO_ROAD },
+      uRoadBox: { value: new THREE.Vector4(0, 0, 0, 0) },
     };
+  }
+
+  /** Cut the drive's bed into the ground, here and in every terrain shader. */
+  grade(road: RoadGrade): void {
+    this.road = road;
+    this.uniforms.uRoad.value = road.texture;
+    (this.uniforms.uRoadBox.value as THREE.Vector4).set(road.x0, road.z0, 1 / (road.nx * road.texel), 1 / (road.nz * road.texel));
+  }
+
+  /** A channel of the road bed at a world point (bilinear, as the GPU reads it), or `outside`. */
+  private roadAt(x: number, z: number, c: number, outside: number): number {
+    const r = this.road;
+    if (!r) return outside;
+    const u = (x - r.x0) / r.texel;
+    const v = (z - r.z0) / r.texel;
+    if (u <= 0 || v <= 0 || u >= r.nx || v >= r.nz) return outside;
+    const tx = Math.min(r.nx - 1, Math.max(0, u - 0.5));
+    const ty = Math.min(r.nz - 1, Math.max(0, v - 0.5));
+    const x0 = Math.floor(tx);
+    const y0 = Math.floor(ty);
+    const x1 = Math.min(r.nx - 1, x0 + 1);
+    const y1 = Math.min(r.nz - 1, y0 + 1);
+    const fx = tx - x0;
+    const fy = ty - y0;
+    const d = r.data;
+    const a = d[(y0 * r.nx + x0) * 4 + c];
+    const b = d[(y0 * r.nx + x1) * 4 + c];
+    const cc = d[(y1 * r.nx + x0) * 4 + c];
+    const dd = d[(y1 * r.nx + x1) * 4 + c];
+    return a + (b - a) * fx + (cc - a) * fy + (a - b - cc + dd) * fx * fy;
+  }
+
+  /** Distance (m) across from the drive's centreline, or Infinity well off it. */
+  roadDistance(x: number, z: number): number {
+    const d = this.roadAt(x, z, 2, Infinity);
+    return d >= 99 ? Infinity : d;
   }
 
   static generate(renderer: THREE.WebGLRenderer): Heightfield {
@@ -485,6 +566,13 @@ export class Heightfield {
 
   /** Ground height (m) at a world point, including the close-up crags. */
   heightAt(x: number, z: number): number {
+    const h = this.ungradedAt(x, z);
+    const w = this.roadAt(x, z, 0, 0);
+    return w > 0 ? h * (1 - w) + this.roadAt(x, z, 1, 0) : h;
+  }
+
+  /** Ground height before the drive's cut and fill. */
+  ungradedAt(x: number, z: number): number {
     const b = this.baseAt(x, z);
     const hd = Math.hypot(x - HOME.x, z - HOME.y);
     const graded = hd >= 140 ? 1 : hd <= 45 ? 0 : ((t) => t * t * (3 - 2 * t))((hd - 45) / 95);
