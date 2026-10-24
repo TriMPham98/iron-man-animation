@@ -328,6 +328,13 @@ export class SuitDriver {
   private readonly effortK = new THREE.Vector2();
   private readonly settle = new THREE.Vector2();
   private flaring = false;
+  /** The braking torso's own springs (pitch, bend, side, twist offsets): looser than the limbs'. */
+  private readonly torsoPitch = new THREE.Vector2();
+  private readonly torsoBend = new THREE.Vector2();
+  private readonly torsoSide = new THREE.Vector2();
+  private readonly torsoYaw = new THREE.Vector2();
+  /** Breathing phase (it quickens with the effort of a hard stop). */
+  private breathPh = 0;
   private readonly swingK = new THREE.Vector2();
   private readonly fallK = new THREE.Vector2();
   /** Riding the surge in flight (+ speeding up, − slowing), sprung loose for follow-through. */
@@ -611,6 +618,8 @@ export class SuitDriver {
     const decelG = Math.max(0, -m.surge) / GRAVITY;
     springTo(this.effortK, smooth01((decelG - 1.5) / 4) * smooth01((sp - 10) / 50) * fk, 7, 0.6, dt);
     const eff = clamp01(this.effortK.x);
+    // (and the chest heaves with it)
+    this.breathPh += dt * lerp(1.7, 3.6, eff);
     // The stop done (or X let go) the boots take back over: the body
     // pitches through a little past upright and settles
     const flaring = flareGoal > (this.flaring ? 0.4 : 0.6);
@@ -649,6 +658,10 @@ export class SuitDriver {
       fingersR = fingersR.map((f) => lerp(f, -0.15, ff));
       spineBend = lerp(spineBend, -0.12, ff);
     }
+    const pitch0 = pitch;
+    const bend0 = spineBend;
+    const side0 = spineSide;
+    const yaw0 = spineYaw;
     if (fk > 1e-3) {
       // How much of the travel is ahead of the chest (forward braking) vs
       // below the boots (the flare onto the ground): the legs come forward
@@ -670,9 +683,26 @@ export class SuitDriver {
       // over them against a hard stop
       pitch = lerp(pitch, -(0.2 + 0.25 * eff) * ahead, fk);
       spineBend = lerp(spineBend, 0.06 * ahead + 0.12 * (1 - ahead) + 0.16 * eff, fk);
+      // Travel off to one side: the shoulders turn to it and the body
+      // leans away, bracing (and a touch off square even dead ahead)
+      spineYaw += (0.3 * this.travel.x + 0.03) * fk;
+      spineSide += (0.18 * this.travel.x - 0.04) * fk;
     }
-    spineBend += 0.1 * windup;
-    pitch += 0.5 * this.settle.x;
+    // The torso rides its own springs into the flare, looser than the
+    // limbs': it lags the legs coming forward, swings past and settles
+    // (set straight onto the pose it sat like a post while the limbs
+    // worked round it)
+    springTo(this.torsoPitch, pitch - pitch0, 6, 0.45, dt);
+    springTo(this.torsoBend, spineBend - bend0, 8, 0.5, dt);
+    springTo(this.torsoSide, spineSide - side0, 7, 0.5, dt);
+    springTo(this.torsoYaw, spineYaw - yaw0, 7, 0.5, dt);
+    // Held in the flare it never quite sits still: a slow hunt for
+    // balance between the palms and the boots, side to side and fore-aft
+    const hunt = (k: number, w: number, ph: number) => fk * k * Math.sin(t * w + ph);
+    pitch = pitch0 + this.torsoPitch.x + 0.8 * this.settle.x + hunt(0.035, 3.7, 0);
+    spineBend = bend0 + this.torsoBend.x + 0.1 * windup;
+    spineSide = side0 + this.torsoSide.x + hunt(0.04, 2.3, 1.1);
+    spineYaw = yaw0 + this.torsoYaw.x;
 
     // Repulsor aim: the arm punches out onto the aim line, palm flat to it.
     // The body has already turned toward the shot (hips, then shoulders);
@@ -789,6 +819,12 @@ export class SuitDriver {
         limbs[`knee${s}`] += shake(0.05, ph + 2);
         limbs[`hipOut${s}`] += shake(0.03, ph + 3);
       }
+      // The torso shakes too, slower and smaller (heavier, and unsprung):
+      // the arms, solved in the chest's frame, ride it
+      const heavy = (k: number, ph: number) => buffet * k * (Math.sin(t * 8.9 + ph) * 0.6 + Math.sin(t * 14.3 + ph * 1.9) * 0.4);
+      pitch += heavy(0.02, 0.5);
+      spineSide += heavy(0.035, 1.7);
+      spineYaw += heavy(0.025, 3.1);
     }
 
     // ── Springs: every arm, hand and leg channel ──────────────────────
@@ -960,7 +996,8 @@ export class SuitDriver {
 
     const pose: FlightPose = {
       stance: 0,
-      chestRecoil: -0.4 * ub + 0.35 * kick,
+      // (the braking palms drive the shoulders back against the curl)
+      chestRecoil: -0.4 * ub + 0.35 * kick + 0.2 * bk * (0.5 + 0.5 * eff),
       headPitch,
       headYaw,
       headRoll,
@@ -976,7 +1013,7 @@ export class SuitDriver {
       spineSide,
       driftX: 0,
       driftZ: 0,
-      breath: Math.sin(t * 1.7) * (1 - prone) * 0.6 * (1 - crouch),
+      breath: Math.sin(this.breathPh) * (1 - prone) * lerp(0.6, 0.9, eff) * (1 - crouch),
       legsIn: lerp(0.4, 1, prone) * this.dangle * (1 - crouch),
       fingersL,
       fingersR,
