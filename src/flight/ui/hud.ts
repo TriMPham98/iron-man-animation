@@ -328,7 +328,9 @@ export class Hud {
     const pxPerRad = this.h / 2 / Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
     g.save();
     g.translate(cx, cy);
-    g.rotate(-roll);
+    // (+ roll turns the camera anticlockwise: the world, and the ladder on
+    // it, turns clockwise on the screen)
+    g.rotate(roll);
     g.lineWidth = 1;
     for (let deg = -60; deg <= 60; deg += 10) {
       const a = THREE.MathUtils.degToRad(deg) - pitch;
