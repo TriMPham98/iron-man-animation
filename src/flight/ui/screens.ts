@@ -96,6 +96,15 @@ export interface PauseActions {
   forceResume?: () => void;
 }
 
+/** The title's quick start: enough to get off the pad (ESC has the rest). */
+const TITLE_KEYS: Row[] = [
+  ['MOUSE', 'aim'],
+  ['W / S', 'throttle'],
+  ['E', 'take off · climb'],
+  ['LMB', 'repulsors'],
+  ['ESC', 'all controls'],
+];
+
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&${{ '&': 'amp', '<': 'lt', '>': 'gt', '"': 'quot' }[c]};`);
 const rows = (r: Row[]) => r.map(([k, v]) => `<kbd>${esc(k)}</kbd><span>${esc(v)}</span>`).join('');
 
@@ -114,6 +123,8 @@ export class Screens {
   private padRepeat = 0;
   private padAxisHeld = 0;
   private lastFocus: HTMLElement | null = null;
+  /** Drops the title's engage listeners. */
+  private titleOff: () => void = () => {};
   settings: Settings;
   /** The app's settings hook (kept for the app; others use {@link addSettingsListener}). */
   onSettings: (s: Settings) => void = () => {};
@@ -149,18 +160,29 @@ export class Screens {
                   <section class="wide"><div class="fp-h">ANY TIME</div><div class="fp-rows" data-rows="always">${rows(CONTROLS.always)}</div></section>`;
     const touchRef = `
                   <section class="wide"><div class="fp-h">TOUCH</div><div class="fp-rows" data-rows="touch">${rows(TOUCH_ROWS)}</div></section>`;
-    const keyCell = ([k, v]: Row) => `<div><b>${esc(k)}</b>${esc(v)}</div>`;
-    const titleKeys =
-      `<div class="kh">GROUND</div>${CONTROLS.ground.map(keyCell).join('')}` +
-      `<div class="kh">FLIGHT</div>${CONTROLS.flight.slice(1).map(keyCell).join('')}` +
-      `<div class="kh">ANY TIME</div>${CONTROLS.always.map(keyCell).join('')}`;
+    // The title carries only what gets the suit off the pad; the full
+    // reference lives in the pause menu
+    const titleKeys = TITLE_KEYS.map(([k, v]) => `<span><kbd>${esc(k)}</kbd>${esc(v)}</span>`).join('');
     const pct = (k: 'volume' | 'sfx', label: string, id: string) => `
       <div class="fp-field"><label for="${id}">${label}</label>
         <input class="fp-range" id="${id}" type="range" min="0" max="1" step="0.05" data-k="${k}">
         <output for="${id}"></output></div>`;
     this.root.innerHTML = `
       <div class="screen boot"><div class="ring"><div class="core"></div></div><div class="lines"></div><div class="bar"><i></i></div></div>
-      <div class="screen title hidden"><a class="back" href="/" title="Back to the workshop">&#x2190; WORKSHOP</a><h1>MARK III</h1><div class="sub">FLIGHT · MALIBU · GOLDEN HOUR</div><div class="cta">${this.touch ? 'TAP TO ENGAGE' : 'CLICK TO ENGAGE'}</div><div class="keys">${titleKeys}</div></div>
+      <div class="screen title hidden">
+        <a class="back" href="/" title="Back to the workshop">&#x2190; WORKSHOP</a>
+        <div class="t-main">
+          <div class="t-eyebrow"><i class="t-reactor" aria-hidden="true"></i>STARK INDUSTRIES · J.A.R.V.I.S.</div>
+          <h1>MARK <em>III</em></h1>
+          <div class="t-rule" aria-hidden="true"><i></i></div>
+          <div class="sub">FLIGHT · MALIBU · GOLDEN HOUR</div>
+          <button class="cta" type="button"><span class="t-cta-label">${this.touch ? 'TAP TO ENGAGE' : 'CLICK TO ENGAGE'}</span><i aria-hidden="true">&#x2192;</i></button>
+          <div class="keys">${titleKeys}</div>
+        </div>
+        <div class="t-status" aria-hidden="true">
+          <span><b>34.0259°N</b> 118.7798°W</span><span>ARMOUR <b>100%</b></span><span>REACTOR <b>STABLE</b></span><span class="ok"><i></i>FLIGHT READY</span>
+        </div>
+      </div>
       <div class="screen pause hidden" role="dialog" aria-modal="true" aria-labelledby="fp-title">
         <div class="fp-scrim" data-act="resume" title="Resume"></div>
         <div class="fp-panel">
@@ -509,20 +531,36 @@ export class Screens {
     if (opts.handoff) {
       // Arrived from the workshop: a lighter card over the hovering suit
       this.title.classList.add('handoff');
-      this.title.querySelector('.cta')!.textContent = this.touch ? 'TAP TO TAKE CONTROL' : 'CLICK TO TAKE CONTROL';
+      this.title.querySelector('.t-cta-label')!.textContent = this.touch ? 'TAP TO TAKE CONTROL' : 'CLICK TO TAKE CONTROL';
     }
     this.title.classList.remove('hidden');
-    const go = (e: Event) => {
-      // The workshop link leaves; anywhere else engages
-      if ((e.target as HTMLElement).closest('a')) return;
-      this.title.removeEventListener('click', go);
+    const done = () => {
+      this.titleOff();
       this.title.classList.add('hidden');
       onEngage();
     };
+    const go = (e: Event) => {
+      // The workshop link leaves; anywhere else engages
+      if ((e.target as HTMLElement).closest('a')) return;
+      done();
+    };
+    // Enter (or Space) engages too: still a user gesture, so the pointer lock takes
+    const key = (e: KeyboardEvent) => {
+      if ((e.key !== 'Enter' && e.key !== ' ') || e.repeat || (e.target as HTMLElement).closest?.('a')) return;
+      e.preventDefault();
+      done();
+    };
     this.title.addEventListener('click', go);
+    document.addEventListener('keydown', key);
+    this.titleOff = () => {
+      this.title.removeEventListener('click', go);
+      document.removeEventListener('keydown', key);
+      this.titleOff = () => {};
+    };
   }
 
   hideTitle(): void {
+    this.titleOff();
     this.boot.style.transition = 'none';
     this.boot.classList.add('hidden');
     this.title.classList.add('hidden');
