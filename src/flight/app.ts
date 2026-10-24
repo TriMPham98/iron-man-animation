@@ -10,6 +10,7 @@ import { DEFAULT_CAMERA } from './sim/cameraRig';
 import { Director } from './sim/director';
 import { Input, type Controls } from './sim/input';
 import { Hud } from './ui/hud';
+import { SuitWireframe } from './ui/suitWireframe';
 import { TouchControls } from './ui/touchControls';
 import type { Screens } from './ui/screens';
 import { bindFlightSettings } from './ui/flightSettings';
@@ -186,6 +187,14 @@ export class FlightApp {
     await this.step('post', () => {
       this.post = new FlightPost(this.renderer, this.scene, this.camera);
       this.hud = new Hud(this.opts.hudCanvas);
+      // The helmet's suit diagram: the suit's own panel lines, flattened once
+      const palm = (i: number) => this.suit.palms[i].at;
+      this.hud.wireframe = new SuitWireframe(this.suit.finalGeometry, {
+        palmL: palm(0),
+        palmR: palm(1),
+        bootL: [0.16, 0.02, 0.01],
+        bootR: [-0.16, 0.02, 0.01],
+      });
       if (!this.opts.embedded) this.attachInput();
     });
     const game = this.game;

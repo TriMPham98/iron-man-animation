@@ -20,6 +20,8 @@ import { SPEED_OF_SOUND } from '../world/config';
 
 /** Physics runs at a fixed rate whatever the display does. */
 export const PHYSICS_HZ = 120;
+/** The pilot's eyes behind the faceplate (bind space). */
+const EYE_AT = [0, 1.77, 0.07] as const;
 /** Bind-space centre of the helmet shell and the radius that takes it all (m). */
 const HELMET_CLIP_AT = [0, 1.73, 0.02] as const;
 const HELMET_CLIP_R = 0.16;
@@ -163,7 +165,7 @@ export class Game {
     this.suit.update(dt);
     // Shots leave the suit's hardware where it is drawn this frame
     if (this.controls) this.combat.afterPose();
-    this.suit.boneWorldPoint('head', [0, 1.72, 0.04], this.head);
+    this.suit.boneWorldPoint('head', EYE_AT, this.head);
     this.rig.update(dt, this.model, this.head, this.ground);
     // The suit's own shadow box rides with it
     const sun = this.world.atmosphere.sun;
@@ -173,6 +175,7 @@ export class Game {
     // the helmet itself cut away round the eye
     const helmet = this.rig.mode === 'helmet';
     this.suit.boneWorldPoint('head', HELMET_CLIP_AT, this._clip);
+    this.suit.showInterior(helmet);
     this.eyeClip.uEyeClip.value.set(this._clip.x, this._clip.y, this._clip.z, helmet ? HELMET_CLIP_R : 0);
     const o = this.driver.outputs;
     this.jets.eye = helmet ? this.rig.camera.position : null;

@@ -5,6 +5,7 @@ import { ASSIST_RANGE, LAUNCHER_PER_ARM } from '../combat/playerWeapons';
 import type { FlightModel } from '../sim/flightModel';
 import { CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
 import type { GroundProbe } from '../sim/flightModel';
+import type { SuitWireframe } from './suitWireframe';
 
 /**
  * JARVIS's heads-up display, drawn on a 2D canvas over the frame each
@@ -53,6 +54,8 @@ export class Hud {
   private hitMarker = 0;
   /** The suit's thrusters (0–1 each), for the helmet's suit diagram. */
   jets: { bootL: number; bootR: number; palmL: number; palmR: number } | null = null;
+  /** The suit's own wireframe for the helmet's suit diagram (set once the suit is built). */
+  wireframe: SuitWireframe | null = null;
   /**
    * Helmet view: the head-mounted panels float on a soft spring against
    * the turn and the g (CSS px), so the head reads as moving inside the
@@ -204,56 +207,49 @@ export class Hud {
   }
 
   /**
-   * The suit as JARVIS draws it in the corner of the visor: an outline lit
-   * by the armour state, each thruster glowing with its output.
+   * The suit as JARVIS draws it in the corner of the visor: its own panel
+   * wireframe (the assembly's diagnostic scan), lit by the armour state,
+   * a scan band sweeping it head to toe, each thruster glowing with its
+   * output.
    */
   private drawSuitDiagram(g: CanvasRenderingContext2D, m: FlightModel, c: Combat, s: number): void {
-    const x = 40 * s + 34 * s;
-    const y = this.h - 268 * s - this.bottomInset;
-    const u = 1.15 * s;
+    const wf = this.wireframe;
+    if (!wf) return;
+    const H = 150 * s;
+    const k = H / wf.height;
+    const W = wf.width * k;
+    const cx = 74 * s;
+    const top = this.h - 345 * s - this.bottomInset;
+    const left = cx - W / 2;
     const armor = c.armor;
+    const rgb = armor < 0.3 ? '255, 70, 60' : armor < 0.6 ? '255, 184, 77' : '126, 232, 255';
     g.save();
-    g.translate(x, y);
-    g.strokeStyle = armor < 0.3 ? RED : armor < 0.6 ? AMBER : CYAN_DIM;
-    g.lineWidth = 1;
-    g.lineJoin = 'round';
-    // Helmet, torso, arms, legs (front view, a mannequin in a few strokes)
-    g.beginPath();
-    g.arc(0, -40 * u, 6 * u, 0, Math.PI * 2);
-    g.moveTo(-13 * u, -30 * u);
-    g.lineTo(13 * u, -30 * u);
-    g.lineTo(9 * u, 2 * u);
-    g.lineTo(-9 * u, 2 * u);
-    g.closePath();
-    for (const side of [-1, 1]) {
-      g.moveTo(side * 14 * u, -29 * u);
-      g.lineTo(side * 19 * u, -10 * u);
-      g.lineTo(side * 21 * u, 8 * u);
-      g.moveTo(side * 6 * u, 3 * u);
-      g.lineTo(side * 8 * u, 24 * u);
-      g.lineTo(side * 8 * u, 44 * u);
+    g.shadowBlur = 0;
+    g.drawImage(wf.canvas(rgb, 0.22), left, top, W, H);
+    // The scan band: a slice of the bright copy, sweeping down and pausing
+    const sweep = (this.time * 0.4) % 1.5;
+    if (sweep < 1) {
+      const band = wf.height * 0.07;
+      const sy = sweep * (wf.height + band) - band;
+      const y0 = Math.max(0, sy);
+      const y1 = Math.min(wf.height, sy + band);
+      if (y1 > y0) g.drawImage(wf.canvas(rgb, 0.6), 0, y0, wf.width, y1 - y0, left, top + y0 * k, W, (y1 - y0) * k);
     }
-    g.stroke();
-    // Arc reactor
-    g.fillStyle = WHITE;
-    g.beginPath();
-    g.arc(0, -20 * u, 1.8 * u, 0, Math.PI * 2);
-    g.fill();
     // Thrusters: palms and boots, brightening with their output
     const j = this.jets;
-    const pip = (px: number, py: number, out: number) => {
-      const k = THREE.MathUtils.clamp(out, 0, 1);
-      g.fillStyle = k > 0.75 ? WHITE : k > 0.05 ? CYAN : CYAN_FAINT;
+    const pip = (p: { x: number; y: number }, out: number) => {
+      const t = THREE.MathUtils.clamp(out, 0, 1);
+      g.fillStyle = t > 0.75 ? WHITE : t > 0.05 ? CYAN : CYAN_FAINT;
       g.beginPath();
-      g.arc(px, py, (2 + 2.5 * k) * u, 0, Math.PI * 2);
+      g.arc(left + p.x * k, top + p.y * k, (1.6 + 2.6 * t) * s, 0, Math.PI * 2);
       g.fill();
     };
-    pip(-21 * u, 11 * u, j?.palmL ?? 0);
-    pip(21 * u, 11 * u, j?.palmR ?? 0);
-    pip(-8 * u, 47 * u, j?.bootL ?? 0);
-    pip(8 * u, 47 * u, j?.bootR ?? 0);
+    pip(wf.pips.palmL, j?.palmL ?? 0);
+    pip(wf.pips.palmR, j?.palmR ?? 0);
+    pip(wf.pips.bootL, j?.bootL ?? 0);
+    pip(wf.pips.bootR, j?.bootR ?? 0);
     g.restore();
-    this.text(g, m.grounded ? 'SUIT · STANDING' : 'SUIT · THRUSTERS', x, y + 60 * u, 7 * s, CYAN_DIM, 'center', JARVIS);
+    this.text(g, m.grounded ? 'SUIT · STANDING' : 'SUIT · THRUSTERS', cx, top + H + 12 * s, 7 * s, CYAN_DIM, 'center', JARVIS);
   }
 
   private drawReticle(g: CanvasRenderingContext2D, cx: number, cy: number, s: number): void {

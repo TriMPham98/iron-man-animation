@@ -500,6 +500,16 @@ export class Suit {
     if (this.finalModel) this.finalModel.visible = false;
   }
 
+  /**
+   * The inside of the shell (its back faces, dark): seen from the helmet,
+   * a glimpse into the suit is the dark lining, not the far side's plates.
+   */
+  showInterior(on: boolean): void {
+    if (this.isFlightCheckActive()) return;
+    this.cavity.visible = on;
+    this.cavity.castShadow = false;
+  }
+
   /** Seamless skinned suit; hide pieces + fitting FX. */
   showFinal(): void {
     this.assemblyMode = false;

@@ -129,7 +129,7 @@ export class SuitScanView {
 }
 
 /** Keep only edges longer than `min` (m) — drops micro-detail line noise. */
-function longEdges(edges: THREE.BufferGeometry, min: number): THREE.BufferGeometry {
+export function longEdges(edges: THREE.BufferGeometry, min: number): THREE.BufferGeometry {
   const src = edges.getAttribute('position') as THREE.BufferAttribute;
   const keep: number[] = [];
   for (let i = 0; i + 1 < src.count; i += 2) {

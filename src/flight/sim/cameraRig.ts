@@ -27,6 +27,7 @@ const FOV_WIDE = 58;
 const IDENTITY = new THREE.Quaternion();
 /** Most the chase camera trails its ideal spot round the suit (rad). */
 const MAX_SWING = 0.3;
+/** Most the helmet view tips with the suit's bank (rad, ≈ 20°). */
 /** 0–1: how hard the suit is pulling, from a firm turn (4 g) to the suit's limit. */
 const pullK = (m: FlightModel) => THREE.MathUtils.smoothstep(m.gLoad, 4, G_LIMIT);
 
@@ -161,8 +162,9 @@ export class CameraRig {
       lookAt = this._v.copy(m.pos).add(new THREE.Vector3(0, 0.45, 0)).addScaledVector(side, -1.5);
       fovGoal = 40;
     } else if (this.mode === 'helmet') {
-      // The eye, inside the helmet: the suit's own arms and boots are in view
-      ideal.copy(head).addScaledVector(fwd, 0.07).addScaledVector(aimUp, 0.02);
+      // The eye, inside the helmet (where the head is, not pushed out along
+      // the aim: looking over a shoulder put it inside the shoulder plates)
+      ideal.copy(head);
       this.pos.copy(ideal);
       fovGoal = 74;
     } else if (this.mode === 'flyby') {
@@ -218,8 +220,9 @@ export class CameraRig {
       fovGoal = 62 + 14 * pull + (m.boosting ? 3 : 0) + surgeG * (surgeG > 0 ? 1.1 : 0.4);
     }
 
-    // Never under the ground or the sea
-    const floor = Math.max(ground.surface(this.pos.x, this.pos.z), 0) + 0.8;
+    // Never under the ground or the sea (the helmet eye is wherever the
+    // head is: lifted out of a crouch it stood outside the suit)
+    const floor = Math.max(ground.surface(this.pos.x, this.pos.z), 0) + (this.mode === 'helmet' ? 0.1 : 0.8);
     if (this.pos.y < floor) this.pos.y = floor;
 
     cam.position.copy(this.pos);
