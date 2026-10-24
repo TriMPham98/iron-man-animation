@@ -209,8 +209,12 @@ const PAD_HOLD_MAX = 10;
  * (m of height per m out), the clearance it keeps over anything on the
  * way (m), and the sink it touches down at (m/s).
  */
-const AUTOLAND_SPEED = 55;
-const AUTOLAND_DECEL = 12;
+const AUTOLAND_SPEED = 70;
+const AUTOLAND_DECEL = 30;
+/** Boot authority it flies on (× the full throttle; a hover holds 1.1). */
+const AUTOLAND_THRUST = 1.7;
+/** The stop it plans for coming down (m/s²). */
+const AUTOLAND_SINK_DECEL = 7.2;
 const AUTOLAND_SLOPE = 0.6;
 const AUTOLAND_CLEAR = 6;
 const AUTOLAND_SINK = 1.6;
@@ -471,7 +475,7 @@ export class FlightModel {
     const flightGoal = wantFlight && !this.grounded ? 1 : 0;
     // Already quick (out of a flare), the body swings straight back over
     const riseTau = THREE.MathUtils.lerp(0.55, 0.3, smooth(40, 120, speed));
-    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? riseTau : input.brake ? 0.6 : 0.4);
+    this.flightness += (flightGoal - this.flightness) * approach(dt, flightGoal > this.flightness ? riseTau : this.autoLand ? 0.2 : input.brake ? 0.6 : 0.4);
     if (this.grounded) this.flightness = 0;
     const fl = smooth(0.05, 0.95, this.flightness);
 
@@ -693,7 +697,8 @@ export class FlightModel {
     if (this.airT < HOP_GUARD) vWant.y = Math.max(vWant.y, 4);
     // Height first, then what thrust is left goes to the horizontal (a real
     // VTOL computer never trades altitude for a stop)
-    const hoverMax = THRUST_MAX * 1.1 * ceilingK;
+    // (auto-land runs the boots hotter, as the boost does: it's in a hurry)
+    const hoverMax = THRUST_MAX * (this.autoLand ? AUTOLAND_THRUST : 1.1) * ceilingK;
     const hoverAcc = vWant.sub(this.vel).multiplyScalar(1.6);
     // Braking, a firmer hold on the horizontal: the stop settles, not drifts
     if (input.brake) {
@@ -721,7 +726,8 @@ export class FlightModel {
     // swings back over into flight
     const hvNow = Math.hypot(this.vel.x, this.vel.z);
     const against = hoverAcc.x * this.vel.x + hoverAcc.z * this.vel.z < 0;
-    const fastPull = against ? HOVER_BRAKE_FAST * Math.max(this.airbrake, input.stance ? 1 : 0) : HOVER_BRAKE_FAST;
+    // (auto-land has the boots' full authority sideways: it planned its stop)
+    const fastPull = this.autoLand ? hoverMax : against ? HOVER_BRAKE_FAST * Math.max(this.airbrake, input.stance ? 1 : 0) : HOVER_BRAKE_FAST;
     // (braking, the palms already pull against the travel: the boots leave
     // them room, or the stop bit harder again as the boots got their full
     // authority back at the slow end)
@@ -1113,10 +1119,10 @@ export class FlightModel {
     const ex = aid.x - this.pos.x;
     const ez = aid.z - this.pos.z;
     const d = Math.hypot(ex, ez);
-    const vGo = Math.min(AUTOLAND_SPEED, Math.sqrt(2 * AUTOLAND_DECEL * d), 2.5 * d);
+    const vGo = Math.min(AUTOLAND_SPEED, Math.sqrt(2 * AUTOLAND_DECEL * d), 3 * d);
     const k = d > 1e-4 ? vGo / d : 0;
-    out.x = (ex * k - this.vel.x) * 3.5;
-    out.z = (ez * k - this.vel.z) * 3.5;
+    out.x = (ex * k - this.vel.x) * 6;
+    out.z = (ez * k - this.vel.z) * 6;
     const h = this.pos.y - this.hipHeight() - aid.y;
     // What's under it and coming up ahead (the house, the bluff), over the deck
     const g = this.ground;
@@ -1130,7 +1136,7 @@ export class FlightModel {
     if (d < 1 && h > hGoal - 0.05) vy = Math.min(vy, -AUTOLAND_SINK);
     if (h < 2 && d > 0.4) vy = Math.max(vy, 0);
     // (down no faster than it can stop, easing onto the touchdown sink)
-    vy = Math.max(vy, -Math.max(AUTOLAND_SINK, Math.min(h * 1.8, Math.sqrt(2 * AUTOLAND_DECEL * 0.6 * Math.max(0, h)))));
+    vy = Math.max(vy, -Math.max(AUTOLAND_SINK, Math.min(h * 1.8, Math.sqrt(2 * AUTOLAND_SINK_DECEL * Math.max(0, h)))));
     out.y = (vy - this.vel.y) * 4;
   }
 
