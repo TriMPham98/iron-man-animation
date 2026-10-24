@@ -28,6 +28,7 @@ const IDENTITY = new THREE.Quaternion();
 /** Most the chase camera trails its ideal spot round the suit (rad). */
 const MAX_SWING = 0.3;
 /** Most the helmet view tips with the suit's bank (rad, ≈ 20°). */
+const HELMET_ROLL = 0.35;
 /** 0–1: how hard the suit is pulling, from a firm turn (4 g) to the suit's limit. */
 const pullK = (m: FlightModel) => THREE.MathUtils.smoothstep(m.gLoad, 4, G_LIMIT);
 
@@ -48,6 +49,9 @@ export class CameraRig {
   /** Camera bank into the suit's yaw (rad), and its rate. */
   private bank = 0;
   private bankVel = 0;
+  /** Helmet view: the suit's roll about the line of sight (rad), and its rate. */
+  private viewRoll = 0;
+  private viewRollVel = 0;
   /** Chase distance the operator gives up to the suit's surge (m), and its rate. */
   private surgeLag = 0;
   private surgeLagVel = 0;
@@ -113,6 +117,13 @@ export class CameraRig {
   }
 
   turn(yaw: number, pitch: number): void {
+    // In the helmet the view rolls with the suit: the stick moves the aim
+    // along the rolled screen, not the level one
+    if (this.mode === 'helmet' && Math.abs(this.viewRoll) > 1e-4) {
+      const c = Math.cos(this.viewRoll);
+      const s = Math.sin(this.viewRoll);
+      [yaw, pitch] = [yaw * c + pitch * s, pitch * c - yaw * s];
+    }
     // Yaw about world up near level; about the aim's own up when steep
     const f = this.aim(this._f);
     const steep = Math.abs(f.y);
@@ -123,6 +134,28 @@ export class CameraRig {
     const right = this._v.set(1, 0, 0).applyQuaternion(this.aimQ);
     this._q.setFromAxisAngle(right, pitch);
     this.aimQ.premultiply(this._q).normalize();
+  }
+
+  /**
+   * Spring the helmet's roll onto the suit's bank (the head tips with the
+   * body whichever way the pilot looks; a projection onto the view went
+   * wild looking along the suit's own side).
+   */
+  private rollWithSuit(dt: number, m: FlightModel): void {
+    const left = this._v.set(1, 0, 0).applyQuaternion(m.q);
+    const up = this._s.set(0, 1, 0).applyQuaternion(m.q);
+    // Nose straight up or down: no bank to read, hold it
+    if (left.y * left.y + up.y * up.y < 0.09) return;
+    // (+ bank = right side low; the view turns the other way round its axis)
+    // The pilot's neck holds his head toward the horizon: the visor only
+    // tips a share of the bank (most at 90°, back to level inverted, so
+    // there's no seam to flip across) and eases into it
+    const bank = Math.atan2(left.y, up.y);
+    const goal = -HELMET_ROLL * Math.sin(bank);
+    const w = 6;
+    const h = Math.min(dt, 0.05);
+    this.viewRollVel += (w * w * (goal - this.viewRoll) - 2 * 0.9 * w * this.viewRollVel) * h;
+    this.viewRoll += this.viewRollVel * h;
   }
 
   cycle(): CameraMode {
@@ -241,6 +274,14 @@ export class CameraRig {
       this.bankVel += (bw * bw * (bankGoal - this.bank) - 2 * 0.85 * bw * this.bankVel) * Math.min(dt, 0.05);
       this.bank += this.bankVel * Math.min(dt, 0.05);
       if (Math.abs(this.bank) > 1e-5) cam.quaternion.multiply(this._q.setFromAxisAngle(this._s.set(0, 0, 1), this.bank));
+      // The helmet rolls with the suit (A/D, a banked turn): the horizon
+      // tips across the visor
+      if (this.mode === 'helmet') {
+        this.rollWithSuit(dt, m);
+        cam.quaternion.multiply(this._q.setFromAxisAngle(this._s.set(0, 0, 1), this.viewRoll));
+      } else {
+        this.viewRoll = this.viewRollVel = 0;
+      }
     }
 
     // Shake: impacts, boost and a hard pull's buffet. Supersonic flight itself does not shake the picture
