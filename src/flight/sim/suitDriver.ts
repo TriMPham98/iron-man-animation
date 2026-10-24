@@ -333,6 +333,9 @@ export class SuitDriver {
   private readonly torsoBend = new THREE.Vector2();
   private readonly torsoSide = new THREE.Vector2();
   private readonly torsoYaw = new THREE.Vector2();
+  /** Stopping a sideways slide: the hips turn into it and the body leans off it, sprung (yaw, roll). */
+  private readonly slideYaw = new THREE.Vector2();
+  private readonly slideRoll = new THREE.Vector2();
   /** Breathing phase (it quickens with the effort of a hard stop). */
   private breathPh = 0;
   private readonly swingK = new THREE.Vector2();
@@ -597,7 +600,9 @@ export class SuitDriver {
     // the oncoming air, palms flat to it, the repulsors firing forward to
     // kill the speed. Sprung in (a beat of anticipation) and out
     const sp = m.speed;
-    if (sp > 0.5) this.travel.lerp(this._v.copy(m.vel).applyQuaternion(this._qi.copy(bodyQ).invert()).divideScalar(sp), 1 - Math.exp(-dt / 0.08)).normalize();
+    // (only while there's real speed in it: the last m/s and the boots
+    // holding the height swung it about, and the palms chased it)
+    if (sp > 0.5) this.travel.lerp(this._v.copy(m.vel).applyQuaternion(this._qi.copy(bodyQ).invert()).divideScalar(sp), (1 - Math.exp(-dt / 0.08)) * smooth01((sp - 1) / 5)).normalize();
     // (out quicker than in: the hands drop to their trim first)
     const bkGoal = clamp01(m.palmBrake) * this.dangle * (1 - crouch) * (1 - ub) * (1 - pre);
     const bkOut = bkGoal < this.brakeK.x;
@@ -623,7 +628,10 @@ export class SuitDriver {
     // The stop done (or X let go) the boots take back over: the body
     // pitches through a little past upright and settles
     const flaring = flareGoal > (this.flaring ? 0.4 : 0.6);
-    if (this.flaring && !flaring) this.settle.y += 2.2 * fk;
+    // Sideways share of the travel (+ toward the left)
+    const lat = clamp(this.travel.x, -1, 1);
+    const latK = Math.abs(lat);
+    if (this.flaring && !flaring) this.settle.y += 2.2 * fk * (1 - 0.7 * latK);
     this.flaring = flaring;
     springTo(this.settle, 0, 6, 0.45, dt);
     // Carving the speed round onto a new line (a momentum swing) the palms
@@ -673,9 +681,13 @@ export class SuitDriver {
         ['L', 1],
         ['R', -1],
       ] as const) {
-        limbs[`hip${s}`] = lerp(limbs[`hip${s}`], 0.35 + 0.45 * ahead + 0.2 * eff + 0.04 * odd, fk);
-        limbs[`hipOut${s}`] = lerp(limbs[`hipOut${s}`], 0.12 + 0.03 * odd + 0.06 * eff, fk);
-        limbs[`knee${s}`] = lerp(limbs[`knee${s}`], 0.55 + 0.25 * ahead + 0.3 * eff - 0.06 * odd, fk);
+        // Sliding sideways (a hockey stop) the leg on the travel's side
+        // reaches out long into it and the other gathers under
+        const lead = clamp01(lat * odd);
+        const trail = clamp01(-lat * odd);
+        limbs[`hip${s}`] = lerp(limbs[`hip${s}`], 0.35 + 0.45 * ahead + 0.2 * eff + 0.04 * odd - 0.1 * lead + 0.15 * trail, fk);
+        limbs[`hipOut${s}`] = lerp(limbs[`hipOut${s}`], 0.12 + 0.03 * odd + 0.06 * eff + 0.3 * lead - 0.06 * trail, fk);
+        limbs[`knee${s}`] = lerp(limbs[`knee${s}`], 0.55 + 0.25 * ahead + 0.3 * eff - 0.06 * odd - 0.3 * lead + 0.35 * trail, fk);
         limbs[`ankle${s}`] = lerp(limbs[`ankle${s}`], 0.05, fk);
       }
       // The hips rear back; the chest stays over them (a backward arch put
@@ -683,25 +695,34 @@ export class SuitDriver {
       // over them against a hard stop
       pitch = lerp(pitch, -(0.2 + 0.25 * eff) * ahead, fk);
       spineBend = lerp(spineBend, 0.06 * ahead + 0.12 * (1 - ahead) + 0.16 * eff, fk);
-      // Travel off to one side: the shoulders turn to it and the body
-      // leans away, bracing (and a touch off square even dead ahead)
-      spineYaw += (0.3 * this.travel.x + 0.03) * fk;
-      spineSide += (0.18 * this.travel.x - 0.04) * fk;
+      // Travel off to one side: the shoulders turn on past the hips into it
+      // and the body leans away, bracing (and a touch off square even dead
+      // ahead). Square to a sideways travel, one palm reached across the chest
+      spineYaw += (0.35 * lat + 0.03) * fk;
+      spineSide += (0.3 * lat - 0.04) * fk;
     }
+    // The hips lead the turn into a sideways stop and the whole body leans
+    // off it, on firm springs (a slide braced, not swaying)
+    springTo(this.slideYaw, 0.45 * lat * fk, 6, 1, dt);
+    springTo(this.slideRoll, 0.12 * lat * fk, 6, 1, dt);
+    yaw += this.slideYaw.x;
+    roll += this.slideRoll.x;
     // The torso rides its own springs into the flare, looser than the
     // limbs': it lags the legs coming forward, swings past and settles
     // (set straight onto the pose it sat like a post while the limbs
     // worked round it)
     springTo(this.torsoPitch, pitch - pitch0, 6, 0.45, dt);
     springTo(this.torsoBend, spineBend - bend0, 8, 0.5, dt);
-    springTo(this.torsoSide, spineSide - side0, 7, 0.5, dt);
-    springTo(this.torsoYaw, spineYaw - yaw0, 7, 0.5, dt);
+    // (side to side and round it's braced, near critically damped: loose
+    // there, a sideways stop wobbled on top of the slide)
+    springTo(this.torsoSide, spineSide - side0, 7, 0.9, dt);
+    springTo(this.torsoYaw, spineYaw - yaw0, 7, 0.9, dt);
     // Held in the flare it never quite sits still: a slow hunt for
     // balance between the palms and the boots, side to side and fore-aft
     const hunt = (k: number, w: number, ph: number) => fk * k * Math.sin(t * w + ph);
     pitch = pitch0 + this.torsoPitch.x + 0.8 * this.settle.x + hunt(0.035, 3.7, 0);
     spineBend = bend0 + this.torsoBend.x + 0.1 * windup;
-    spineSide = side0 + this.torsoSide.x + hunt(0.04, 2.3, 1.1);
+    spineSide = side0 + this.torsoSide.x + hunt(0.04 * (1 - 0.8 * latK), 2.3, 1.1);
     spineYaw = yaw0 + this.torsoYaw.x;
 
     // Repulsor aim: the arm punches out onto the aim line, palm flat to it.
@@ -823,8 +844,8 @@ export class SuitDriver {
       // the arms, solved in the chest's frame, ride it
       const heavy = (k: number, ph: number) => buffet * k * (Math.sin(t * 8.9 + ph) * 0.6 + Math.sin(t * 14.3 + ph * 1.9) * 0.4);
       pitch += heavy(0.02, 0.5);
-      spineSide += heavy(0.035, 1.7);
-      spineYaw += heavy(0.025, 3.1);
+      spineSide += heavy(0.035 * (1 - 0.6 * latK), 1.7);
+      spineYaw += heavy(0.025 * (1 - 0.6 * latK), 3.1);
     }
 
     // ── Springs: every arm, hand and leg channel ──────────────────────
