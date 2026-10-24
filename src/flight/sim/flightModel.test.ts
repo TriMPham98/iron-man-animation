@@ -809,7 +809,7 @@ describe('FlightModel', () => {
       const kinds: string[] = [];
       let at: THREE.Vector3 | null = null;
       run(m, 30, (i) => {
-        i.brake = m.speed > 20;
+        i.brake = m.speed > 45;
         if (!at && m.contact !== 'none' && m.contact !== 'footstep') {
           kinds.push(m.contact);
           at = m.pos.clone();

@@ -6,7 +6,7 @@ import type { FlightModel } from '../sim/flightModel';
 import { CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
 import type { GroundProbe } from '../sim/flightModel';
 import type { SuitWireframe } from './suitWireframe';
-import { BULLSEYE_R, CENTRED_R, type PadGrade } from '../world/landingPad';
+import { BULLSEYE_R, CENTRED_R } from '../world/landingPad';
 
 /**
  * JARVIS's heads-up display, drawn on a 2D canvas over the frame each
@@ -16,7 +16,7 @@ import { BULLSEYE_R, CENTRED_R, type PadGrade } from '../world/landingPad';
  * target brackets with lock diamonds and lead pips, off-screen arrows,
  * a heading-up radar, incoming-missile warnings and JARVIS's voice as text.
  * Coming in to the pad: its marker and range, then a landing scope (the
- * suit's offset over the deck, its marks and drift), and the set-down's grade.
+ * suit's offset over the deck, its marks and drift), and auto-land.
  */
 
 const CYAN = 'rgba(126, 232, 255, 0.92)';
@@ -32,7 +32,6 @@ const KNOTS = 1.943844;
 /** Landing scope: the half-width it shows (m), the deck's radius (m). */
 const SCOPE_M = 8;
 const PAD_EDGE = 7;
-const GRADE_TEXT: Record<PadGrade, string> = { bullseye: 'BULLSEYE', centred: 'CENTRED', onPad: 'ON PAD' };
 
 interface Line {
   text: string;
@@ -67,10 +66,6 @@ export class Hud {
   private killFlash = 0;
   /** The landing pad's centre on its deck, if there's one to bring the suit in to. */
   pad: THREE.Vector3 | null = null;
-  /** The last set-down on the pad, its age (s), best offset and bullseye run. */
-  private landing: { grade: PadGrade; offset: number; best: boolean; t: number } | null = null;
-  private bestOffset = Infinity;
-  private bullseyes = 0;
   private scopeAlpha = 0;
   private hitMarker = 0;
   /** The suit's thrusters (0–1 each), for the helmet's suit diagram. */
@@ -109,14 +104,6 @@ export class Hud {
 
   kill(): void {
     this.killFlash = 1;
-  }
-
-  /** Set down on the pad, `offset` m from its centre. */
-  padLanding(grade: PadGrade, offset: number): void {
-    const best = offset < this.bestOffset;
-    this.bestOffset = Math.min(this.bestOffset, offset);
-    this.bullseyes = grade === 'bullseye' ? this.bullseyes + 1 : 0;
-    this.landing = { grade, offset, best: best && grade !== 'onPad', t: 0 };
   }
 
   hit(): void {
@@ -168,7 +155,6 @@ export class Hud {
     this.drawWeapons(g, combat, s);
     this.drawRadar(g, cam, m, combat, s);
     this.drawScope(g, dt, cam, m, s);
-    this.drawLanding(g, dt, s);
     this.drawAutoLand(g, dt, m, s);
     this.drawLines(g, s);
     g.restore();
@@ -560,46 +546,6 @@ export class Hud {
       this.text(g, sub, kx + keyW + 10 * s, 8 * s, 6.5 * s, AMBER, 'left', JARVIS);
     }
     g.restore();
-    g.globalAlpha = this.alpha;
-  }
-
-  /** The set-down's grade, a beat over the reticle. */
-  private drawLanding(g: CanvasRenderingContext2D, dt: number, s: number): void {
-    const l = this.landing;
-    if (!l) return;
-    l.t += dt;
-    if (l.t > 3.4) {
-      this.landing = null;
-      return;
-    }
-    const a = Math.min(1, l.t / 0.12) * (l.t > 2.6 ? 1 - (l.t - 2.6) / 0.8 : 1);
-    const cx = this.w / 2;
-    const cy = this.h / 2;
-    const col = l.grade === 'bullseye' ? WHITE : l.grade === 'centred' ? CYAN : CYAN_DIM;
-    g.globalAlpha = this.alpha * a;
-    // A ring thrown off the reticle, wider the better the landing
-    if (l.grade !== 'onPad' && l.t < 0.8) {
-      const u = l.t / 0.8;
-      g.strokeStyle = col;
-      g.lineWidth = 1.6;
-      g.globalAlpha = this.alpha * (1 - u);
-      g.beginPath();
-      g.arc(cx, cy, (15 + (l.grade === 'bullseye' ? 90 : 50) * (1 - Math.pow(1 - u, 3))) * s, 0, Math.PI * 2);
-      g.stroke();
-      g.globalAlpha = this.alpha * a;
-    }
-    // The word lands with a little overshoot, spaced wide
-    const pop = 1 + 0.25 * Math.exp(-l.t * 9) * Math.cos(l.t * 30);
-    const y = cy - 78 * s;
-    g.save();
-    g.translate(cx, y);
-    g.scale(pop, pop);
-    (g as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${4 * s}px`;
-    this.text(g, GRADE_TEXT[l.grade], 0, 0, (l.grade === 'onPad' ? 13 : 18) * s, col, 'center', JARVIS);
-    g.restore();
-    const run = l.grade === 'bullseye' && this.bullseyes > 1 ? `  ·  ×${this.bullseyes}` : '';
-    this.text(g, `${l.offset.toFixed(2)} m OFF CENTRE${run}`, cx, y + 20 * s, 9 * s, CYAN_DIM, 'center');
-    if (l.best && this.bestOffset < Infinity) this.text(g, 'BEST LANDING', cx, y + 34 * s, 7 * s, AMBER, 'center', JARVIS);
     g.globalAlpha = this.alpha;
   }
 

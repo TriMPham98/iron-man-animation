@@ -159,10 +159,11 @@ export class Game {
       else if (this.autoLandLetGo) this.stopAutoLand(true);
     }
     if (this.autoLand) {
-      // (the brakes and palms take the speed off a fast arrival)
+      // (the brakes and palms take the speed off a fast arrival; slower,
+      // they'd only drag against the run in)
       i.lateral = i.vertical = i.throttle = i.forward = 0;
       i.boost = false;
-      i.brake = this.model.speed > 20;
+      i.brake = this.model.speed > 45;
     }
     this.model.autoLand = this.autoLand;
   }

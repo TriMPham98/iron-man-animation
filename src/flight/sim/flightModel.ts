@@ -209,11 +209,11 @@ const PAD_HOLD_MAX = 10;
  * (m of height per m out), the clearance it keeps over anything on the
  * way (m), and the sink it touches down at (m/s).
  */
-const AUTOLAND_SPEED = 24;
-const AUTOLAND_DECEL = 5;
-const AUTOLAND_SLOPE = 0.8;
+const AUTOLAND_SPEED = 55;
+const AUTOLAND_DECEL = 12;
+const AUTOLAND_SLOPE = 0.6;
 const AUTOLAND_CLEAR = 6;
-const AUTOLAND_SINK = 0.7;
+const AUTOLAND_SINK = 1.6;
 
 const UP = new THREE.Vector3(0, 1, 0);
 const clamp = THREE.MathUtils.clamp;
@@ -1107,16 +1107,16 @@ export class FlightModel {
   /**
    * Auto-land guidance: across to the centre no faster than it can stop,
    * down a glide slope to the deck (clear of anything on the way), and onto
-   * it only once over the mark, at a walking sink.
+   * it only once over the mark, at a brisk but soft sink.
    */
   private autoLandAcc(aid: LandingAid, out: THREE.Vector3): void {
     const ex = aid.x - this.pos.x;
     const ez = aid.z - this.pos.z;
     const d = Math.hypot(ex, ez);
-    const vGo = Math.min(AUTOLAND_SPEED, Math.sqrt(2 * AUTOLAND_DECEL * d), 1.5 * d);
+    const vGo = Math.min(AUTOLAND_SPEED, Math.sqrt(2 * AUTOLAND_DECEL * d), 2.5 * d);
     const k = d > 1e-4 ? vGo / d : 0;
-    out.x = (ex * k - this.vel.x) * 2.5;
-    out.z = (ez * k - this.vel.z) * 2.5;
+    out.x = (ex * k - this.vel.x) * 3.5;
+    out.z = (ez * k - this.vel.z) * 3.5;
     const h = this.pos.y - this.hipHeight() - aid.y;
     // What's under it and coming up ahead (the house, the bluff), over the deck
     const g = this.ground;
@@ -1125,12 +1125,13 @@ export class FlightModel {
     const floor = Math.max(g.surface(this.pos.x, this.pos.z), g.surface(ax, az)) - aid.y;
     const clear = d > 8 ? floor + AUTOLAND_CLEAR : -Infinity;
     const hGoal = Math.max(Math.min(h, AUTOLAND_SLOPE * d), clear);
-    let vy = clamp((hGoal - h) * 1.2, -7, 5);
+    let vy = clamp((hGoal - h) * 1.6, -20, 6);
     // Over the mark: keep sinking to the deck; low and still off it, wait
     if (d < 1 && h > hGoal - 0.05) vy = Math.min(vy, -AUTOLAND_SINK);
-    if (h < 1.5 && d > 0.25) vy = Math.max(vy, 0);
-    vy = Math.max(vy, -Math.max(AUTOLAND_SINK, h * 0.8));
-    out.y = (vy - this.vel.y) * 3;
+    if (h < 2 && d > 0.4) vy = Math.max(vy, 0);
+    // (down no faster than it can stop, easing onto the touchdown sink)
+    vy = Math.max(vy, -Math.max(AUTOLAND_SINK, Math.min(h * 1.8, Math.sqrt(2 * AUTOLAND_DECEL * 0.6 * Math.max(0, h)))));
+    out.y = (vy - this.vel.y) * 4;
   }
 
   /** 0–1: how much the pad capture should hold this step (see {@link PAD_CAPTURE_R}). */
