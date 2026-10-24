@@ -787,7 +787,7 @@ describe('FlightModel', () => {
     expect(land(true, 0.5)).toBeGreaterThan(5);
   });
 
-  it('auto-lands dead on the pad centre, gently, from a fast pass or a hover off to one side', () => {
+  it('auto-lands dead on the pad centre, gently, from a fast pass or a hover off to one side, after a short pause to lock on', () => {
     const cases = [
       { pos: [90, 45, -60], vel: [0, 0, 70], flight: true },
       { pos: [-12, 20, 8], vel: [3, 0, 0], flight: false },
@@ -808,16 +808,24 @@ describe('FlightModel', () => {
       m.autoLand = true;
       const kinds: string[] = [];
       let at: THREE.Vector3 | null = null;
+      let lockAtTouchdown = 0;
+      let pause = 0;
       run(m, 30, (i) => {
         i.brake = m.speed > 45;
+        // (over the mark and low, waiting to lock on)
+        if (!at && m.landLock < 1 && Math.hypot(m.pos.x, m.pos.z) < 0.05 && m.pos.y - m.hipHeight() < 2.6) pause += 1 / 120;
         if (!at && m.contact !== 'none' && m.contact !== 'footstep') {
           kinds.push(m.contact);
           at = m.pos.clone();
+          lockAtTouchdown = m.landLock;
         }
       });
       expect(at).not.toBeNull();
       expect(kinds).toEqual(['landed']);
-      expect(Math.hypot(at!.x, at!.z)).toBeLessThan(0.1);
+      expect(Math.hypot(at!.x, at!.z)).toBeLessThan(0.005);
+      expect(lockAtTouchdown).toBe(1);
+      expect(pause).toBeGreaterThan(0.25);
+      expect(pause).toBeLessThan(1);
     }
   });
 

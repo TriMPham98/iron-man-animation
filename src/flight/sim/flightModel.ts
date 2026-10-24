@@ -220,9 +220,25 @@ const AUTOLAND_SINK_DECEL = 7.2;
 const AUTOLAND_SLOPE = 0.6;
 const AUTOLAND_CLEAR = 6;
 const AUTOLAND_SINK = 1.6;
-/** Quickest run-in it plans (s), and the time-to-go it settles onto the mark over at the end (s). */
+/**
+ * Quickest run-in it plans (s), the time-to-go it settles onto the mark over
+ * at the end (s), and the snappier one it trims the last few centimetres on
+ * (s: on the settle's it crept in and the pause before letting down dragged).
+ */
 const AUTOLAND_T_MIN = 1.5;
 const AUTOLAND_T_END = 1.8;
+const AUTOLAND_T_TRIM = 0.9;
+/**
+ * Auto-land's last look before it lets down: hovering just off the deck it
+ * trims onto the centre until it's within this far (m), drifting no faster
+ * than this (m/s), and holds that for this long (s), and only then sinks.
+ * Pushed further than the slip (m) off the mark on the way down, it stops
+ * and trims again.
+ */
+export const AUTOLAND_LOCK_R = 0.015;
+const AUTOLAND_LOCK_V = 0.06;
+const AUTOLAND_LOCK_T = 0.3;
+const AUTOLAND_SLIP = 0.03;
 /** How quickly the body's lean follows the thrust under auto-land (rad/s, critically damped). */
 const AUTOLAND_LEAN = 6;
 /** Least lift it keeps on the way down (× g): on next to none, the lean swung wild on every touch across. */
@@ -370,9 +386,11 @@ export class FlightModel {
   private readonly leanVel = new THREE.Vector3();
   private readonly _lp = new THREE.Vector3();
   /** Auto-land's planned push across (m/s², x/z), its time to go (s), and whether a run-in is under way. */
-  private readonly landPush = new THREE.Vector3();
+  readonly landPush = new THREE.Vector3();
   private landT = 0;
   private landOn = false;
+  /** 0–1: auto-land's hold on the centre before it lets down (1: locked on, sinking). */
+  landLock = 0;
   /** Last contact this step, and its impact speed (m/s). */
   contact: ContactKind = 'none';
   impactSpeed = 0;
@@ -781,7 +799,10 @@ export class FlightModel {
     // Hands off over the pad: hold the hover over its centre
     this.padPull += (this.padCapture(input, fl, carrying) - this.padPull) * approach(dt, 0.2);
     const aid = this.landingAid;
-    if (!landing) this.landOn = false;
+    if (!landing) {
+      this.landOn = false;
+      this.landLock = 0;
+    }
     if (aid && landing) {
       this.padPull = 1;
       this.autoLandAcc(aid, hoverAcc, dt);
@@ -1208,8 +1229,9 @@ export class FlightModel {
       this.landOn = true;
       p.set(0, 0, 0);
       this.landT = runInTime(ex, ez, this.vel.x, this.vel.z);
+      this.landLock = 0;
     }
-    this.landT = Math.max(AUTOLAND_T_END, this.landT - dt);
+    this.landT = Math.max(THREE.MathUtils.lerp(AUTOLAND_T_TRIM, AUTOLAND_T_END, smooth(0.3, 1.5, d)), this.landT - dt);
     p.x += runInJerk(ex, this.vel.x, p.x, this.landT) * dt;
     p.z += runInJerk(ez, this.vel.z, p.z, this.landT) * dt;
     // (the air and the brakes' share is the plan's to take up: it's flown
@@ -1227,10 +1249,17 @@ export class FlightModel {
     const clear = (floor + AUTOLAND_CLEAR) * smooth(4, 8, d);
     const hGoal = Math.max(Math.min(h, AUTOLAND_SLOPE * d), clear);
     let vy = clamp((hGoal - h) * 1.6, -20, 6);
-    // Over the mark: keep sinking to the deck; low and still off it, wait
-    // (both eased in, not switched)
+    // Locked on: dead on the centre and all but still for a beat (and let
+    // go of again if it's pushed off the mark on the way down)
+    const hv = Math.hypot(this.vel.x, this.vel.z);
+    if (this.landLock < 1) {
+      const still = d < AUTOLAND_LOCK_R && hv < AUTOLAND_LOCK_V && h < 1.6;
+      this.landLock = still ? Math.min(1, this.landLock + dt / AUTOLAND_LOCK_T) : Math.max(0, this.landLock - dt / AUTOLAND_LOCK_T);
+    } else if (d > AUTOLAND_SLIP && h > 0.3) this.landLock = 0;
+    // Over the mark: keep sinking to the deck; low and not yet locked on,
+    // wait and trim (both eased in, not switched)
     if (h > hGoal - 0.05) vy = THREE.MathUtils.lerp(vy, Math.min(vy, -AUTOLAND_SINK), smooth(1, 0.5, d));
-    vy = THREE.MathUtils.lerp(vy, Math.max(vy, 0), smooth(2.5, 1.5, h) * smooth(0.1, 0.4, d));
+    if (this.landLock < 1) vy = THREE.MathUtils.lerp(vy, Math.max(vy, 0), smooth(2.5, 1.5, h));
     // (down no faster than it can stop, easing onto the touchdown sink)
     vy = Math.max(vy, -Math.max(AUTOLAND_SINK, Math.min(h * 1.8, Math.sqrt(2 * AUTOLAND_SINK_DECEL * Math.max(0, h)))));
     out.y = Math.max((vy - this.vel.y) * 4, -GRAVITY * (1 - AUTOLAND_LIFT));

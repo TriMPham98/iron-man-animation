@@ -3,7 +3,7 @@ import { MINI_ROCKETS } from '../../animation/flightCheck';
 import type { Combat } from '../combat/combat';
 import { ASSIST_RANGE, LAUNCHER_PER_ARM } from '../combat/playerWeapons';
 import type { FlightModel } from '../sim/flightModel';
-import { CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
+import { AUTOLAND_LOCK_R, CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
 import type { GroundProbe } from '../sim/flightModel';
 import type { SuitWireframe } from './suitWireframe';
 import { BULLSEYE_R, CENTRED_R } from '../world/landingPad';
@@ -16,7 +16,8 @@ import { BULLSEYE_R, CENTRED_R } from '../world/landingPad';
  * target brackets with lock diamonds and lead pips, off-screen arrows,
  * a heading-up radar, incoming-missile warnings and JARVIS's voice as text.
  * Coming in to the pad: its marker and range, then a landing scope (the
- * suit's offset over the deck, its marks and drift), and auto-land.
+ * suit's offset over the deck, its marks and drift), and auto-land (the
+ * scope zooming in on its last trims onto the centre, then locking on).
  */
 
 const CYAN = 'rgba(126, 232, 255, 0.92)';
@@ -34,6 +35,11 @@ const SCOPE_M = 8;
 const PAD_EDGE = 7;
 /** How far ahead the scope's drift vector reaches (s). */
 const DRIFT_LEAD = 1.5;
+/** The tightest the scope zooms to on auto-land's last trims (half-width, m). */
+const SCOPE_FINE_M = 0.12;
+/** A distance off the pad centre, down to the millimetre close in. */
+const offText = (d: number) =>
+  d >= 1 ? `${d.toFixed(d < 10 ? 1 : 0)} m` : d >= 0.1 ? `${(d * 100).toFixed(0)} cm` : d >= 0.01 ? `${(d * 100).toFixed(1)} cm` : `${(d * 1000).toFixed(0)} mm`;
 
 interface Line {
   text: string;
@@ -72,6 +78,9 @@ export class Hud {
   /** The landing pad's centre on its deck, if there's one to bring the suit in to. */
   pad: THREE.Vector3 | null = null;
   private scopeAlpha = 0;
+  /** The scope's half-width as it zooms (m), and how long auto-land has been locked on (s). */
+  private scopeSpan = SCOPE_M;
+  private lockT = 0;
   private hitMarker = 0;
   /** The suit's thrusters (0–1 each), for the helmet's suit diagram. */
   jets: { bootL: number; bootR: number; palmL: number; palmR: number } | null = null;
@@ -391,11 +400,20 @@ export class Hud {
       goal = (1 - THREE.MathUtils.smoothstep(d, 18, 30)) * (1 - THREE.MathUtils.smoothstep(h, 45, 60)) * (h > -0.5 ? 1 : 0);
     }
     this.scopeAlpha += (goal - this.scopeAlpha) * (1 - Math.exp(-dt / 0.2));
+    // Auto-land over the mark: zoom in after the offset, down to centimetres
+    // (eased in log, so each halving takes as long)
+    const off = Math.hypot(dx, dz);
+    const trimming = this.autoLand === 'active' && pad !== null && !m.grounded;
+    const spanGoal = trimming ? THREE.MathUtils.clamp(off * 3, SCOPE_FINE_M, SCOPE_M) : SCOPE_M;
+    this.scopeSpan = Math.exp(THREE.MathUtils.lerp(Math.log(this.scopeSpan), Math.log(spanGoal), 1 - Math.exp(-dt / 0.3)));
+    const lock = trimming ? m.landLock : 0;
+    this.lockT = lock >= 1 ? this.lockT + dt : 0;
     if (this.scopeAlpha < 0.01 || !pad) return;
     const cx = this.w / 2;
     const cy = this.h / 2 + 112 * s;
     const R = 38 * s;
-    const px = R / SCOPE_M;
+    const px = R / this.scopeSpan;
+    const fine = 1 - THREE.MathUtils.smoothstep(this.scopeSpan, 0.6, 2);
     // The view's heading: screen up is the camera's look, flattened
     const f = cam.getWorldDirection(this._v);
     const yaw = Math.atan2(f.x, f.z);
@@ -428,6 +446,11 @@ export class Hud {
     g.beginPath();
     g.arc(cx, cy, R + 4 * s, 0, Math.PI * 2);
     g.stroke();
+    // (zoomed in, the deck's marks run off past the rim)
+    g.save();
+    g.beginPath();
+    g.arc(cx, cy, R + 3 * s, 0, Math.PI * 2);
+    g.clip();
     g.strokeStyle = CYAN_DIM;
     g.beginPath();
     g.arc(cx, cy, PAD_EDGE * px, 0, Math.PI * 2);
@@ -449,8 +472,68 @@ export class Hud {
       g.lineTo(cx + Math.cos(a) * (PAD_EDGE - 0.5) * px, cy + Math.sin(a) * (PAD_EDGE - 0.5) * px);
       g.stroke();
     }
+    // Zoomed in: a centimetre grid, the cross through the centre, and the
+    // ring auto-land has to settle inside, filling as it holds there
+    if (fine > 0.01) {
+      g.globalAlpha = this.alpha * this.scopeAlpha * fine;
+      g.strokeStyle = CYAN_FAINT;
+      g.lineWidth = 1;
+      const step = this.scopeSpan > 0.4 ? 0.1 : 0.02;
+      for (let k = 1; k * step < this.scopeSpan * 1.1; k++) {
+        g.beginPath();
+        g.arc(cx, cy, k * step * px, 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.strokeStyle = CYAN_DIM;
+      g.beginPath();
+      g.moveTo(cx - R, cy);
+      g.lineTo(cx + R, cy);
+      g.moveTo(cx, cy - R);
+      g.lineTo(cx, cy + R);
+      g.stroke();
+      const lr = Math.max(2.5 * s, AUTOLAND_LOCK_R * px);
+      g.strokeStyle = lock >= 1 ? WHITE : CYAN;
+      g.lineWidth = 1.2;
+      g.beginPath();
+      g.arc(cx, cy, lr, 0, Math.PI * 2);
+      g.stroke();
+      if (lock > 0) {
+        g.strokeStyle = WHITE;
+        g.lineWidth = 2;
+        g.beginPath();
+        g.arc(cx, cy, lr + 3 * s, -Math.PI / 2, -Math.PI / 2 + lock * Math.PI * 2);
+        g.stroke();
+      }
+      // Locked on: brackets snap in round the centre, and a ring rolls out
+      if (lock >= 1) {
+        const t = Math.min(1, this.lockT / 0.25);
+        const b = lr + 4 * s + (1 - t) * (1 - t) * 14 * s;
+        const k = 4 * s;
+        g.strokeStyle = WHITE;
+        g.lineWidth = 1.6;
+        for (let i = 0; i < 4; i++) {
+          const a = Math.PI / 4 + (i * Math.PI) / 2;
+          const bx = cx + Math.cos(a) * b;
+          const by = cy + Math.sin(a) * b;
+          const sx = -Math.sign(Math.cos(a));
+          const sy = -Math.sign(Math.sin(a));
+          g.beginPath();
+          g.moveTo(bx + sx * k, by);
+          g.lineTo(bx, by);
+          g.lineTo(bx, by + sy * k);
+          g.stroke();
+        }
+        if (this.lockT < 0.6) {
+          g.globalAlpha = this.alpha * this.scopeAlpha * (1 - this.lockT / 0.6);
+          g.beginPath();
+          g.arc(cx, cy, lr + (R - lr) * Math.sqrt(this.lockT / 0.6), 0, Math.PI * 2);
+          g.stroke();
+        }
+      }
+      g.globalAlpha = this.alpha * this.scopeAlpha;
+    }
+    g.restore();
     // The suit over the deck
-    const off = Math.hypot(dx, dz);
     const col = off <= BULLSEYE_R ? WHITE : off <= CENTRED_R ? CYAN : AMBER;
     let [sx, sy] = toScope(dx, dz);
     const out = Math.hypot(sx - cx, sy - cy);
@@ -462,7 +545,8 @@ export class Hud {
     // inwards while the hold has it
     const dot = 3.2 * s;
     const toC = Math.hypot(sx - cx, sy - cy);
-    if (off > BULLSEYE_R && toC > dot + BULLSEYE_R * px) {
+    const inner = Math.min(BULLSEYE_R, Math.max(AUTOLAND_LOCK_R, this.scopeSpan * 0.1));
+    if (off > inner && toC > dot + inner * px) {
       const ux = (cx - sx) / toC;
       const uy = (cy - sy) / toC;
       g.strokeStyle = held > 0.5 ? col : CYAN_DIM;
@@ -471,17 +555,19 @@ export class Hud {
       g.lineDashOffset = held > 0.5 ? -this.time * 18 * s : 0;
       g.beginPath();
       g.moveTo(sx + ux * (dot + 2 * s), sy + uy * (dot + 2 * s));
-      g.lineTo(cx - ux * BULLSEYE_R * px, cy - uy * BULLSEYE_R * px);
+      g.lineTo(cx - ux * inner * px, cy - uy * inner * px);
       g.stroke();
       g.setLineDash([]);
       g.lineDashOffset = 0;
     }
     // Drift: where the suit will be in a beat and a half, kept inside the scope
+    // (zoomed in, the trim arrow takes over: a drift of centimetres a second
+    // would run off the rim)
     const [vx, vy] = toScope(dx + m.vel.x * DRIFT_LEAD, dz + m.vel.z * DRIFT_LEAD);
     let ex = vx - sx;
     let ey = vy - sy;
     const len = Math.hypot(ex, ey);
-    if (len > dot + 2 * s) {
+    if (len > dot + 2 * s && fine < 0.99) {
       // (cut where it leaves the disc: |s + t·e| = R)
       const ox = sx - cx;
       const oy = sy - cy;
@@ -498,6 +584,7 @@ export class Hud {
         const tx = sx + ex;
         const ty = sy + ey;
         const k = Math.min(4 * s, l * 0.4);
+        g.globalAlpha = this.alpha * this.scopeAlpha * (1 - fine);
         g.strokeStyle = col;
         g.lineWidth = 1.4;
         g.beginPath();
@@ -507,18 +594,54 @@ export class Hud {
         g.lineTo(tx, ty);
         g.lineTo(tx - ux * k + uy * k * 0.6, ty - uy * k - ux * k * 0.6);
         g.stroke();
+        g.globalAlpha = this.alpha * this.scopeAlpha;
+      }
+    }
+    // Trimming in: the push auto-land is nudging the suit with, off the dot
+    if (fine > 0.01 && lock < 1) {
+      const [qx, qy] = toScope(m.landPush.x, m.landPush.z);
+      const tx = qx - cx;
+      const ty = qy - cy;
+      const tl = Math.hypot(tx, ty) / px;
+      if (tl > 1e-3) {
+        // (the push in m/s², drawn on a fixed scale and kept short)
+        const l = Math.min(R * 0.45, 4 * s + tl * 6 * s);
+        const ux = tx / (tl * px);
+        const uy = ty / (tl * px);
+        const ax = sx + ux * (dot + l);
+        const ay = sy + uy * (dot + l);
+        g.globalAlpha = this.alpha * this.scopeAlpha * fine;
+        g.strokeStyle = WHITE;
+        g.lineWidth = 1;
+        g.beginPath();
+        g.moveTo(sx + ux * (dot + 1.5 * s), sy + uy * (dot + 1.5 * s));
+        g.lineTo(ax, ay);
+        g.moveTo(ax - ux * 3 * s - uy * 2 * s, ay - uy * 3 * s + ux * 2 * s);
+        g.lineTo(ax, ay);
+        g.lineTo(ax - ux * 3 * s + uy * 2 * s, ay - uy * 3 * s - ux * 2 * s);
+        g.stroke();
+        g.globalAlpha = this.alpha * this.scopeAlpha;
       }
     }
     g.fillStyle = col;
     g.beginPath();
     g.arc(sx, sy, dot, 0, Math.PI * 2);
     g.fill();
-    // Readouts: offset, height over the deck, and the capture
-    this.text(g, `${off.toFixed(1)} m`, cx - R - 10 * s, cy, 9 * s, col, 'right');
+    // Readouts: offset (to the millimetre close in), height over the deck, and the capture
+    this.text(g, offText(off), cx - R - 10 * s, cy, 9 * s, col, 'right');
     this.text(g, `${Math.max(0, h).toFixed(h < 10 ? 1 : 0)} ▾`, cx + R + 10 * s, cy, 9 * s, CYAN, 'left');
-    const label = held > 0.5 ? 'PAD · HOLD' : 'PAD';
+    const label = lock >= 1 ? 'PAD · LOCKED' : trimming && fine > 0.5 ? 'PAD · HOLD · TRIM' : held > 0.5 ? 'PAD · HOLD' : 'PAD';
     this.text(g, label, cx, cy - R - 12 * s, 7 * s, held > 0.5 ? WHITE : CYAN_DIM, 'center', JARVIS);
-    if (held < 0.5 && off < 16) this.text(g, 'HANDS OFF TO HOLD', cx, cy + R + 13 * s, 6 * s, CYAN_FAINT, 'center', JARVIS);
+    if (trimming && fine > 0.01) {
+      // The trims still to make, across and along the view (the way to go, in mm)
+      const fwd = -(dx * Math.sin(yaw) + dz * Math.cos(yaw));
+      const right = dx * Math.cos(yaw) - dz * Math.sin(yaw);
+      const mm = (v: number) => `${Math.min(999, Math.round(Math.abs(v) * 1000))}`.padStart(3, ' ');
+      const trim = lock >= 1 ? 'ON CENTRE · SETTING DOWN' : `TRIM ${right < 0 ? '◂' : '▸'}${mm(right)}  ${fwd < 0 ? '▾' : '▴'}${mm(fwd)} mm`;
+      g.globalAlpha = this.alpha * this.scopeAlpha * fine;
+      this.text(g, trim, cx, cy + R + 13 * s, lock >= 1 ? 6.5 * s : 8 * s, lock >= 1 ? WHITE : CYAN, 'center', lock >= 1 ? JARVIS : MONO);
+      g.globalAlpha = this.alpha * this.scopeAlpha;
+    } else if (held < 0.5 && off < 16) this.text(g, 'HANDS OFF TO HOLD', cx, cy + R + 13 * s, 6 * s, CYAN_FAINT, 'center', JARVIS);
     g.globalAlpha = this.alpha;
   }
 
@@ -590,7 +713,7 @@ export class Hud {
       const d = pad ? Math.hypot(m.pos.x - pad.x, m.pos.z - pad.z) : 0;
       const h = pad ? Math.max(0, m.pos.y - m.hipHeight() - pad.y) : 0;
       this.text(g, title, x0 + 10 * s, -5 * s, 9 * s, WHITE, 'left', JARVIS);
-      this.text(g, `${d.toFixed(d < 10 ? 1 : 0)} m  ▾${h.toFixed(h < 10 ? 1 : 0)}`, x0 + W - 10 * s, -5 * s, 9 * s, CYAN, 'right');
+      this.text(g, `${offText(d)}  ▾${h.toFixed(h < 10 ? 1 : 0)}`, x0 + W - 10 * s, -5 * s, 9 * s, CYAN, 'right');
       this.text(g, sub, x0 + 10 * s, 8 * s, 6.5 * s, CYAN_DIM, 'left', JARVIS);
     } else {
       // The key cap, then the offer
@@ -1095,7 +1218,7 @@ export class Hud {
     }
     const f = cam.getWorldDirection(this._v);
     const hdg = Math.atan2(f.x, -f.z);
-    const plot = (p: THREE.Vector3, color: string, size: number, tri = false) => {
+    const place = (p: THREE.Vector3) => {
       const dx = p.x - m.pos.x;
       const dz = p.z - m.pos.z;
       // Heading-up: rotate world into the camera's heading
@@ -1103,8 +1226,10 @@ export class Hud {
       const ry = dx * Math.sin(hdg) - dz * Math.cos(hdg);
       const d = Math.hypot(rx, ry);
       const k = Math.min(1, d / range);
-      const px = x + (rx / Math.max(d, 1)) * k * R;
-      const py = y - (ry / Math.max(d, 1)) * k * R;
+      return { px: x + (rx / Math.max(d, 1)) * k * R, py: y - (ry / Math.max(d, 1)) * k * R };
+    };
+    const plot = (p: THREE.Vector3, color: string, size: number, tri = false) => {
+      const { px, py } = place(p);
       g.fillStyle = color;
       if (tri) {
         g.beginPath();
@@ -1114,6 +1239,20 @@ export class Hud {
         g.fill();
       } else g.fillRect(px - size / 2, py - size / 2, size, size);
     };
+    // The pad: the same open diamond as its marker in the world, pinned to the rim when out of range
+    if (this.pad) {
+      const { px, py } = place(this.pad);
+      const k = 4.5 * s;
+      g.strokeStyle = CYAN;
+      g.lineWidth = 1.2;
+      g.beginPath();
+      g.moveTo(px, py - k);
+      g.lineTo(px + k, py);
+      g.lineTo(px, py + k);
+      g.lineTo(px - k, py);
+      g.closePath();
+      g.stroke();
+    }
     for (const h of c.hostiles) if (h.alive) plot(h.pos, h.kind === 'sam' ? AMBER : RED, 4 * s, h.kind === 'sam');
     for (const ms of c.missiles.threats()) plot(ms.pos, WHITE, 3 * s);
     g.fillStyle = WHITE;
