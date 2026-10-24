@@ -305,9 +305,12 @@ class Pool {
       sr[o * 2 + 1] = this.rot[i];
     }
     this.geo.instanceCount = n;
-    this.iPos.needsUpdate = true;
-    this.iColor.needsUpdate = true;
-    this.iSizeRot.needsUpdate = true;
+    // (only the live ones: the whole pool is 5000 a side)
+    for (const attr of [this.iPos, this.iColor, this.iSizeRot]) {
+      attr.clearUpdateRanges();
+      attr.addUpdateRange(0, n * attr.itemSize);
+      attr.needsUpdate = true;
+    }
     this.mesh.visible = n > 0;
   }
 }

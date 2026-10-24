@@ -147,6 +147,8 @@ export interface JetState {
 export interface GroundQuery {
   surface(x: number, z: number): number;
   isWater(x: number, z: number): boolean;
+  /** True on a hard deck (the pad, the house, bare rock): nothing loose there to blow up. */
+  isDeck?(x: number, z: number): boolean;
 }
 
 export class Jets {
@@ -293,12 +295,17 @@ export class Jets {
       w.scale.setScalar(0.6 + 2.2 * (1 - near) + 0.6 * k);
       w.material.opacity = 0.9 * k * near * near;
       if (!doPuff) return;
-      const n = Math.round(1 + 3 * near * k);
+      // A swept deck only throws a thin, quick wash flat across it: the
+      // full brown-out of the lawn, held in a hover over the pad, stacked
+      // hundreds of puffs metres wide in front of the camera and halved
+      // the frame rate
+      const deck = !water && !!ground.isDeck?.(hit.x, hit.z);
+      const n = deck ? (Math.random() < 0.5 + 0.5 * near * k ? 1 : 0) : Math.round(1 + 3 * near * k);
       for (let p = 0; p < n; p++) {
         const a = Math.random() * Math.PI * 2;
         const spd = 6 + 14 * near * k;
-        const v = this._v.set(Math.cos(a) * spd, 0.6 + Math.random() * 1.5, Math.sin(a) * spd).addScaledVector(suitVel, 0.3);
-        particles.emit(water ? 'spray' : 'dust', hit, v, { scale: 0.7 + near });
+        const v = this._v.set(Math.cos(a) * spd, deck ? 0.2 : 0.6 + Math.random() * 1.5, Math.sin(a) * spd).addScaledVector(suitVel, 0.3);
+        particles.emit(water ? 'spray' : 'dust', hit, v, deck ? { scale: 0.3 + 0.3 * near, life: 0.35 } : { scale: 0.7 + near });
       }
       if (water && Math.random() < 0.5 * near) particles.emit('mist', hit, this._v.set(0, 1.5, 0), { scale: 1 + near });
     });
