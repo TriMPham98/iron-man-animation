@@ -3,6 +3,7 @@ import { Suit } from '../suit/Suit';
 import { createAdaptiveResolution } from '../scene/adaptiveResolution';
 import { GameAudio } from './audio/gameAudio';
 import { SFX, Soundscape } from './audio/soundscape';
+import { CONTEXT_ATTRIBUTES, canReverseDepth, useReversedDepth } from './render/depth';
 import { FlightPost, type LensState } from './render/post';
 import { viewportSize, wideZoom } from './render/viewport';
 import { Game } from './sim/game';
@@ -106,16 +107,19 @@ export class FlightApp {
     this.screens = opts.screens;
     const { canvas } = opts;
     this.audioReady = this.audio.preload(Soundscape.files()).catch((e) => console.warn(e));
+    // 0.1 m to 150 km without the near ground and the far ridges fighting:
+    // reversed-Z where the GPU can, log depth where it can't (render/depth.ts)
+    const gl = canvas.getContext('webgl2', CONTEXT_ATTRIBUTES);
+    const reversed = canReverseDepth(gl);
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: false,
-      stencil: false,
-      powerPreference: 'high-performance',
-      // Logarithmic depth: 0.1 m to 150 km without the near ground and the far
-      // ridges fighting (three's reversed-Z path renders black on Chrome/Metal)
-      logarithmicDepthBuffer: true,
+      context: gl ?? undefined,
+      ...CONTEXT_ATTRIBUTES,
+      reverseDepthBuffer: reversed,
+      logarithmicDepthBuffer: !reversed,
     });
     const r = this.renderer;
+    if (reversed) useReversedDepth(r);
     console.info(
       '[flight] depth',
       r.capabilities.reverseDepthBuffer ? 'reversed-z' : 'logarithmic',
