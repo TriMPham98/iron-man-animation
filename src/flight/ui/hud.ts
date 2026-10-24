@@ -51,6 +51,17 @@ export class Hud {
   waveKey = 'N';
   private killFlash = 0;
   private hitMarker = 0;
+  /** The suit's thrusters (0–1 each), for the helmet's suit diagram. */
+  jets: { bootL: number; bootR: number; palmL: number; palmR: number } | null = null;
+  /**
+   * Helmet view: the head-mounted panels float on a soft spring against
+   * the turn and the g (CSS px), so the head reads as moving inside the
+   * shell; the world-fixed symbology stays where it belongs.
+   */
+  private readonly sway = new THREE.Vector2();
+  private readonly swayVel = new THREE.Vector2();
+  private readonly lastQ = new THREE.Quaternion();
+  private readonly _q = new THREE.Quaternion();
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -105,18 +116,26 @@ export class Hud {
     const cy = this.h / 2;
     const s = Math.max(this.minScale, Math.min(this.w, this.h) / 900);
 
-    if (helmet) this.drawVisor(g, s);
+    this.updateSway(dt, cam, m, helmet, s);
     this.drawLadder(g, cam, cx, cy, s);
     this.drawReticle(g, cx, cy, s);
     this.drawMarkers(g, cam, m, s);
+    this.drawTargets(g, cam, m, combat, s);
+    this.drawWarnings(g, cam, m, combat, s);
+    // Head-mounted panels (they ride the sway in the helmet)
+    g.save();
+    if (helmet) {
+      g.translate(this.sway.x, this.sway.y);
+      this.drawVisor(g, s);
+      this.drawSuitDiagram(g, m, combat, s);
+    }
     this.drawTapes(g, m, ground, s);
     this.drawHeading(g, cam, s);
-    this.drawTargets(g, cam, m, combat, s);
     this.drawStatus(g, m, combat, s);
     this.drawWeapons(g, combat, s);
     this.drawRadar(g, cam, m, combat, s);
-    this.drawWarnings(g, cam, m, combat, s);
     this.drawLines(g, s);
+    g.restore();
     g.globalAlpha = 1;
   }
 
@@ -126,6 +145,28 @@ export class Hud {
     g.textAlign = align;
     g.textBaseline = 'middle';
     g.fillText(str, x, y);
+  }
+
+  private updateSway(dt: number, cam: THREE.Camera, m: FlightModel, helmet: boolean, s: number): void {
+    // The view's turn rate this frame (rad/s, camera axes)
+    const q = this._q.copy(this.lastQ).invert().multiply(cam.quaternion);
+    this.lastQ.copy(cam.quaternion);
+    let goalX = 0;
+    let goalY = 0;
+    if (helmet && dt > 1e-4) {
+      const k = 2 / dt;
+      const yawRate = THREE.MathUtils.clamp(q.y * k, -3, 3);
+      const pitchRate = THREE.MathUtils.clamp(q.x * k, -3, 3);
+      // Panels lag the turn, and sink as the g piles on
+      goalX = yawRate * 9 * s;
+      goalY = pitchRate * 9 * s + THREE.MathUtils.clamp(m.gLoad - 1, 0, 9) * 2.2 * s;
+    }
+    const w = 9;
+    const h = Math.min(dt, 0.05);
+    this.swayVel.x += (w * w * (goalX - this.sway.x) - 2 * 0.6 * w * this.swayVel.x) * h;
+    this.swayVel.y += (w * w * (goalY - this.sway.y) - 2 * 0.6 * w * this.swayVel.y) * h;
+    this.sway.addScaledVector(this.swayVel, h);
+    this.sway.clampLength(0, 26 * s);
   }
 
   private drawVisor(g: CanvasRenderingContext2D, s: number): void {
@@ -139,9 +180,80 @@ export class Hud {
     g.beginPath();
     g.arc(this.w / 2, this.h / 2, r, -Math.PI * 0.18, Math.PI * 0.18);
     g.stroke();
+    // Brackets at the projection's corners, the edge of what JARVIS can draw on
+    const mx = this.w * 0.06;
+    const my = this.h * 0.08;
+    const k = 18 * s;
+    g.strokeStyle = CYAN_DIM;
+    for (const [x, y, dx, dy] of [
+      [mx, my, 1, 1],
+      [this.w - mx, my, -1, 1],
+      [mx, this.h - my, 1, -1],
+      [this.w - mx, this.h - my, -1, -1],
+    ]) {
+      g.beginPath();
+      g.moveTo(x, y + dy * k);
+      g.lineTo(x, y);
+      g.lineTo(x + dx * k, y);
+      g.stroke();
+    }
+    this.text(g, 'MK III  ·  HUD ONLINE', mx + 4 * s, my + k + 10 * s, 7 * s, CYAN_FAINT, 'left', JARVIS);
     const y = ((this.time * 0.12) % 1) * this.h;
     g.fillStyle = 'rgba(126,232,255,0.03)';
     g.fillRect(0, y, this.w, 2 * s);
+  }
+
+  /**
+   * The suit as JARVIS draws it in the corner of the visor: an outline lit
+   * by the armour state, each thruster glowing with its output.
+   */
+  private drawSuitDiagram(g: CanvasRenderingContext2D, m: FlightModel, c: Combat, s: number): void {
+    const x = 40 * s + 34 * s;
+    const y = this.h - 268 * s - this.bottomInset;
+    const u = 1.15 * s;
+    const armor = c.armor;
+    g.save();
+    g.translate(x, y);
+    g.strokeStyle = armor < 0.3 ? RED : armor < 0.6 ? AMBER : CYAN_DIM;
+    g.lineWidth = 1;
+    g.lineJoin = 'round';
+    // Helmet, torso, arms, legs (front view, a mannequin in a few strokes)
+    g.beginPath();
+    g.arc(0, -40 * u, 6 * u, 0, Math.PI * 2);
+    g.moveTo(-13 * u, -30 * u);
+    g.lineTo(13 * u, -30 * u);
+    g.lineTo(9 * u, 2 * u);
+    g.lineTo(-9 * u, 2 * u);
+    g.closePath();
+    for (const side of [-1, 1]) {
+      g.moveTo(side * 14 * u, -29 * u);
+      g.lineTo(side * 19 * u, -10 * u);
+      g.lineTo(side * 21 * u, 8 * u);
+      g.moveTo(side * 6 * u, 3 * u);
+      g.lineTo(side * 8 * u, 24 * u);
+      g.lineTo(side * 8 * u, 44 * u);
+    }
+    g.stroke();
+    // Arc reactor
+    g.fillStyle = WHITE;
+    g.beginPath();
+    g.arc(0, -20 * u, 1.8 * u, 0, Math.PI * 2);
+    g.fill();
+    // Thrusters: palms and boots, brightening with their output
+    const j = this.jets;
+    const pip = (px: number, py: number, out: number) => {
+      const k = THREE.MathUtils.clamp(out, 0, 1);
+      g.fillStyle = k > 0.75 ? WHITE : k > 0.05 ? CYAN : CYAN_FAINT;
+      g.beginPath();
+      g.arc(px, py, (2 + 2.5 * k) * u, 0, Math.PI * 2);
+      g.fill();
+    };
+    pip(-21 * u, 11 * u, j?.palmL ?? 0);
+    pip(21 * u, 11 * u, j?.palmR ?? 0);
+    pip(-8 * u, 47 * u, j?.bootL ?? 0);
+    pip(8 * u, 47 * u, j?.bootR ?? 0);
+    g.restore();
+    this.text(g, m.grounded ? 'SUIT · STANDING' : 'SUIT · THRUSTERS', x, y + 60 * u, 7 * s, CYAN_DIM, 'center', JARVIS);
   }
 
   private drawReticle(g: CanvasRenderingContext2D, cx: number, cy: number, s: number): void {

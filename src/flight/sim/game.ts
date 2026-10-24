@@ -7,6 +7,7 @@ import { GVaporFx } from '../fx/gVapor';
 import { patchLogDepth } from '../render/depth';
 import { PAD } from '../world/house';
 import { hazeAll } from '../render/haze';
+import { createEyeClip, eyeClipAll } from '../render/eyeClip';
 import type { World } from '../world/world';
 import { CameraRig } from './cameraRig';
 import { EMPTY_INPUT, FlightModel, type FlightInput } from './flightModel';
@@ -19,6 +20,9 @@ import { SPEED_OF_SOUND } from '../world/config';
 
 /** Physics runs at a fixed rate whatever the display does. */
 export const PHYSICS_HZ = 120;
+/** Bind-space centre of the helmet shell and the radius that takes it all (m). */
+const HELMET_CLIP_AT = [0, 1.73, 0.02] as const;
+const HELMET_CLIP_R = 0.16;
 
 /**
  * One flight: the suit, its flight model and body language, the camera,
@@ -37,6 +41,8 @@ export class Game {
   time = 0;
   private acc = 0;
   readonly head = new THREE.Vector3();
+  /** The helmet view's cut-away round the head (see eyeClip.ts). */
+  private readonly eyeClip = createEyeClip();
   private readonly _aim = new THREE.Vector3();
   private controls: Controls | null = null;
   private wasGrounded = true;
@@ -49,6 +55,7 @@ export class Game {
   private cleanFlow = 1;
   private readonly _owed = new THREE.Vector3();
   private readonly _axis = new THREE.Vector3();
+  private readonly _clip = new THREE.Vector3();
 
   constructor(
     readonly world: World,
@@ -71,6 +78,7 @@ export class Game {
     scene.add(suit.group, this.particles.group, this.jets.group, this.combat.group);
     patchLogDepth(suit.group);
     hazeAll(suit.group, world.atmosphere.uniforms);
+    eyeClipAll(suit.group, this.eyeClip);
     suit.forEachMesh((m) => {
       const mats = Array.isArray(m.material) ? m.material : [m.material];
       const lit = mats.every((x) => (x as THREE.MeshStandardMaterial).isMeshStandardMaterial && !x.transparent);
@@ -161,12 +169,17 @@ export class Game {
     const sun = this.world.atmosphere.sun;
     sun.target.position.copy(this.model.pos);
     sun.position.copy(this.model.pos).addScaledVector(this.world.atmosphere.uniforms.uSunDir.value as THREE.Vector3, 120);
-    this.suit.group.visible = this.rig.mode !== 'helmet';
+    // In the helmet the pilot sees his own suit (arms, chest, boots) with
+    // the helmet itself cut away round the eye
+    const helmet = this.rig.mode === 'helmet';
+    this.suit.boneWorldPoint('head', HELMET_CLIP_AT, this._clip);
+    this.eyeClip.uEyeClip.value.set(this._clip.x, this._clip.y, this._clip.z, helmet ? HELMET_CLIP_R : 0);
     const o = this.driver.outputs;
+    this.jets.eye = helmet ? this.rig.camera.position : null;
     this.jets.update(dt, this.suit, { bootL: o.bootL, bootR: o.bootR, palmL: o.palmL, palmR: o.palmR, palmBoost: o.palmBoost }, this.ground, this.particles, this.model.vel);
     this.particles.update(dt, this.rig.camera);
     this.sonic.update(dt, this.model.pos, this.model.vel, this.model.speed / SPEED_OF_SOUND, this.cleanFlow);
-    this.gVapor.group.visible = this.suit.group.visible;
+    this.gVapor.group.visible = !helmet;
     this.gVapor.update(dt, this.suit, this.rig.camera, this.model.gLoad, this.model.speed, this.model.flightness, this.model.pos.y);
     this.model.pos.sub(owed);
   }

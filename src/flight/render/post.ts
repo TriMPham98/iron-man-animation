@@ -105,6 +105,18 @@ void main() {
   col = mix(col, vec3(0.75, 0.05, 0.03), uDamage * smoothstep(0.08, 0.6, r2) * 0.7);
   // Visor: a faint cool tint
   col = mix(col, col * vec3(0.92, 1.0, 1.06), uHelmet * 0.6);
+  // Inside the helmet: the faceplate's rim, far too close to focus, closes
+  // in on the corners of the view (the brow sags a touch at the middle);
+  // the HUD projector lights its inner lip
+  if (uHelmet > 0.001) {
+    vec2 q = c * 2.0;
+    q.y += 0.06 * (1.0 - q.x * q.x) * step(0.0, q.y);
+    float d = pow(pow(abs(q.x) / 1.03, 3.2) + pow(abs(q.y) / 0.97, 3.2), 1.0 / 3.2);
+    float rim = smoothstep(1.0, 1.3, d);
+    vec3 shell = vec3(0.045, 0.028, 0.024) * (0.6 + 0.4 * smoothstep(1.5, 1.05, d));
+    col = mix(col, shell, rim * uHelmet);
+    col += vec3(0.25, 0.75, 0.9) * 0.018 * exp(-pow((d - 1.08) / 0.05, 2.0)) * uHelmet;
+  }
 
   col = toSrgb(col);
   // Film grain / dither (kills banding in the sky gradients)

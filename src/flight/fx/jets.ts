@@ -156,6 +156,11 @@ export class Jets {
   private readonly light = new THREE.PointLight(0x9fd4ff, 0, 40, 1.6);
   private readonly washes: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[] = [];
   private time = 0;
+  /**
+   * The helmet view's eye, when it's inside the suit: a palm's nozzle glow
+   * a forearm from the face would white out half the visor.
+   */
+  eye: THREE.Vector3 | null = null;
   private puff = 0;
   private readonly _q = new THREE.Quaternion();
   private readonly _v = new THREE.Vector3();
@@ -322,6 +327,7 @@ export class Jets {
     // The glow sits clear of the armour: half-buried, camera shake made it blink
     j.glow.position.copy(j.pos).addScaledVector(j.dir, 0.05);
     j.glow.scale.setScalar(0.14 + 0.3 * k);
-    j.glow.material.opacity = Math.min(1, k * 1.4);
+    const near = this.eye ? THREE.MathUtils.lerp(0.15, 1, THREE.MathUtils.smoothstep(j.glow.position.distanceTo(this.eye), 0.4, 1.4)) : 1;
+    j.glow.material.opacity = Math.min(1, k * 1.4) * near;
   }
 }

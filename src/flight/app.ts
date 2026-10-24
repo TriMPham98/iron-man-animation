@@ -470,6 +470,7 @@ export class FlightApp {
       hud.bottomInset = this.touch.bottomInset;
       hud.minScale = 0.55;
     }
+    hud.jets = game.driver.outputs;
     hud.draw(dt, camera, game.model, game.combat, game.ground, game.rig.mode === 'helmet');
     this.sounds.update(dt, game.model, game.combat, camera, game.rig.mode === 'helmet', game.combat.weapons.unibeamOn);
     this.post.render(dt, this.lens);

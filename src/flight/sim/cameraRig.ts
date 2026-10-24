@@ -161,7 +161,8 @@ export class CameraRig {
       lookAt = this._v.copy(m.pos).add(new THREE.Vector3(0, 0.45, 0)).addScaledVector(side, -1.5);
       fovGoal = 40;
     } else if (this.mode === 'helmet') {
-      ideal.copy(head).addScaledVector(fwd, 0.22);
+      // The eye, inside the helmet: the suit's own arms and boots are in view
+      ideal.copy(head).addScaledVector(fwd, 0.07).addScaledVector(aimUp, 0.02);
       this.pos.copy(ideal);
       fovGoal = 74;
     } else if (this.mode === 'flyby') {

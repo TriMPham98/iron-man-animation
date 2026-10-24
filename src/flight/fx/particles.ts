@@ -120,6 +120,9 @@ void main() {
   vec2 corner = mat2(c, s, -s, c) * position.xy * iSizeRot.x;
   mv.xy += corner;
   vColor = iColor;
+  // A puff the eye is inside of (the helmet view, a palm flash by the face)
+  // fades out before the near plane cuts its square edge across the frame
+  vColor.a *= clamp((-mv.z - 0.12) / max(iSizeRot.x, 0.05), 0.0, 1.0);
   vHaze = hazeAmount(cameraPosition, iPos);
   vHazeCol = uGlow > 0.5 ? vec3(0.0) : hazeColor(normalize(iPos - cameraPosition));
   gl_Position = projectionMatrix * mv;
