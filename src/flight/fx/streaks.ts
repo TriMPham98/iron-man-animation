@@ -17,7 +17,9 @@ varying vec4 vColor;
 void main() {
   vec3 a = (viewMatrix * vec4(iA, 1.0)).xyz;
   vec3 b = (viewMatrix * vec4(iB, 1.0)).xyz;
-  // Keep both ends in front of the eye
+  // Keep both ends in front of the eye; a segment wholly behind it is
+  // dropped (clamping both ends would pin it just before the eye)
+  bool behind = a.z > -0.05 && b.z > -0.05;
   if (a.z > -0.05) a = mix(b, a, (-0.05 - b.z) / (a.z - b.z + 1e-5));
   if (b.z > -0.05) b = mix(a, b, (-0.05 - a.z) / (b.z - a.z + 1e-5));
   vec3 dir = b - a;
@@ -33,7 +35,7 @@ void main() {
   // −1 / +1 at the far edge of the A / B cap, 0 where the cap meets the body
   vCap = position.z * (position.y * 2.0 - 1.0);
   vColor = iColor;
-  gl_Position = projectionMatrix * vec4(p, 1.0);
+  gl_Position = behind ? vec4(0.0, 0.0, 2.0, 1.0) : projectionMatrix * vec4(p, 1.0);
 }
 `;
 

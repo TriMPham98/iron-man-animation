@@ -25,7 +25,8 @@ void main() {
   vec3 a = (viewMatrix * vec4(uA, 1.0)).xyz;
   vec3 b = (viewMatrix * vec4(uB, 1.0)).xyz;
   float len = length(uB - uA);
-  // Keep both ends in front of the eye
+  // Keep both ends in front of the eye; a beam wholly behind it is dropped
+  bool behind = a.z > -0.05 && b.z > -0.05;
   float ta = 0.0;
   if (a.z > -0.05) { float k = (-0.05 - b.z) / (a.z - b.z + 1e-5); ta = 1.0 - k; a = mix(b, a, k); }
   if (b.z > -0.05) b = mix(a, b, (-0.05 - a.z) / (b.z - a.z + 1e-5));
@@ -41,7 +42,7 @@ void main() {
   vUv = vec2(aSide, t);
   vLen = mix(ta, 1.0, t) * len;
   vView = -mid.z;
-  gl_Position = projectionMatrix * vec4(p, 1.0);
+  gl_Position = behind ? vec4(0.0, 0.0, 2.0, 1.0) : projectionMatrix * vec4(p, 1.0);
 }
 `;
 

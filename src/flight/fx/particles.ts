@@ -252,11 +252,17 @@ class Pool {
 
   update(dt: number, eye: THREE.Vector3): void {
     for (let i = this.count - 1; i >= 0; i--) {
+      // Born this frame: drawn where it was emitted. Emitters place it where
+      // the suit is drawn now, so a step on at the suit's speed would put a
+      // muzzle or port flash metres ahead of the hardware (in front of the
+      // helmet's eye at speed)
+      const born = this.age[i] === 0;
       this.age[i] += dt;
       if (this.age[i] >= this.life[i]) {
         this.kill(i);
         continue;
       }
+      if (born) continue;
       const d = Math.exp(-this.drag[i] * dt);
       const k = i * 3;
       this.v[k] *= d;
