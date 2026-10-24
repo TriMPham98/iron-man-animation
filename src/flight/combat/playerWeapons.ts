@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MINI_ROCKETS, ROCKETS_PER_POD } from '../../animation/flightCheck';
-import { flareDrum } from '../../suit/flightFlaps';
+import { FLARE_DRUM, FLARE_PUSH, flareDrum } from '../../suit/flightFlaps';
 import type { Suit } from '../../suit/Suit';
 import type { Particles } from '../fx/particles';
 import type { Streaks } from '../fx/streaks';
@@ -8,6 +8,7 @@ import type { EventBus } from '../sim/events';
 import type { FlightModel } from '../sim/flightModel';
 import type { Controls } from '../sim/input';
 import { IDLE_ARMS, type ArmsState } from '../sim/suitDriver';
+import { GRAVITY } from '../world/config';
 import type { Heightfield } from '../world/heightfield';
 import type { Explosions } from './explosions';
 import { paintLock } from './locks';
@@ -25,8 +26,12 @@ import { UnibeamFx } from './unibeamFx';
  *  - unibeam (hold Space): the suit pulls up into a stance, the arc reactor
  *    winds up and the chest fires a beam that cuts through everything in
  *    its line until it overheats;
- *  - flares (F): the hip drums push out and spin, spitting a fan of flares
- *    that pull heat seekers off the suit;
+ *  - flares (F): the hip drums push out and, like a revolver, index a
+ *    fresh port onto the station round by round, the two hips taking turns:
+ *    each pellet kicks out dull, lights a beat later with a pop, and burns
+ *    white-hot down an arc of thick smoke (the fan sweeps from high to low
+ *    across the salvo), then cools orange and gutters out — pulling heat
+ *    seekers off the suit;
  *  - forearm launchers (hold G to paint, release to fire): both bays open,
  *    the paint takes one lock per enemy, then one round at a time leaves a
  *    forearm tube — alternating arms, each raised onto its target.
@@ -53,12 +58,25 @@ interface Bolt {
 
 interface Flare extends Decoy {
   v: THREE.Vector3;
+  /** Age and the whole burn (s). */
+  age: number;
   life: number;
   sprite: THREE.Sprite;
+  /** Path laid (m) and time (s) since the last puff of smoke. */
   laid: number;
+  puffT: number;
+  lit: boolean;
+  /** Brightness this frame 0–1 (flicker and sputter in), a dropout's dip, its own phase. */
+  glow: number;
+  sputter: number;
+  seed: number;
 }
 
-type Shot = { kind: 'bolt'; side: 'L' | 'R' } | { kind: 'rocket'; target: Hostile | null } | { kind: 'launcher'; side: 0 | 1; target: Hostile | null };
+type Shot =
+  | { kind: 'bolt'; side: 'L' | 'R' }
+  | { kind: 'rocket'; target: Hostile | null }
+  | { kind: 'launcher'; side: 0 | 1; target: Hostile | null }
+  | { kind: 'flare'; side: 'L' | 'R'; sweep: number };
 
 const BOLT_SPEED = 780;
 /** The aim snaps to a target this close to the sight line or its lead pip (deg), keeps it out to ASSIST_KEEP, within ASSIST_RANGE (m). */
@@ -108,6 +126,22 @@ const UNIBEAM_DPS = 160;
 const UNIBEAM_REACH = 2600;
 /** Bind-space points the weapons fire from (fallbacks when a bay is stowed). */
 const REACTOR: [number, number, number] = [0, 1.436, 0.19];
+/** Flares: a salvo, the beat between rounds (alternating hips), ports round each drum. */
+const FLARE_SALVO = 8;
+const FLARE_INTERVAL = 0.075;
+const FLARE_PORTS = 10;
+/** A drum turns its next port onto the station this fast (s). */
+const FLARE_INDEX = 0.06;
+/** Ejection speed (m/s), the pellet's drag (per m/s), its fuse before it lights (s), the cooling at the end of its burn (s). */
+const FLARE_EJECT = 17;
+const FLARE_DRAG = 0.035;
+const FLARE_FUSE = 0.07;
+const FLARE_COOL = 0.9;
+/** The light the burning flares throw on the suit and the ground, and the pop at the port. */
+const FLARE_LIGHT = 120;
+const FLARE_POP_LIGHT = 120;
+const FLARE_HOT = new THREE.Color(4.2, 3.5, 2.6);
+const FLARE_EMBER = new THREE.Color(3, 0.95, 0.22);
 const SILO: Array<[number, number, number]> = [
   [0.13, 1.52, -0.02],
   [-0.13, 1.52, -0.02],
@@ -120,9 +154,12 @@ function flareTexture(): THREE.Texture {
   c.width = c.height = 64;
   const g = c.getContext('2d')!;
   const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grad.addColorStop(0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.2, 'rgba(255,235,190,0.95)');
-  grad.addColorStop(0.55, 'rgba(255,150,50,0.35)');
+  // The halo round the white-hot core (the core itself is a streak): a
+  // bright inner bloom that falls off into a wide warm glow
+  grad.addColorStop(0, 'rgba(255,250,240,1)');
+  grad.addColorStop(0.08, 'rgba(255,236,200,0.9)');
+  grad.addColorStop(0.25, 'rgba(255,190,120,0.42)');
+  grad.addColorStop(0.55, 'rgba(255,130,50,0.12)');
   grad.addColorStop(1, 'rgba(255,90,20,0)');
   g.fillStyle = grad;
   g.fillRect(0, 0, 64, 64);
@@ -188,8 +225,15 @@ export class PlayerWeapons {
   private reloadT = 0;
   private flareSalvo = 0;
   private flareT = 0;
-  private flareSpin = 0;
   private flareHold = 0;
+  /** Rounds fired this salvo (the fan's sweep). */
+  private flareRound = 0;
+  /** Each drum's port count turned (L, R) and how long since it began its last index (s). */
+  private readonly drumPort: [number, number] = [0, 0];
+  private readonly drumT: [number, number] = [1, 1];
+  private readonly flareLight = new THREE.PointLight(0xffd0a0, 0, 45, 2);
+  private flarePopT = 1;
+  private readonly flarePort = new THREE.Vector3();
   private launcherOut = 0;
   private launcherHold = 0;
   private launcherHeld = false;
@@ -228,7 +272,7 @@ export class PlayerWeapons {
     private readonly events: EventBus,
   ) {
     this.group.name = 'player-weapons';
-    this.group.add(this.beam.group, this.muzzleLight, this.impactLight);
+    this.group.add(this.beam.group, this.muzzleLight, this.impactLight, this.flareLight);
   }
 
   /** Rockets left in both pods. */
@@ -419,27 +463,41 @@ export class PlayerWeapons {
     // ── Flares ─────────────────────────────────────────────────────
     this.flareCooldown = Math.max(0, this.flareCooldown - dt);
     if (enabled && c.flares && this.flareCooldown <= 0 && this.flares > 0) {
-      this.flareSalvo = Math.min(8, this.flares);
+      this.flareSalvo = Math.min(FLARE_SALVO, this.flares);
+      this.flareRound = 0;
       this.flareT = 0.2;
       this.flareCooldown = 3;
       this.events.emit('flareSalvo', { at: this.model.pos });
     }
     if (this.flareSalvo > 0) {
       this.flareHold = 0.5;
-      this.flareSpin += dt * 9;
       this.flareT -= dt;
       if (this.flareT <= 0 && A.flares > 0.85) {
-        this.popFlare(this.flareSalvo % 2 ? 'L' : 'R');
+        // Out of the port on the station, the next pair down the fan
+        const side = this.flareSalvo % 2 ? 'L' : 'R';
+        this.pending.push({ kind: 'flare', side, sweep: Math.min(1, Math.floor(this.flareRound / 2) / (FLARE_SALVO / 2 - 1)) });
+        this.flareRound++;
         this.flareSalvo--;
         this.flares--;
-        this.flareT = 0.075;
+        this.flareT = FLARE_INTERVAL;
       }
-    } else if (A.flares > 0.01) {
-      this.flareSpin += dt * 2 * A.flares;
     }
     this.flareHold = Math.max(0, this.flareHold - dt);
     A.flares += THREE.MathUtils.clamp((this.flareHold > 0 ? 1 : 0) - A.flares, -dt / 0.35, dt / 0.2);
-    A.flareSpin = this.flareSpin;
+    // Each drum clicks round a port at a time, a hair past and back, like
+    // a revolver's cylinder; the knock of a round leaving fades as fast
+    for (const i of [0, 1] as const) {
+      this.drumT[i] += dt;
+      const k = Math.min(1, this.drumT[i] / FLARE_INDEX);
+      const back = 1.70158;
+      const ease = 1 + (back + 1) * Math.pow(k - 1, 3) + back * Math.pow(k - 1, 2);
+      const spin = ((this.drumPort[i] - 1 + ease) * Math.PI * 2) / FLARE_PORTS;
+      if (i === 0) A.flareSpinL = spin;
+      else A.flareSpinR = spin;
+    }
+    const knock = Math.exp(-dt / 0.06);
+    A.flareKickL *= knock;
+    A.flareKickR *= knock;
     this.updateFlares(dt);
 
     // ── Forearm launchers ──────────────────────────────────────────
@@ -553,6 +611,7 @@ export class PlayerWeapons {
     for (const s of this.pending) {
       if (s.kind === 'bolt') this.fireBolt(s.side, this.aimDir);
       else if (s.kind === 'rocket') this.fireRocket(s.target);
+      else if (s.kind === 'flare') this.popFlare(s.side, s.sweep);
       else this.fireLauncher(s.side, s.target);
     }
     this.pending.length = 0;
@@ -874,55 +933,123 @@ export class PlayerWeapons {
     this.beam.update(dt, from, this.beamEnd, this.unibeamCharge * (this.unibeamHold > 0 ? 1 : 0), power, this.beamHitGround, this.eye);
   }
 
-  private popFlare(side: 'L' | 'R'): void {
+  /**
+   * A round leaves the port on its drum's station, up and aft round the
+   * rim (the fan sweeping down as `sweep` runs 0 → 1), with the suit's own
+   * velocity and a kick of gas; the drum then indexes the next port round.
+   */
+  private popFlare(side: 'L' | 'R', sweep: number): void {
     const drum = flareDrum(side);
-    const at = this.suit.boneWorldPoint('hips', drum.center.toArray() as [number, number, number], new THREE.Vector3());
+    const centre = this.suit.boneWorldPoint('hips', drum.center.toArray() as [number, number, number], new THREE.Vector3());
     const out = this.suit.boneWorldDir('hips', drum.normal.toArray() as [number, number, number], new THREE.Vector3());
-    const back = this.model.vel.lengthSq() > 4 ? this.model.vel.clone().normalize().negate() : new THREE.Vector3(0, 0, 0);
-    const v = this.model.vel
+    const sp = this.model.vel.length();
+    const back = sp > 2 ? this._a.copy(this.model.vel).divideScalar(-sp) : this.suit.boneWorldDir('hips', [0, 0, -1], this._a);
+    const dir = new THREE.Vector3()
+      .copy(out)
+      .addScaledVector(back, 0.55)
+      .add(new THREE.Vector3((Math.random() - 0.5) * 0.25, THREE.MathUtils.lerp(0.95, 0.08, sweep) + (Math.random() - 0.5) * 0.15, (Math.random() - 0.5) * 0.25))
+      .normalize();
+    // The port: on the bared rim, where the throw crosses it
+    const radial = this._b.copy(dir).addScaledVector(out, -dir.dot(out));
+    if (radial.lengthSq() > 1e-6) radial.normalize();
+    const at = centre
       .clone()
-      .addScaledVector(out, 22 + Math.random() * 8)
-      .addScaledVector(back, 12)
-      .add(new THREE.Vector3((Math.random() - 0.5) * 6, 6 + Math.random() * 6, (Math.random() - 0.5) * 6));
+      .addScaledVector(out, FLARE_PUSH + (FLARE_DRUM.rim[0] + FLARE_DRUM.rim[1]) / 2)
+      .addScaledVector(radial, FLARE_DRUM.radius);
+    const v = this.model.vel.clone().addScaledVector(dir, FLARE_EJECT * (0.85 + Math.random() * 0.3));
     const sprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: flareTexture(), color: 0xfff1d8, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }),
+      new THREE.SpriteMaterial({ map: flareTexture(), color: 0x000000, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }),
     );
     sprite.position.copy(at);
+    sprite.scale.setScalar(0.01);
     this.group.add(sprite);
-    const f: Flare = { pos: at, heat: 1, v, life: 3.6 + Math.random(), sprite, laid: 0 };
+    const f: Flare = { pos: at, heat: 0, v, age: 0, life: 3.6 + Math.random(), sprite, laid: 0, puffT: 0, lit: false, glow: 0, sputter: 1, seed: Math.random() * 100 };
     this.flareList.push(f);
     this.missiles.offerDecoy(f, this.model.pos);
-    this.particles.burst('spark', at, 8, 10, out, 0.6);
-    this.particles.emit('flash', at, undefined, { scale: 0.12 });
+    // The charge that throws it: a spit of flame and a puff of gas out of the port
+    const P = this.particles;
+    const gas = this._n.copy(this.model.vel).addScaledVector(dir, 4);
+    P.emit('flash', at, this.model.vel, { scale: 0.05 });
+    P.emit('trail', at, gas, { scale: 0.35, life: 0.35, alpha: 0.8 });
+    P.burst('spark', at, 5, 8, dir, 0.5, { scale: 0.6, life: 0.4 });
+    this.flarePort.copy(at);
+    this.flarePopT = 0;
+    const i = side === 'L' ? 0 : 1;
+    this.drumPort[i]++;
+    this.drumT[i] = 0;
+    if (side === 'L') this.arms.flareKickL = 1;
+    else this.arms.flareKickR = 1;
     this.events.emit('flarePop', { at, side });
   }
 
   private updateFlares(dt: number): void {
+    const P = this.particles;
+    const light = this._l.set(0, 0, 0);
+    let glow = 0;
     for (let i = this.flareList.length - 1; i >= 0; i--) {
       const f = this.flareList[i];
-      f.life -= dt;
+      f.age += dt;
       const sp = f.v.length();
-      f.v.multiplyScalar(1 / (1 + 0.02 * sp * dt));
-      f.v.y -= 6 * dt;
+      f.v.multiplyScalar(1 / (1 + FLARE_DRAG * sp * dt));
+      f.v.y -= GRAVITY * dt;
       f.pos.addScaledVector(f.v, dt);
-      const burn = Math.min(1, f.life / 0.8);
-      f.heat = burn;
-      const flick = 0.75 + 0.25 * Math.sin(f.life * 70 + i);
-      f.sprite.position.copy(f.pos);
-      f.sprite.scale.setScalar((1.6 + 0.8 * flick) * burn + 0.05);
-      f.sprite.material.color.setRGB(4 * flick, 3.2 * flick, 2.2 * flick);
-      f.laid += sp * dt;
-      while (f.laid > 1.2) {
-        f.laid -= 1.2;
-        this.particles.emit('trail', f.pos, undefined, { scale: 1.1, life: 0.8 });
-        if (Math.random() < 0.5) this.particles.emit('spark', f.pos, f.v.clone().multiplyScalar(-0.1), { scale: 1 });
+      // A dull pellet off the port, then it lights with a pop
+      if (!f.lit && f.age >= FLARE_FUSE) {
+        f.lit = true;
+        P.emit('flash', f.pos, f.v, { scale: 0.22 });
+        P.burst('spark', f.pos, 10, 9, undefined, 1, { scale: 0.8 });
       }
-      if (f.life <= 0 || f.pos.y < this.field.surfaceAt(f.pos.x, f.pos.z)) {
+      const left = f.life - f.age;
+      const burn = f.lit ? Math.min(1, (f.age - FLARE_FUSE) / 0.05) * THREE.MathUtils.smoothstep(left, 0, FLARE_COOL * 0.6) : 0;
+      // Magnesium never burns steady: a fast flicker, and now and then it
+      // chokes for a moment and flares back
+      if (Math.random() < dt * 5) f.sputter = 0.35 + Math.random() * 0.3;
+      f.sputter += (1 - f.sputter) * (1 - Math.exp(-dt / 0.05));
+      const flick = 0.82 + 0.18 * Math.sin(f.age * 71 + f.seed) * Math.sin(f.age * 43 + f.seed * 1.7);
+      f.glow = burn * flick * f.sputter;
+      f.heat = burn;
+      // White-hot through the burn, cooling to orange as it gutters
+      const cool = 1 - THREE.MathUtils.smoothstep(left, 0, FLARE_COOL);
+      // (the halo thins out close to the eye rather than whiting out the
+      // frame: the core streak still burns)
+      const near = THREE.MathUtils.smoothstep(f.pos.distanceTo(this.eye), 1.5, 9);
+      f.sprite.material.color.copy(FLARE_HOT).lerp(FLARE_EMBER, cool).multiplyScalar(f.glow * (0.15 + 0.85 * near));
+      f.sprite.position.copy(f.pos);
+      f.sprite.scale.setScalar((2 + 1 * flick) * Math.sqrt(burn) * (1 - 0.5 * cool) + 0.01);
+      light.addScaledVector(f.pos, f.glow);
+      glow += f.glow;
+      // A thick white trail laid as it goes (a puff per stretch of path or
+      // beat of time, so a slow one still smokes), thinning as it dies
+      f.laid += sp * dt;
+      f.puffT += dt;
+      if (f.lit && burn > 0.05) {
+        while (f.laid > 0.6 || f.puffT > 0.05) {
+          f.laid = Math.max(0, f.laid - 0.6);
+          f.puffT = 0;
+          const drift = this._v.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.8).addScaledVector(f.v, 0.06);
+          P.emit('trail', f.pos, drift, { scale: (0.55 + Math.random() * 0.35) * (0.45 + 0.55 * burn), alpha: 0.75 + 0.25 * burn });
+        }
+        // Burning bits shed off it and drip away
+        if (Math.random() < dt * 28 * burn) {
+          const drip = this._v.copy(f.v).multiplyScalar(0.35).add(this._w.set(Math.random() - 0.5, Math.random() - 0.3, Math.random() - 0.5).multiplyScalar(4));
+          P.emit('spark', f.pos, drip, { scale: 0.7 + 0.5 * Math.random(), life: 0.7 });
+        }
+      }
+      const ground = f.pos.y < this.field.surfaceAt(f.pos.x, f.pos.z);
+      if (left <= 0 || ground) {
+        if (ground && burn > 0.1) P.burst('spark', f.pos, 10, 6, this._v.set(0, 1, 0), 0.8, { scale: 0.8 });
+        else if (f.lit) P.burst('ember', f.pos, 3, 2, undefined, 1, { scale: 0.5 });
         this.group.remove(f.sprite);
         f.sprite.material.dispose();
         this.flareList.splice(i, 1);
       }
     }
+    // One light for the lot, at the middle of the glow; the port's pop on top
+    this.flarePopT += dt;
+    const pop = Math.max(0, 1 - this.flarePopT / 0.06);
+    const sum = glow + pop * 0.8;
+    if (sum > 1e-3) this.flareLight.position.copy(light.addScaledVector(this.flarePort, pop * 0.8).divideScalar(sum));
+    this.flareLight.intensity = FLARE_LIGHT * Math.min(glow, 4) + FLARE_POP_LIGHT * pop * pop;
     // Slowly restock
     if (this.flares < 48) this.flareRestock += dt;
     if (this.flareRestock > 3) {
@@ -956,6 +1083,19 @@ export class PlayerWeapons {
       S.add(mid, b.p, 9, 11, 14, 1, 0.03, 0.17);
       const head = this._b.copy(b.p).addScaledVector(b.v, -Math.min(0.35, out) / sp);
       S.add(head, b.p, 10, 13, 18, 1, 0.24 * fl, 0.3 * fl);
+    }
+    // Each flare's white-hot core, smeared a touch along its flight; a
+    // pellet not yet lit is a dull red fleck
+    for (const f of this.flareList) {
+      const tail = this._a.copy(f.pos).addScaledVector(f.v, -0.012);
+      if (!f.lit) {
+        S.add(f.pos, f.pos, 2.4, 0.7, 0.2, 0.7, 0.025, 0.03);
+        continue;
+      }
+      const g = f.glow;
+      if (g < 0.01) continue;
+      const cool = 1 - THREE.MathUtils.smoothstep(f.life - f.age, 0, FLARE_COOL);
+      S.add(tail, f.pos, 14 * g, THREE.MathUtils.lerp(13, 5, cool) * g, THREE.MathUtils.lerp(11, 1.2, cool) * g, 1, 0.07 * g + 0.02, 0.12 * g + 0.03);
     }
     // Launcher lock: each arm's laser ranges the targets it will take, the
     // next shot's line brightest

@@ -38,9 +38,15 @@ export interface ArmsState {
   launchers: number;
   lockL: number;
   lockR: number;
-  /** Hip flare drums out 0–1 and their turn (rad). */
+  /**
+   * Hip flare drums out 0–1, each drum's turn (rad: it indexes a fresh
+   * port onto the station per round) and the knock of its last round 0–1.
+   */
   flares: number;
-  flareSpin: number;
+  flareSpinL: number;
+  flareSpinR: number;
+  flareKickL: number;
+  flareKickR: number;
   /** Unibeam: 0–1, arms swept back, chest forward. */
   unibeam: number;
 }
@@ -59,7 +65,10 @@ export const IDLE_ARMS = (): ArmsState => ({
   lockL: 0,
   lockR: 0,
   flares: 0,
-  flareSpin: 0,
+  flareSpinL: 0,
+  flareSpinR: 0,
+  flareKickL: 0,
+  flareKickR: 0,
   unibeam: 0,
 });
 
@@ -979,8 +988,9 @@ export class SuitDriver {
       'launcher.R': arms.launchers,
       'trap.L': arms.silos,
       'trap.R': arms.silos,
-      'flare.L': arms.flares,
-      'flare.R': arms.flares,
+      // (a round leaving knocks its drum back into the seat a touch)
+      'flare.L': arms.flares * (1 - 0.3 * arms.flareKickL),
+      'flare.R': arms.flares * (1 - 0.3 * arms.flareKickR),
     };
     // Surfaces move like servos: never more than ~3 strokes a second
     for (const id of Object.keys(flaps) as FlapId[]) {
@@ -1051,7 +1061,7 @@ export class SuitDriver {
     const frame: FlightCheckFrame = {
       pose,
       flaps: { ...this.flapState } as Record<FlapId, number>,
-      spin: { 'flare.L': arms.flareSpin, 'flare.R': -arms.flareSpin },
+      spin: { 'flare.L': arms.flareSpinL, 'flare.R': -arms.flareSpinR },
       // Thruster / palm visuals are drawn in world space by the sim
       repulsorL: 0,
       repulsorR: 0,
