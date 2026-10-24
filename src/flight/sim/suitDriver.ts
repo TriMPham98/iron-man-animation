@@ -86,14 +86,14 @@ const BRAKE_ELBOW = 0.25;
 
 /**
  * A braking arm's bearing in the chest frame (rad, + out to its own side)
- * for the travel's bearing `phi` (same sense): a little out when the
+ * for the travel's bearing `phi` (same sense): out wide when the
  * travel is dead ahead, out to the side with it, back past the hip when
  * it's behind — and from the far side it stays forward, then swings back
  * round its own side as the travel comes round behind. Continuous all the
  * way round (±π meet at the same reach).
  */
 export function brakeAzimuth(phi: number): number {
-  const FWD = 0.15;
+  const FWD = 0.5;
   const ACROSS = -0.3;
   const BACK = 1.9;
   if (phi >= 0) return lerp(FWD, BACK, smooth01(phi / Math.PI));
@@ -323,6 +323,11 @@ export class SuitDriver {
   private readonly spread = new THREE.Vector2();
   /** Braking (X) and free fall, sprung: [value, velocity]. */
   private readonly brakeK = new THREE.Vector2();
+  /** The braking legs and hips (they lead the arms in), how hard the air is stopping the suit, and the settle as the boots take back over. */
+  private readonly flareK = new THREE.Vector2();
+  private readonly effortK = new THREE.Vector2();
+  private readonly settle = new THREE.Vector2();
+  private flaring = false;
   private readonly swingK = new THREE.Vector2();
   private readonly fallK = new THREE.Vector2();
   /** Riding the surge in flight (+ speeding up, − slowing), sprung loose for follow-through. */
@@ -586,8 +591,32 @@ export class SuitDriver {
     // kill the speed. Sprung in (a beat of anticipation) and out
     const sp = m.speed;
     if (sp > 0.5) this.travel.lerp(this._v.copy(m.vel).applyQuaternion(this._qi.copy(bodyQ).invert()).divideScalar(sp), 1 - Math.exp(-dt / 0.08)).normalize();
-    springTo(this.brakeK, clamp01(m.palmBrake) * this.dangle * (1 - crouch) * (1 - ub) * (1 - pre), 9, 0.6, dt);
+    // (out quicker than in: the hands drop to their trim first)
+    const bkGoal = clamp01(m.palmBrake) * this.dangle * (1 - crouch) * (1 - ub) * (1 - pre);
+    const bkOut = bkGoal < this.brakeK.x;
+    springTo(this.brakeK, bkGoal, bkOut ? 12 : 9, bkOut ? 0.75 : 0.6, dt);
     const bk = clamp01(this.brakeK.x);
+    // The legs and hips lead the flare: they come forward the instant the
+    // wing spills, while the body is still swinging up out of the dive, so
+    // it rears like a bird landing (driven off the palms, they came late
+    // and it stood up in the air, then sat down). Out after the arms
+    const flareGoal = clamp01(m.liftSpill) * smooth01((sp - 2) / 12) * this.dangle * (1 - crouch) * (1 - ub) * (1 - pre);
+    springTo(this.flareK, flareGoal, flareGoal < this.flareK.x ? 6 : 16, 0.75, dt);
+    const fk = clamp01(this.flareK.x);
+    // A beat of anticipation as it starts: chin in, shoulders round
+    const windup = clamp01(this.flareK.y / 8);
+    // How hard the air is stopping it: at 6 g the whole body strains
+    // against it; easing off as the speed bleeds away, it settles into
+    // the calm flare by the time it's down to a hover
+    const decelG = Math.max(0, -m.surge) / GRAVITY;
+    springTo(this.effortK, smooth01((decelG - 1.5) / 4) * smooth01((sp - 10) / 50) * fk, 7, 0.6, dt);
+    const eff = clamp01(this.effortK.x);
+    // The stop done (or X let go) the boots take back over: the body
+    // pitches through a little past upright and settles
+    const flaring = flareGoal > (this.flaring ? 0.4 : 0.6);
+    if (this.flaring && !flaring) this.settle.y += 2.2 * fk;
+    this.flaring = flaring;
+    springTo(this.settle, 0, 6, 0.45, dt);
     // Carving the speed round onto a new line (a momentum swing) the palms
     // throw out against the old travel too and sweep round with it as it
     // comes onto the new line; the legs stay long for the flight
@@ -620,22 +649,30 @@ export class SuitDriver {
       fingersR = fingersR.map((f) => lerp(f, -0.15, ff));
       spineBend = lerp(spineBend, -0.12, ff);
     }
-    if (bk > 1e-3) {
+    if (fk > 1e-3) {
       // How much of the travel is ahead of the chest (forward braking) vs
       // below the boots (the flare onto the ground): the legs come forward
-      // for the first and gather under for the second
-      const ahead = clamp01(this.travel.z * 1.4);
-      for (const s of ['L', 'R'] as const) {
-        limbs[`hip${s}`] = lerp(limbs[`hip${s}`], 0.35 + 0.45 * ahead, bk);
-        limbs[`hipOut${s}`] = lerp(limbs[`hipOut${s}`], 0.12, bk);
-        limbs[`knee${s}`] = lerp(limbs[`knee${s}`], 0.55 + 0.25 * ahead, bk);
-        limbs[`ankle${s}`] = lerp(limbs[`ankle${s}`], 0.05, bk);
+      // for the first and gather under for the second. Travel up the body
+      // (still half prone) reads as ahead
+      const ahead = clamp01((this.travel.z + 0.8 * Math.max(0, this.travel.y)) * 1.4);
+      // Never quite a mirror: one knee rides a touch higher, the legs not square
+      for (const [s, odd] of [
+        ['L', 1],
+        ['R', -1],
+      ] as const) {
+        limbs[`hip${s}`] = lerp(limbs[`hip${s}`], 0.35 + 0.45 * ahead + 0.2 * eff + 0.04 * odd, fk);
+        limbs[`hipOut${s}`] = lerp(limbs[`hipOut${s}`], 0.12 + 0.03 * odd + 0.06 * eff, fk);
+        limbs[`knee${s}`] = lerp(limbs[`knee${s}`], 0.55 + 0.25 * ahead + 0.3 * eff - 0.06 * odd, fk);
+        limbs[`ankle${s}`] = lerp(limbs[`ankle${s}`], 0.05, fk);
       }
       // The hips rear back; the chest stays over them (a backward arch put
-      // the arms above the shoulders' line and hunched them)
-      pitch = lerp(pitch, -0.2 * ahead, bk);
-      spineBend = lerp(spineBend, 0.06 * ahead + 0.12 * (1 - ahead), bk);
+      // the arms above the shoulders' line and hunched them) and curls
+      // over them against a hard stop
+      pitch = lerp(pitch, -(0.2 + 0.25 * eff) * ahead, fk);
+      spineBend = lerp(spineBend, 0.06 * ahead + 0.12 * (1 - ahead) + 0.16 * eff, fk);
     }
+    spineBend += 0.1 * windup;
+    pitch += 0.5 * this.settle.x;
 
     // Repulsor aim: the arm punches out onto the aim line, palm flat to it.
     // The body has already turned toward the shot (hips, then shoulders);
@@ -704,23 +741,30 @@ export class SuitDriver {
         const tc = _tgt.copy(this.travel).applyQuaternion(chestQ);
         // Travel up the body (still half prone) reads as ahead of the chest
         const phi = Math.atan2(s * tc.x, tc.z + 0.6 * Math.max(0, tc.y));
-        const az = brakeAzimuth(phi);
+        // Out in the stream where they show, a little off a mirror (the
+        // momentum swing keeps its low reach)
+        const odd = side === 'L' ? 1 : -0.8;
+        const az = brakeAzimuth(phi) + 0.05 * odd;
         const behind = clamp01(-Math.cos(phi));
-        const el = -lerp(0.7, 1.05, Math.max(behind, clamp01(-tc.y)));
+        const el = -lerp(lerp(0.7, 0.35, bk / palmK) - 0.04 * odd, 1.05, Math.max(behind, clamp01(-tc.y)));
         tc.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
-        tc.x += 0.45 * s * down.x;
-        tc.y += 0.45 * down.y;
-        tc.z += 0.45 * down.z;
+        // (fast, the air holds them up: the pull to the ground is for the hover)
+        const pull = lerp(0.45, 0.12, smooth01((sp - 5) / 30));
+        tc.x += pull * s * down.x;
+        tc.y += pull * down.y;
+        tc.z += pull * down.z;
         const tgt = clampReach(tc.normalize());
         const palm = suit.palms[0] ?? { at: [0.35, 0.96, 0.03], normal: [-0.94, -0.34, -0.04] };
         // Only half the aim's forearm roll: the full roll bent the elbow
         // across the body and the solver hiked the shoulder to make up for it
-        const [abd, flex, w] = aimArm(palm.at, palm.normal, tgt, BRAKE_TWIST, BRAKE_ELBOW, 1.4);
-        const hand = [-0.05, -0.1, -0.05, 0, 0.05];
+        // A hard stop forces the elbows softer and splays the fingers
+        const elbow = BRAKE_ELBOW + 0.22 * eff;
+        const [abd, flex, w] = aimArm(palm.at, palm.normal, tgt, BRAKE_TWIST, elbow, 1.4);
+        const hand = [-0.05, -0.1, -0.05, 0, 0.05].map((f, i) => lerp(f, [-0.2, -0.25, -0.18, -0.12, -0.05][i], eff));
         limbs[`arm${side}`] = lerp(limbs[`arm${side}`], abd, k);
         limbs[`armFlex${side}`] = lerp(limbs[`armFlex${side}`], flex, k);
         limbs[`armTwist${side}`] = lerp(limbs[`armTwist${side}`], BRAKE_TWIST, k);
-        limbs[`elbow${side}`] = lerp(limbs[`elbow${side}`], BRAKE_ELBOW, k);
+        limbs[`elbow${side}`] = lerp(limbs[`elbow${side}`], elbow, k);
         if (side === 'L') {
           wristL = lerp(wristL, w, k);
           fingersL = fingersL.map((f, i) => lerp(f, hand[i], k));
@@ -728,6 +772,22 @@ export class SuitDriver {
           wristR = lerp(wristR, w, k);
           fingersR = fingersR.map((f, i) => lerp(f, hand[i], k));
         }
+      }
+    }
+
+    // The air worries at the flared limbs: a tremor that grows with the
+    // stream on them (the buffet you hear), nothing in a hover
+    const buffet = Math.max(fk, palmK) * m.airbrake * THREE.MathUtils.smoothstep(sp, 6, 140) * (0.5 + 0.5 * eff);
+    if (buffet > 1e-3) {
+      const shake = (k: number, ph: number) => buffet * k * (Math.sin(t * 13.7 + ph) * 0.6 + Math.sin(t * 21.1 + ph * 2.3) * 0.4);
+      for (const [s, ph] of [
+        ['L', 0],
+        ['R', 2.1],
+      ] as const) {
+        limbs[`arm${s}`] += shake(0.05, ph);
+        limbs[`elbow${s}`] += shake(0.06, ph + 1);
+        limbs[`knee${s}`] += shake(0.05, ph + 2);
+        limbs[`hipOut${s}`] += shake(0.03, ph + 3);
       }
     }
 
@@ -788,7 +848,8 @@ export class SuitDriver {
 
     let strikeNow = false;
     // Falling, the head tips down to watch the ground come
-    let headPitch = lerp(this.head.y, 0.55, ff);
+    // (braking hard the chin tucks in, bracing against the stop)
+    let headPitch = lerp(this.head.y, 0.55, ff) + 0.18 * eff + 0.15 * windup;
     let headYaw = this.head.x * (1 - 0.6 * ff);
     let headRoll = this.headRoll;
 
