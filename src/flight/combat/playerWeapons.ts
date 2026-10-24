@@ -126,8 +126,12 @@ const UNIBEAM_DPS = 160;
 const UNIBEAM_REACH = 2600;
 /** Bind-space points the weapons fire from (fallbacks when a bay is stowed). */
 const REACTOR: [number, number, number] = [0, 1.436, 0.19];
-/** Flares: a salvo, the beat between rounds (alternating hips), ports round each drum. */
+/** Flares carried, and the seconds between restocking one. */
+const FLARE_MAG = 64;
+const FLARE_RESTOCK = 2.5;
+/** Flares: a salvo, the pause before the next one (s), the beat between rounds (alternating hips), ports round each drum. */
 const FLARE_SALVO = 8;
+const FLARE_SALVO_COOL = 2.5;
 const FLARE_INTERVAL = 0.075;
 const FLARE_PORTS = 10;
 /** A drum turns its next port onto the station this fast (s). */
@@ -184,7 +188,7 @@ export class PlayerWeapons {
   /** Reactor heat 0–1; at 1 the beam cuts out until it cools. */
   unibeamHeat = 0;
   unibeamOverheat = false;
-  flares = 48;
+  flares = FLARE_MAG;
   flareCooldown = 0;
   /** Forearm rounds left (L, R), the targets painted, the paint's progress. */
   readonly launcherRounds: [number, number] = [LAUNCHER_PER_ARM, LAUNCHER_PER_ARM];
@@ -466,7 +470,7 @@ export class PlayerWeapons {
       this.flareSalvo = Math.min(FLARE_SALVO, this.flares);
       this.flareRound = 0;
       this.flareT = 0.2;
-      this.flareCooldown = 3;
+      this.flareCooldown = FLARE_SALVO_COOL;
       this.events.emit('flareSalvo', { at: this.model.pos });
     }
     if (this.flareSalvo > 0) {
@@ -1051,8 +1055,8 @@ export class PlayerWeapons {
     if (sum > 1e-3) this.flareLight.position.copy(light.addScaledVector(this.flarePort, pop * 0.8).divideScalar(sum));
     this.flareLight.intensity = FLARE_LIGHT * Math.min(glow, 4) + FLARE_POP_LIGHT * pop * pop;
     // Slowly restock
-    if (this.flares < 48) this.flareRestock += dt;
-    if (this.flareRestock > 3) {
+    if (this.flares < FLARE_MAG) this.flareRestock += dt;
+    if (this.flareRestock > FLARE_RESTOCK) {
       this.flares++;
       this.flareRestock = 0;
     }
