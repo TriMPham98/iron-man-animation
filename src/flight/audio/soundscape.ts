@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Combat } from '../combat/combat';
 import type { SimEvent } from '../sim/events';
-import type { FlightModel } from '../sim/flightModel';
+import { G_LIMIT, type FlightModel } from '../sim/flightModel';
 import { SPEED_OF_SOUND } from '../world/config';
 import type { Emitter, GameAudio, Loop } from './gameAudio';
 
@@ -537,7 +537,7 @@ export class Soundscape {
     // with the air pressing on them (nothing to buffet in a hover); a hard
     // pull shakes the plates too, under it
     const q = THREE.MathUtils.smoothstep(m.speed, 6, 140);
-    const pull = THREE.MathUtils.smoothstep(m.gLoad, 5, 13);
+    const pull = THREE.MathUtils.smoothstep(m.gLoad, 4, G_LIMIT);
     this.buffet?.set(Math.max(m.airbrake * 1.1, pull * 0.5) * q, 0.72 + 0.38 * q, 900 + 5000 * q);
     this.beam?.set(beamOn ? 0.6 / Math.max(0.3, near * 1.6) : 0, 1.9, beamOn ? 9000 : 2000);
     this.terrain(dt, m, cam, air * inside);

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { FlightModel } from './flightModel';
+import { G_LIMIT, type FlightModel } from './flightModel';
 import { GRAVITY } from '../world/config';
 
 /**
@@ -27,8 +27,8 @@ const FOV_WIDE = 58;
 const IDENTITY = new THREE.Quaternion();
 /** Most the chase camera trails its ideal spot round the suit (rad). */
 const MAX_SWING = 0.3;
-/** 0–1: how hard the suit is pulling, from a firm turn (5 g) to the wing's limit. */
-const pullK = (m: FlightModel) => THREE.MathUtils.smoothstep(m.gLoad, 5, 13);
+/** 0–1: how hard the suit is pulling, from a firm turn (4 g) to the suit's limit. */
+const pullK = (m: FlightModel) => THREE.MathUtils.smoothstep(m.gLoad, 4, G_LIMIT);
 
 export interface CameraGround {
   surface(x: number, z: number): number;

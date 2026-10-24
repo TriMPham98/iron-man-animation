@@ -333,6 +333,11 @@ export class SuitDriver {
   /** Palm turn-assist per hand, sprung: [value, velocity]. */
   private readonly palmAssistL = new THREE.Vector2();
   private readonly palmAssistR = new THREE.Vector2();
+  /** Roll rate, slowly followed (its gap to the live rate is the roll starting or stopping). */
+  private rollSlow = 0;
+  /** Palm roll flick per hand, sprung: [value, velocity]. */
+  private readonly rollFlickL = new THREE.Vector2();
+  private readonly rollFlickR = new THREE.Vector2();
   /** Aim line in the body frame, smoothed, and the side it last sat on (for targets dead astern). */
   private readonly aimBody = new THREE.Vector3(0, 0, 1);
   private aimSign = 1;
@@ -873,14 +878,24 @@ export class SuitDriver {
     // Turn assist: the pushing palm's jet rises with the push, never snaps
     const assistL = 0.85 * clamp01(this.palmAssistL.x) * (1 - arms.aimL);
     const assistR = 0.85 * clamp01(this.palmAssistR.x) * (1 - arms.aimR);
+    // Rolling into a bank (or out of one) the palm on the rising side
+    // flicks up and kicks the roll off, then settles as the pull takes
+    // over; the other one catches the roll as it stops. Keyed off the roll
+    // rate's change, not the rate, so a held bank leaves both at their trim
+    this.rollSlow += (rollRate - this.rollSlow) * (1 - Math.exp(-dt / 0.3));
+    const rollKick = (rollRate - this.rollSlow) * prone * this.dangle * (1 - ub);
+    springTo(this.rollFlickL, clamp01(rollKick * 0.45), 14, 0.75, dt);
+    springTo(this.rollFlickR, clamp01(-rollKick * 0.45), 14, 0.75, dt);
+    const flickL = 0.7 * clamp01(this.rollFlickL.x) * (1 - arms.aimL);
+    const flickR = 0.7 * clamp01(this.rollFlickR.x) * (1 - arms.aimR);
     // On boost the palms are thrusters as much as the boots: trailing aft,
     // they burn at the boots' level (a raised arm keeps its shot)
     this.outputs.palmBoost += ((m.boosting ? 1 : 0) - this.outputs.palmBoost) * (1 - Math.exp(-dt / 0.15));
     const pb = this.outputs.palmBoost;
     const palmsL = lerp(palms, this.outputs.bootL, pb);
     const palmsR = lerp(palms, this.outputs.bootR, pb);
-    this.outputs.palmL = clamp01(Math.max(palmsL * (1 - 0.3 * m.trimRoll * (1 - pb)) * (1 - arms.aimL) * (1 - ub), assistL, brakeL, arms.flashL));
-    this.outputs.palmR = clamp01(Math.max(palmsR * (1 + 0.3 * m.trimRoll * (1 - pb)) * (1 - arms.aimR) * (1 - ub), assistR, brakeR, arms.flashR));
+    this.outputs.palmL = clamp01(Math.max(palmsL * (1 - 0.3 * m.trimRoll * (1 - pb)) * (1 - arms.aimL) * (1 - ub), assistL, flickL, brakeL, arms.flashL));
+    this.outputs.palmR = clamp01(Math.max(palmsR * (1 + 0.3 * m.trimRoll * (1 - pb)) * (1 - arms.aimR) * (1 - ub), assistR, flickR, brakeR, arms.flashR));
 
     const pose: FlightPose = {
       stance: 0,

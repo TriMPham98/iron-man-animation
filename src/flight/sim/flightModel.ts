@@ -78,6 +78,8 @@ const THRUST_MAX = 30;
 const THRUST_BOOST = 72;
 /** Boots spooling up to the boost's authority (s): the kick builds over ~½ s, not a step. */
 const BOOST_SPOOL = 0.15;
+/** Boots' spool-up from near idle (s): wound up they answer in 0.12. */
+const SPOOL_IDLE = 0.45;
 /** Quadratic drag at sea level (1/m). */
 const DRAG = 2.4e-4;
 /**
@@ -530,7 +532,6 @@ export class FlightModel {
     const vectored = Math.max(this.swing, 1 - smooth(50, 100, speed));
     bankTurn = THREE.MathUtils.lerp(bankTurn, clamp(-yawErr * 2.4, -1.25, 1.25), vectored);
     const bankGoal = clamp(bankTurn * fl - this.swingTurn * 1.2, -bankMax, bankMax);
-    (this as any).dbg = [yawErr, pitchErr, bankGoal, aoa];
     // Turn limits: quick in a hover; in flight the g limit caps the rate at
     // speed, and until the back has rolled round into the turn it only pulls
     // a couple of g — roll, then pull
@@ -706,7 +707,13 @@ export class FlightModel {
     // Falling, the boots are cut
     const thrust = falling ? 0 : THREE.MathUtils.lerp(hoverThrust, flightThrust, fl);
     const grounded = this.grounded && thrust < GRAVITY * 1.02 && input.vertical <= 0;
-    this.thrust += ((grounded ? 0 : thrust * this.power) - this.thrust) * approach(dt, 0.12);
+    // The boots spool like turbines: wound down near idle they're slow to
+    // take up the throttle again (a beat before the push builds), running
+    // hot they answer at once
+    const thrustGoal = grounded ? 0 : thrust * this.power;
+    const spooled = smooth(0.1, 0.45, this.thrust / THRUST_MAX);
+    const spoolTau = thrustGoal > this.thrust ? THREE.MathUtils.lerp(SPOOL_IDLE, 0.12, spooled) : 0.16;
+    this.thrust += (thrustGoal - this.thrust) * approach(dt, spoolTau);
     this.throttle = clamp(this.thrust / THRUST_BOOST, 0, 1);
     acc.addScaledVector(thrustDir, this.thrust);
 
@@ -824,9 +831,12 @@ export class FlightModel {
       acc.add(lift);
       // Induced drag: the body's push on the air tilts back with the angle
       // it meets it at (L·tan α), so a hard pull slow, nose well up, mushes
-      // and bleeds; quick, the same g barely costs (a floor for the flaps)
+      // and bleeds; quick, the same g barely costs (a floor for the flaps).
+      // (Not while it swings back over out of a flare: broadside to the
+      // stream it's the flaps' drag, already reckoned)
       const alpha = Math.min(AOA_MAX, Math.acos(clamp(this.vel.dot(fNow) / speed, -1, 1)));
-      acc.addScaledVector(this.vel, -(Math.min(ll, gCap) * Math.max(0.045, Math.tan(alpha))) / Math.max(speed, 1));
+      const tilt = 0.045 + Math.max(0, Math.tan(alpha) - 0.045) * smooth(0.85, 1, this.flightness);
+      acc.addScaledVector(this.vel, -(Math.min(ll, gCap) * tilt) / Math.max(speed, 1));
     }
     // Strafe / climb trim from the palms in flight
     if (fl > 0.5) acc.addScaledVector(UP, Math.max(0, input.vertical) * 6 * fl);

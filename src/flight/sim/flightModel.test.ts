@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { EMPTY_INPUT, FlightModel, MAX_MACH, type GroundProbe } from './flightModel';
+import { EMPTY_INPUT, FlightModel, G_LIMIT, MAX_MACH, type GroundProbe } from './flightModel';
 
 /** Flat ground at y = 0 (or sea, for the water tests). */
 const flat = (water = false): GroundProbe => ({
@@ -541,6 +541,71 @@ describe('FlightModel', () => {
     expect(Math.abs(m.pos.y - y0)).toBeLessThan(15);
   });
 
+  it('banks into a hard turn, then pulls: the g builds at an onset a pilot can take, tops out at G_LIMIT, the height holds', () => {
+    for (const speed of [200, 270]) {
+      const m = new FlightModel(flat());
+      m.pos.set(0, 1500, 0);
+      m.vel.set(0, 0, speed);
+      m.grounded = false;
+      m.flightness = 1;
+      m.posture = 1.42;
+      m.speedCmd = speed;
+      m.airT = 5;
+      run(m, 1.5, (i) => i.aim.set(0, 0, 1));
+      const dt = 1 / 120;
+      const y0 = m.pos.y;
+      let prevG = m.gLoad;
+      let onset = 0;
+      let gMax = 0;
+      let bankMax = 0;
+      let bankAt3g = -1;
+      let turned = 0;
+      run(m, 4, (i) => {
+        // Hold the aim square off the travel: a steady max-rate turn
+        const v = m.vel.clone().normalize();
+        i.aim.set(v.z, 0, -v.x);
+        onset = Math.max(onset, (m.gLoad - prevG) / dt);
+        prevG = m.gLoad;
+        gMax = Math.max(gMax, m.gLoad);
+        const u = m.up();
+        const bank = Math.abs(Math.atan2(new THREE.Vector3().crossVectors(u, m.forward()).y, u.y));
+        bankMax = Math.max(bankMax, bank);
+        if (bankAt3g < 0 && m.gLoad > 3) bankAt3g = bank;
+        turned = Math.atan2(m.vel.x, m.vel.z);
+      });
+      // Rolled most of the way over before the pull came on
+      expect(THREE.MathUtils.radToDeg(bankAt3g)).toBeGreaterThan(60);
+      expect(onset).toBeLessThan(9);
+      expect(gMax).toBeGreaterThan(G_LIMIT - 0.5);
+      expect(gMax).toBeLessThan(G_LIMIT + 0.5);
+      // Coordinated: steep enough to carry the pull without sinking
+      expect(THREE.MathUtils.radToDeg(bankMax)).toBeGreaterThan(78);
+      expect(Math.abs(m.pos.y - y0)).toBeLessThan(30);
+      expect(turned).toBeGreaterThan(0.6);
+    }
+  });
+
+  it('bleeds speed in a hard turn slow, nose high, and barely at all quick', () => {
+    const turn = (speed: number) => {
+      const m = new FlightModel(flat());
+      m.pos.set(0, 1500, 0);
+      m.vel.set(0, 0, speed);
+      m.grounded = false;
+      m.flightness = 1;
+      m.posture = 1.42;
+      m.speedCmd = speed;
+      m.airT = 5;
+      run(m, 1.5, (i) => i.aim.set(0, 0, 1));
+      run(m, 5, (i) => {
+        const v = m.vel.clone().normalize();
+        i.aim.set(v.z, 0, -v.x);
+      });
+      return m.speed / speed;
+    };
+    expect(turn(120)).toBeLessThan(0.85);
+    expect(turn(270)).toBeGreaterThan(0.95);
+  });
+
   it('rolls out of inverted flight instead of dithering on the ±π seam', () => {
     const m = new FlightModel(flat(true));
     m.pos.set(0, 300, 0);
@@ -579,14 +644,22 @@ describe('FlightModel', () => {
         m.speedCmd = Math.min(speed, 270);
         run(m, 1, (i) => i.aim.set(0, 0, 1));
         let worst = 0;
-        run(m, 8, (i) => {
-          i.aim.copy(aim).normalize();
-          i.boost = boost;
+        let off = Infinity;
+        // (under the Mk II's 9 g a reversal at speed takes its time: a full
+        // one at 250 m/s, then the push down onto an aim low astern, runs
+        // past ten seconds)
+        const dt = 1 / 120;
+        const input = EMPTY_INPUT();
+        for (let t = 0; t < 16 && off > 8; t += dt) {
+          input.aim.copy(aim).normalize();
+          input.boost = boost;
+          m.step(dt, input);
           worst = Math.max(worst, roll(m));
-        });
+          off = THREE.MathUtils.radToDeg(m.thrustAxis().angleTo(aim.clone().normalize()));
+        }
         expect(THREE.MathUtils.radToDeg(worst)).toBeLessThan(95);
         // and it still gets there
-        expect(THREE.MathUtils.radToDeg(m.thrustAxis().angleTo(aim.clone().normalize()))).toBeLessThan(8);
+        expect(off).toBeLessThan(8);
       }
     }
   });
