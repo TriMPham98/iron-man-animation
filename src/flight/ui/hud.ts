@@ -32,6 +32,8 @@ const KNOTS = 1.943844;
 /** Landing scope: the half-width it shows (m), the deck's radius (m). */
 const SCOPE_M = 8;
 const PAD_EDGE = 7;
+/** How far ahead the scope's drift vector reaches (s). */
+const DRIFT_LEAD = 1.5;
 
 interface Line {
   text: string;
@@ -400,6 +402,17 @@ export class Hud {
       return [cx + right * px, cy - fwd * px];
     };
     const held = m.padPull;
+    // Clear the ladder out from behind the scope and its readouts, so the
+    // rung that runs through it doesn't read as one of its lines
+    g.save();
+    g.globalCompositeOperation = 'destination-out';
+    g.globalAlpha = 0.9 * this.scopeAlpha;
+    g.shadowBlur = 0;
+    g.beginPath();
+    g.arc(cx, cy, R + 6 * s, 0, Math.PI * 2);
+    g.roundRect(cx - R - 58 * s, cy - 8 * s, 2 * (R + 58 * s), 16 * s, 8 * s);
+    g.fill();
+    g.restore();
     g.globalAlpha = this.alpha * this.scopeAlpha;
     g.lineWidth = 1;
     // Frame and the deck's marks
@@ -432,27 +445,69 @@ export class Hud {
       g.lineTo(cx + Math.cos(a) * (PAD_EDGE - 0.5) * px, cy + Math.sin(a) * (PAD_EDGE - 0.5) * px);
       g.stroke();
     }
-    // The suit over the deck, and where its drift takes it in a second
+    // The suit over the deck
     const off = Math.hypot(dx, dz);
     const col = off <= BULLSEYE_R ? WHITE : off <= CENTRED_R ? CYAN : AMBER;
     let [sx, sy] = toScope(dx, dz);
-    const [vx, vy] = toScope(dx + m.vel.x, dz + m.vel.z);
     const out = Math.hypot(sx - cx, sy - cy);
     if (out > R) {
       sx = cx + ((sx - cx) * R) / out;
       sy = cy + ((sy - cy) * R) / out;
     }
-    g.strokeStyle = col;
-    g.lineWidth = 1.4;
-    if (Math.hypot(vx - sx, vy - sy) > 2 && out <= R) {
+    // Centring line: dashes from the suit in to the bullseye, running
+    // inwards while the hold has it
+    const dot = 3.2 * s;
+    const toC = Math.hypot(sx - cx, sy - cy);
+    if (off > BULLSEYE_R && toC > dot + BULLSEYE_R * px) {
+      const ux = (cx - sx) / toC;
+      const uy = (cy - sy) / toC;
+      g.strokeStyle = held > 0.5 ? col : CYAN_DIM;
+      g.lineWidth = 1.2;
+      g.setLineDash([2.5 * s, 2.5 * s]);
+      g.lineDashOffset = held > 0.5 ? -this.time * 18 * s : 0;
       g.beginPath();
-      g.moveTo(sx, sy);
-      g.lineTo(cx + THREE.MathUtils.clamp(vx - cx, -R, R), cy + THREE.MathUtils.clamp(vy - cy, -R, R));
+      g.moveTo(sx + ux * (dot + 2 * s), sy + uy * (dot + 2 * s));
+      g.lineTo(cx - ux * BULLSEYE_R * px, cy - uy * BULLSEYE_R * px);
       g.stroke();
+      g.setLineDash([]);
+      g.lineDashOffset = 0;
+    }
+    // Drift: where the suit will be in a beat and a half, kept inside the scope
+    const [vx, vy] = toScope(dx + m.vel.x * DRIFT_LEAD, dz + m.vel.z * DRIFT_LEAD);
+    let ex = vx - sx;
+    let ey = vy - sy;
+    const len = Math.hypot(ex, ey);
+    if (len > dot + 2 * s) {
+      // (cut where it leaves the disc: |s + t·e| = R)
+      const ox = sx - cx;
+      const oy = sy - cy;
+      const a = ex * ex + ey * ey;
+      const b = ox * ex + oy * ey;
+      const c = ox * ox + oy * oy - R * R;
+      const t = Math.min(1, (-b + Math.sqrt(Math.max(0, b * b - a * c))) / a);
+      ex *= t;
+      ey *= t;
+      const l = len * t;
+      if (l > dot + 2 * s) {
+        const ux = ex / l;
+        const uy = ey / l;
+        const tx = sx + ex;
+        const ty = sy + ey;
+        const k = Math.min(4 * s, l * 0.4);
+        g.strokeStyle = col;
+        g.lineWidth = 1.4;
+        g.beginPath();
+        g.moveTo(sx + ux * dot, sy + uy * dot);
+        g.lineTo(tx, ty);
+        g.moveTo(tx - ux * k - uy * k * 0.6, ty - uy * k + ux * k * 0.6);
+        g.lineTo(tx, ty);
+        g.lineTo(tx - ux * k + uy * k * 0.6, ty - uy * k - ux * k * 0.6);
+        g.stroke();
+      }
     }
     g.fillStyle = col;
     g.beginPath();
-    g.arc(sx, sy, 3.2 * s, 0, Math.PI * 2);
+    g.arc(sx, sy, dot, 0, Math.PI * 2);
     g.fill();
     // Readouts: offset, height over the deck, and the capture
     this.text(g, `${off.toFixed(1)} m`, cx - R - 10 * s, cy, 9 * s, col, 'right');
