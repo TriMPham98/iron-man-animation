@@ -205,12 +205,14 @@ const PAD_HOLD_MAX = 10;
 /**
  * Auto-land (the pilot hands it over near the pad): the hover computer
  * flies the suit in over the centre and sets it down. Fastest it crosses
- * (m/s), the stop it plans for (m/s²), the glide slope down to the deck
- * (m of height per m out), the clearance it keeps over anything on the
- * way (m), and the sink it touches down at (m/s).
+ * (m/s), the hardest push across it plans (m/s², the brakes and the air
+ * included) and how fast that push may swing round (m/s³), the glide slope
+ * down to the deck (m of height per m out), the clearance it keeps over
+ * anything on the way (m), and the sink it touches down at (m/s).
  */
 const AUTOLAND_SPEED = 70;
-const AUTOLAND_DECEL = 30;
+const AUTOLAND_PUSH = 40;
+const AUTOLAND_JERK = 45;
 /** Boot authority it flies on (× the full throttle; a hover holds 1.1). */
 const AUTOLAND_THRUST = 1.7;
 /** The stop it plans for coming down (m/s²). */
@@ -218,6 +220,13 @@ const AUTOLAND_SINK_DECEL = 7.2;
 const AUTOLAND_SLOPE = 0.6;
 const AUTOLAND_CLEAR = 6;
 const AUTOLAND_SINK = 1.6;
+/** Quickest run-in it plans (s), and the time-to-go it settles onto the mark over at the end (s). */
+const AUTOLAND_T_MIN = 1.5;
+const AUTOLAND_T_END = 1.8;
+/** How quickly the body's lean follows the thrust under auto-land (rad/s, critically damped). */
+const AUTOLAND_LEAN = 6;
+/** Least lift it keeps on the way down (× g): on next to none, the lean swung wild on every touch across. */
+const AUTOLAND_LIFT = 0.5;
 
 const UP = new THREE.Vector3(0, 1, 0);
 const clamp = THREE.MathUtils.clamp;
@@ -230,6 +239,38 @@ const waveDrag = (mach: number) =>
   1 + WAVE_PEAK * smooth(0.8, 0.98, mach) - (WAVE_PEAK - WAVE_RESIDUE) * smooth(1.0, 1.12, mach);
 /** Exponential approach: fraction of the gap closed in dt with time constant tau. */
 const approach = (dt: number, tau: number) => 1 - Math.exp(-dt / Math.max(1e-4, tau));
+
+/**
+ * Minimum-jerk run-in across to a target: the jerk (m/s³) that starts the
+ * smoothest path from offset (d, v, a) to rest on the target in T seconds.
+ */
+const runInJerk = (d: number, v: number, a: number, T: number) => (3 * (20 * d - 12 * v * T - 3 * a * T * T)) / (T * T * T);
+
+/**
+ * Shortest time (s) for a minimum-jerk run-in from offset (dx, dz) and
+ * velocity (vx, vz), starting with no push, to rest on the target without
+ * crossing faster than {@link AUTOLAND_SPEED}, pushing harder than
+ * {@link AUTOLAND_PUSH} or swinging the push faster than {@link AUTOLAND_JERK}.
+ */
+function runInTime(dx: number, dz: number, vx: number, vz: number): number {
+  for (let T = AUTOLAND_T_MIN; T < 40; T += 0.25) {
+    // The quintic's coefficients (t² … t⁵) per axis
+    const cx = [0, (20 * dx - 12 * vx * T) / (2 * T ** 3), (-30 * dx + 16 * vx * T) / (2 * T ** 4), (12 * dx - 6 * vx * T) / (2 * T ** 5)];
+    const cz = [0, (20 * dz - 12 * vz * T) / (2 * T ** 3), (-30 * dz + 16 * vz * T) / (2 * T ** 4), (12 * dz - 6 * vz * T) / (2 * T ** 5)];
+    let ok = true;
+    for (let i = 0; i <= 24 && ok; i++) {
+      const t = (i / 24) * T;
+      const at = (c: number[], v0: number, k: number) =>
+        k === 0 ? v0 + 2 * c[0] * t + 3 * c[1] * t * t + 4 * c[2] * t ** 3 + 5 * c[3] * t ** 4 : k === 1 ? 2 * c[0] + 6 * c[1] * t + 12 * c[2] * t * t + 20 * c[3] * t ** 3 : 6 * c[1] + 24 * c[2] * t + 60 * c[3] * t * t;
+      ok =
+        Math.hypot(at(cx, vx, 0), at(cz, vz, 0)) <= Math.max(AUTOLAND_SPEED, Math.hypot(vx, vz)) &&
+        Math.hypot(at(cx, vx, 1), at(cz, vz, 1)) <= AUTOLAND_PUSH &&
+        Math.hypot(at(cx, vx, 2), at(cz, vz, 2)) <= AUTOLAND_JERK;
+    }
+    if (ok) return T;
+  }
+  return 40;
+}
 
 export interface GroundProbe {
   /** Surface height under a point (ground or sea, m). */
@@ -303,6 +344,14 @@ export class FlightModel {
   padPull = 0;
   /** The hover computer is flying the suit down onto the landing aid's centre. */
   autoLand = false;
+  /** The line the body leans to under auto-land, and how fast it's swinging (see {@link leanLine}). */
+  private readonly lean = new THREE.Vector3(0, 1, 0);
+  private readonly leanVel = new THREE.Vector3();
+  private readonly _lp = new THREE.Vector3();
+  /** Auto-land's planned push across (m/s², x/z), its time to go (s), and whether a run-in is under way. */
+  private readonly landPush = new THREE.Vector3();
+  private landT = 0;
+  private landOn = false;
   /** Last contact this step, and its impact speed (m/s). */
   contact: ContactKind = 'none';
   impactSpeed = 0;
@@ -708,9 +757,10 @@ export class FlightModel {
     // Hands off over the pad: hold the hover over its centre
     this.padPull += (this.padCapture(input, fl, carrying) - this.padPull) * approach(dt, 0.2);
     const aid = this.landingAid;
+    if (!this.autoLand) this.landOn = false;
     if (aid && this.autoLand) {
       this.padPull = 1;
-      this.autoLandAcc(aid, hoverAcc);
+      this.autoLandAcc(aid, hoverAcc, dt);
     } else if (aid && this.padPull > 1e-3) {
       const ax = (aid.x - this.pos.x) * PAD_HOLD_K - this.vel.x * PAD_HOLD_D;
       const az = (aid.z - this.pos.z) * PAD_HOLD_K - this.vel.z * PAD_HOLD_D;
@@ -820,9 +870,13 @@ export class FlightModel {
 
     // In a hover the suit leans to its thrust: bring the frame's up toward it
     // (not in the stance: the boots vector under it to shed the speed)
+    // (auto-land leans to a line swung smoothly round after the thrust, so
+    // the body rolls from the run-in into the stop as one move: the plan
+    // re-flown every step still trims the push in small quick corrections)
+    const leanTo = this.leanLine(thrustDir, dt);
     if (fl < 0.95 && !this.grounded && !falling && !input.stance) {
       const upNow = this.up(this._u);
-      this._q.setFromUnitVectors(upNow, thrustDir);
+      this._q.setFromUnitVectors(upNow, leanTo);
       this._q2.identity().slerp(this._q, approach(dt, 0.18) * (1 - fl));
       this.q.premultiply(this._q2).normalize();
     }
@@ -1111,33 +1165,68 @@ export class FlightModel {
   }
 
   /**
-   * Auto-land guidance: across to the centre no faster than it can stop,
+   * Auto-land guidance: across to the centre on a minimum-jerk run-in,
    * down a glide slope to the deck (clear of anything on the way), and onto
    * it only once over the mark, at a brisk but soft sink.
+   *
+   * The run-in is re-planned every step from where the suit really is, to
+   * arrive at rest on the mark as the time to go runs out (holding a short
+   * time to go at the end, so it settles on the centre rather than lunging
+   * for it). The push only ever changes by the plan's jerk, so the lean
+   * swings smoothly from the run-in into the stop instead of flicking over.
    */
-  private autoLandAcc(aid: LandingAid, out: THREE.Vector3): void {
+  private autoLandAcc(aid: LandingAid, out: THREE.Vector3, dt: number): void {
     const ex = aid.x - this.pos.x;
     const ez = aid.z - this.pos.z;
     const d = Math.hypot(ex, ez);
-    const vGo = Math.min(AUTOLAND_SPEED, Math.sqrt(2 * AUTOLAND_DECEL * d), 3 * d);
-    const k = d > 1e-4 ? vGo / d : 0;
-    out.x = (ex * k - this.vel.x) * 6;
-    out.z = (ez * k - this.vel.z) * 6;
+    const p = this.landPush;
+    if (!this.landOn) {
+      this.landOn = true;
+      p.set(0, 0, 0);
+      this.landT = runInTime(ex, ez, this.vel.x, this.vel.z);
+    }
+    this.landT = Math.max(AUTOLAND_T_END, this.landT - dt);
+    p.x += runInJerk(ex, this.vel.x, p.x, this.landT) * dt;
+    p.z += runInJerk(ez, this.vel.z, p.z, this.landT) * dt;
+    // (the air and the brakes' share is the plan's to take up: it's flown
+    // again from where they've left the suit every step)
+    out.x = p.x;
+    out.z = p.z;
     const h = this.pos.y - this.hipHeight() - aid.y;
     // What's under it and coming up ahead (the house, the bluff), over the deck
     const g = this.ground;
     const ax = this.pos.x + this.vel.x * 2;
     const az = this.pos.z + this.vel.z * 2;
     const floor = Math.max(g.surface(this.pos.x, this.pos.z), g.surface(ax, az)) - aid.y;
-    const clear = d > 8 ? floor + AUTOLAND_CLEAR : -Infinity;
+    // (let go over the last few metres, not at a line: dropped all at once
+    // it stepped the sink and jolted the lean)
+    const clear = (floor + AUTOLAND_CLEAR) * smooth(4, 8, d);
     const hGoal = Math.max(Math.min(h, AUTOLAND_SLOPE * d), clear);
     let vy = clamp((hGoal - h) * 1.6, -20, 6);
     // Over the mark: keep sinking to the deck; low and still off it, wait
-    if (d < 1 && h > hGoal - 0.05) vy = Math.min(vy, -AUTOLAND_SINK);
-    if (h < 2 && d > 0.4) vy = Math.max(vy, 0);
+    // (both eased in, not switched)
+    if (h > hGoal - 0.05) vy = THREE.MathUtils.lerp(vy, Math.min(vy, -AUTOLAND_SINK), smooth(1, 0.5, d));
+    vy = THREE.MathUtils.lerp(vy, Math.max(vy, 0), smooth(2.5, 1.5, h) * smooth(0.1, 0.4, d));
     // (down no faster than it can stop, easing onto the touchdown sink)
     vy = Math.max(vy, -Math.max(AUTOLAND_SINK, Math.min(h * 1.8, Math.sqrt(2 * AUTOLAND_SINK_DECEL * Math.max(0, h)))));
-    out.y = (vy - this.vel.y) * 4;
+    out.y = Math.max((vy - this.vel.y) * 4, -GRAVITY * (1 - AUTOLAND_LIFT));
+  }
+
+  /**
+   * The line the body leans to: the thrust itself, or under auto-land the
+   * thrust followed through a critically damped spring ({@link AUTOLAND_LEAN}).
+   */
+  private leanLine(thrustDir: THREE.Vector3, dt: number): THREE.Vector3 {
+    const l = this.lean;
+    const v = this.leanVel;
+    if (!this.autoLand) {
+      l.copy(thrustDir);
+      v.set(0, 0, 0);
+      return thrustDir;
+    }
+    v.addScaledVector(this._lp.subVectors(thrustDir, l), AUTOLAND_LEAN * AUTOLAND_LEAN * dt).multiplyScalar(Math.max(0, 1 - 2 * AUTOLAND_LEAN * dt));
+    l.addScaledVector(v, dt);
+    return l.lengthSq() > 1e-6 ? this._lp.copy(l).normalize() : thrustDir;
   }
 
   /** 0–1: how much the pad capture should hold this step (see {@link PAD_CAPTURE_R}). */

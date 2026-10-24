@@ -820,4 +820,38 @@ describe('FlightModel', () => {
       expect(Math.hypot(at!.x, at!.z)).toBeLessThan(0.1);
     }
   });
+
+  it('auto-land swings the lean round smoothly, never flicks it from the run-in to the stop', () => {
+    const cases = [
+      { pos: [130, 50, 0], vel: [-60, 0, 0], flight: true },
+      { pos: [-12, 20, 8], vel: [3, 0, 0], flight: false },
+      { pos: [30, 2, 0], vel: [0, 0, 0], flight: false },
+    ];
+    for (const c of cases) {
+      const m = new FlightModel(flat());
+      m.landingAid = { x: 0, z: 0, y: 0 };
+      m.pos.set(c.pos[0], c.pos[1], c.pos[2]);
+      m.vel.set(c.vel[0], c.vel[1], c.vel[2]);
+      m.grounded = false;
+      m.airT = 2;
+      if (c.flight) {
+        m.flightness = 1;
+        m.posture = 1.42;
+        m.speedCmd = 60;
+      }
+      m.autoLand = true;
+      const up = new THREE.Vector3();
+      const prev = new THREE.Vector3(0, 1, 0).applyQuaternion(m.q);
+      let fastest = 0;
+      run(m, 20, (i, t) => {
+        i.brake = m.speed > 45;
+        up.set(0, 1, 0).applyQuaternion(m.q);
+        // (past the fold out of flight, while still in the air)
+        if (t > 0.5 && !m.grounded) fastest = Math.max(fastest, up.angleTo(prev) * 120);
+        prev.copy(up);
+      });
+      expect(m.grounded).toBe(true);
+      expect(THREE.MathUtils.radToDeg(fastest)).toBeLessThan(100);
+    }
+  });
 });
