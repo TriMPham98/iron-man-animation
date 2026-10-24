@@ -36,8 +36,8 @@ const NECK_TO = [0, 1.52, -0.02] as const;
 const NECK_R = 0.115;
 const UP = new THREE.Vector3(0, 1, 0);
 /** Auto-land is on offer within this far of the pad (m) and this high over it (m). */
-export const AUTOLAND_RANGE = 150;
-export const AUTOLAND_CEILING = 120;
+export const AUTOLAND_RANGE = 300;
+export const AUTOLAND_CEILING = 150;
 
 /**
  * One flight: the suit, its flight model and body language, the camera,

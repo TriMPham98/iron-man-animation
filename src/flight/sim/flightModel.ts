@@ -254,7 +254,7 @@ const AUTOLAND_LIFT = 0.5;
  * flies the leg at over the deck, and the least it keeps over anything
  * under or ahead of it (m).
  */
-const HOME_R = 600;
+const HOME_R = 300;
 const HOME_LEAD = 80;
 const HOME_PAST = 150;
 const HOME_DECEL = 42;

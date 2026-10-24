@@ -866,8 +866,8 @@ describe('FlightModel', () => {
     expect(fast.t).toBeLessThan(25);
     expect(fast.kinds).toEqual(['landed']);
     expect(fast.off).toBeLessThan(0.2);
-    // A pass it can stop from close in is flown as before: no boost
-    const slow = pass(200);
+    // A pass whose stop finishes inside the pattern is flown as before: no boost
+    const slow = pass(150);
     expect(slow.boosted).toBe(0);
     expect(slow.kinds).toEqual(['landed']);
   });
