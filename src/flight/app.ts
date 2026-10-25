@@ -206,6 +206,8 @@ export class FlightApp {
     const game = this.game;
     const { hud } = this;
     hud.pad = new THREE.Vector3(PAD.x, PAD_Y, PAD.y);
+    hud.suitPos = game.model.pos;
+    hud.onCue = (cue, n) => this.sounds.hud(cue, n);
     game.events.on((e) => {
       this.sounds.on(e, game.model);
       hud.event(e);
@@ -493,6 +495,8 @@ export class FlightApp {
       hud.minScale = 0.55;
     }
     hud.jets = game.driver.outputs;
+    const { w: vw, h: vh } = this.view;
+    hud.sun.set(this.lens.sunUv.x * vw, (1 - this.lens.sunUv.y) * vh, this.lens.sunVis);
     hud.autoLand = !this.engaged || director ? null : game.autoLand ? 'active' : game.autoLandReady ? 'ready' : null;
     // TEMP: the take-off prompt (touch screens have their own stick mapping)
     hud.takeoff = this.engaged && !this.paused && !director && !this.autopilot && !this.touch && game.model.grounded && !game.autoLand && !game.autoLandReady;

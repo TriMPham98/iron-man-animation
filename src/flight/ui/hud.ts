@@ -68,12 +68,50 @@ interface Line {
   t: number;
 }
 
-/** A SPLASH stamped where a hostile died. */
+/** A SPLASH stamped where a hostile died (`streak`: its place in a run of quick kills). */
 interface Splash {
   at: THREE.Vector3;
   kind: string;
   t: number;
+  streak: number;
 }
+
+/** Where a hit on the armour came from (world direction off the suit), for the arc round the sight. */
+interface Impact {
+  dir: THREE.Vector3;
+  t: number;
+  heavy: boolean;
+}
+
+/** A wave's tally, kept as it's fought and shown once the sky is clear. */
+interface Tally {
+  wave: number;
+  t0: number;
+  kills: number;
+  shots: number;
+  hits: number;
+  /** Armour lost (points of 100). */
+  lost: number;
+  /** Set on the clear: when it was cleared and how long the wave took (s). */
+  t?: number;
+  dur?: number;
+}
+
+/** HUD moments the sound engine answers (`n`: the streak count). */
+export type HudCue = 'zone' | 'streak' | 'tally' | 'tallyDone';
+
+/** Speed streaks at the edge of the view: fixed seeds (angle, phase, pace). */
+const STREAKS = Array.from({ length: 40 }, (_, i) => {
+  const h = (k: number) => {
+    const v = Math.sin(i * 91.7 + k * 47.3) * 43758.5453;
+    return v - Math.floor(v);
+  };
+  return { a: h(1) * Math.PI * 2, p: h(2), v: 0.7 + h(3) * 0.8 };
+});
+
+/** A run of kills inside this many seconds of each other is a streak. */
+const STREAK_GAP = 3.5;
+const STREAK_NAME = ['SPLASH', 'SPLASH TWO', 'SPLASH THREE', 'SPLASH FOUR', 'SPLASH FIVE'];
 
 /** A banner across the upper third (waves, Mach 1). */
 interface Banner {
@@ -155,6 +193,30 @@ export class Hud {
   private readonly lockedAt = new Map<number, number>();
   private killsShown = 0;
   private killPop = 0;
+  /** Kill confirm on the sight (0–1), the current streak and when it last grew. */
+  private killConfirm = 0;
+  private streak = 0;
+  private lastKillT = -99;
+  private readonly impacts: Impact[] = [];
+  /** The suit's position, live (set by the app): a hit's direction is read off it when it lands. */
+  suitPos: THREE.Vector3 | null = null;
+  /** The sun on screen (CSS px) and how much of it is getting through (0–1), set by the app: text near it gets a heavier halo, and the helmet's visor tints toward it. */
+  readonly sun = new THREE.Vector3(0, 0, 0);
+  /** Missile threat: the ring's radius as last drawn (CSS px), and a flash as a seeker is decoyed off. */
+  private threatR = 0;
+  private decoyFlash = 0;
+  /** Lead pips: which contacts' pips are on the sight, and since when. */
+  private readonly zoneAt = new Map<number, number>();
+  private zoneCueT = -99;
+  /** The wave being fought, and the last one cleared (shown as a summary). */
+  private tally: Tally | null = null;
+  private summary: Tally | null = null;
+  private tallyTickT = 0;
+  private tallyDone = false;
+  /** Sound for HUD-only moments (wired by the app). */
+  onCue: ((cue: HudCue, n?: number) => void) | null = null;
+  /** Weapon rows: the state each last showed, and when it changed (for the flash). */
+  private readonly rowState = new Map<string, { key: string; t: number }>();
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -178,10 +240,14 @@ export class Hud {
         this.kill(e.at, e.text);
         break;
       case 'repulsorHit':
-        if (e.value) this.hit();
+        if (e.value) {
+          this.hit();
+          if (this.tally) this.tally.hits++;
+        }
         break;
       case 'repulsorFire':
         this.recoil = 1;
+        if (this.tally) this.tally.shots++;
         break;
       case 'hitArmor': {
         const k = THREE.MathUtils.clamp((e.value ?? 5) / 12, 0.15, 1);
@@ -189,22 +255,41 @@ export class Hud {
         this.glitch = Math.min(1, this.glitch + k);
         this.armorFlash = 1;
         this.ghostHold = 0.5;
+        if (this.tally) this.tally.lost += e.value ?? 0;
+        if (e.at && this.suitPos) {
+          const dir = e.at.clone().sub(this.suitPos);
+          if (dir.lengthSq() > 1e-4) {
+            this.impacts.push({ dir: dir.normalize(), t: this.time, heavy: (e.value ?? 0) >= 12 });
+            if (this.impacts.length > 8) this.impacts.shift();
+          }
+        }
         break;
       }
       case 'waveStart':
         this.showBanner(`WAVE ${e.value ?? ''}`, 'HOSTILES INBOUND', RED);
+        this.tally = { wave: e.value ?? 0, t0: this.time, kills: 0, shots: 0, hits: 0, lost: 0 };
+        this.summary = null;
         break;
       case 'waveClear':
         this.showBanner('SKY CLEAR', `WAVE ${e.value ?? ''} COMPLETE`, CYAN);
+        if (this.tally) {
+          this.summary = { ...this.tally, t: this.time, dur: this.time - this.tally.t0 };
+          this.tallyDone = false;
+          this.tallyTickT = 0;
+        }
+        this.tally = null;
         break;
       case 'sonicBoom':
         this.showBanner('MACH 1', 'THROUGH THE BARRIER', WHITE, true);
         break;
       case 'missileDecoyed':
         this.showBanner('DECOYED', 'MISSILE OFF THE SCENT', CYAN, true);
+        this.decoyFlash = 1;
         break;
       case 'redeploy':
         this.bootT = 0;
+        this.tally = null;
+        this.summary = null;
         break;
     }
   }
@@ -231,7 +316,12 @@ export class Hud {
 
   kill(at?: THREE.Vector3, kind?: string): void {
     this.killFlash = 1;
-    if (at) this.splashes.push({ at: at.clone(), kind: (kind ?? '').toUpperCase(), t: this.time });
+    this.killConfirm = 1;
+    this.streak = this.time - this.lastKillT < STREAK_GAP ? this.streak + 1 : 1;
+    this.lastKillT = this.time;
+    if (this.streak >= 2) this.onCue?.('streak', this.streak);
+    if (this.streak >= 3) this.showBanner(this.streak >= STREAK_NAME.length ? `SPLASH ×${this.streak}` : STREAK_NAME[this.streak - 1], 'MULTI-KILL', AMBER, true);
+    if (at) this.splashes.push({ at: at.clone(), kind: (kind ?? '').toUpperCase(), t: this.time, streak: this.streak });
     if (this.splashes.length > 6) this.splashes.shift();
   }
 
@@ -255,8 +345,13 @@ export class Hud {
     this.glitch = Math.max(0, this.glitch - dt * 3);
     this.armorFlash = Math.max(0, this.armorFlash - dt * 3);
     this.killPop = Math.max(0, this.killPop - dt * 3);
+    this.killConfirm = Math.max(0, this.killConfirm - dt * 2.2);
+    this.decoyFlash = Math.max(0, this.decoyFlash - dt * 2);
     if (combat.kills !== this.killsShown) {
-      if (combat.kills > this.killsShown) this.killPop = 1;
+      if (combat.kills > this.killsShown) {
+        this.killPop = 1;
+        if (this.tally) this.tally.kills += combat.kills - this.killsShown;
+      }
       this.killsShown = combat.kills;
     }
     // Boot: from nothing, or the reactor coming back from a reboot
@@ -291,6 +386,8 @@ export class Hud {
     g.save();
     const shake = this.shake * this.shake * 10 * s;
     if (shake > 0.05) g.translate((flick(this.time, 1) - 0.5) * 2 * shake, (flick(this.time, 2) - 0.5) * 2 * shake);
+    if (helmet) this.drawVisorTint(g);
+    this.drawStreaks(g, cam, m, helmet, s);
     this.panel('ladder', 0, 0, () => this.drawLadder(g, cam, cx, cy, s));
     this.panel('reticle', 0, 0, () => this.drawReticle(g, cx, cy, s, combat));
     this.drawMarkers(g, cam, m, s);
@@ -298,6 +395,7 @@ export class Hud {
     this.drawTargets(g, cam, m, combat, s);
     this.drawSplashes(g, cam, s);
     this.drawWarnings(g, cam, m, combat, s);
+    this.drawImpacts(g, cam, cx, cy, s);
     // Head-mounted panels (they ride the sway in the helmet)
     g.save();
     if (helmet) {
@@ -315,6 +413,7 @@ export class Hud {
     this.drawTakeoff(g, dt, s);
     this.drawLines(g, s);
     this.drawBanner(g, s);
+    this.drawSummary(g, dt, s);
     g.restore();
     if (combat.lost) this.drawLost(g, combat, cx, cy, s);
     g.restore();
@@ -354,6 +453,46 @@ export class Hud {
       g.drawImage(this.canvas, 0, y, W, bh, off, y, W, bh);
     }
     g.restore();
+  }
+
+  /**
+   * Where the hits came from: a red arc round the sight for each, turned
+   * with the view (up is ahead, down is behind), fading out over a second.
+   */
+  private drawImpacts(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, cx: number, cy: number, s: number): void {
+    const inv = this._q.copy(cam.quaternion).invert();
+    for (let i = this.impacts.length - 1; i >= 0; i--) {
+      const im = this.impacts[i];
+      const age = this.time - im.t;
+      if (age > 1.3) {
+        this.impacts.splice(i, 1);
+        continue;
+      }
+      const d = this._v.copy(im.dir).applyQuaternion(inv);
+      // Screen angle: 0 = up (ahead), clockwise
+      const a = Math.atan2(d.x, -d.z) - Math.PI / 2;
+      const r = (64 + (im.heavy ? 8 : 0)) * s + age * 10 * s;
+      const half = im.heavy ? 0.45 : 0.34;
+      g.save();
+      g.globalAlpha *= (1 - age / 1.3) ** 1.5;
+      g.strokeStyle = age < 0.06 ? WHITE : RED;
+      g.lineWidth = (im.heavy ? 6 : 4) * s;
+      g.beginPath();
+      g.arc(cx, cy, r, a - half, a + half);
+      g.stroke();
+      // A chevron at its middle, pointing out to the source
+      g.lineWidth = 1.6;
+      const px = cx + Math.cos(a) * (r + 8 * s);
+      const py = cy + Math.sin(a) * (r + 8 * s);
+      g.translate(px, py);
+      g.rotate(a);
+      g.beginPath();
+      g.moveTo(-3 * s, -5 * s);
+      g.lineTo(3 * s, 0);
+      g.lineTo(-3 * s, 5 * s);
+      g.stroke();
+      g.restore();
+    }
   }
 
   /** SPLASH where each kill fell: a burst ring, the stamp rising off it. */
@@ -396,10 +535,74 @@ export class Hud {
       g.globalAlpha *= Math.max(0, fade);
       g.translate(x, y - rise);
       g.scale(pop, pop);
-      this.text(g, 'SPLASH', 0, 0, 13 * s, WHITE, 'center', JARVIS);
+      const name = STREAK_NAME[Math.min(sp.streak, STREAK_NAME.length) - 1];
+      this.text(g, name, 0, 0, (13 + Math.min(4, sp.streak - 1) * 1.5) * s, sp.streak > 1 ? AMBER : WHITE, 'center', JARVIS);
       if (sp.kind) this.text(g, sp.kind === 'SHIP' ? 'WARSHIP  DOWN' : `${sp.kind}  DOWN`, 0, 14 * s, 8 * s, CYAN, 'center', JARVIS);
       g.restore();
     }
+  }
+
+  /**
+   * After a clear, the wave's tally under the banner: kills, repulsor
+   * accuracy, armour lost and time, each row sliding in and counting up
+   * (ticking as it goes), then holding a few seconds.
+   */
+  private drawSummary(g: CanvasRenderingContext2D, dt: number, s: number): void {
+    const sm = this.summary;
+    if (!sm || sm.t === undefined) return;
+    const age = this.time - sm.t - 1;
+    const LIFE = 7;
+    if (age > LIFE) {
+      this.summary = null;
+      return;
+    }
+    if (age < 0) return;
+    const COUNT = 1.2;
+    const k = Math.min(1, age / COUNT);
+    const ease = 1 - (1 - k) ** 3;
+    if (k < 1) {
+      this.tallyTickT -= dt;
+      if (this.tallyTickT <= 0) {
+        this.tallyTickT = 0.07;
+        this.onCue?.('tally');
+      }
+    } else if (!this.tallyDone) {
+      this.tallyDone = true;
+      this.onCue?.('tallyDone');
+    }
+    const acc = sm.shots > 0 ? sm.hits / sm.shots : -1;
+    const dur = sm.dur ?? 0;
+    const shownDur = dur * ease;
+    const rows: [string, string, string][] = [
+      ['KILLS', `${Math.round(sm.kills * ease)}`, WHITE],
+      ['ACCURACY', acc < 0 ? '—' : `${Math.round(acc * 100 * ease)}%`, acc >= 0.5 ? WHITE : CYAN],
+      ['ARMOUR LOST', `${Math.round(sm.lost * ease)}`, sm.lost > 40 ? AMBER : CYAN],
+      ['TIME', `${Math.floor(shownDur / 60)}:${`${Math.floor(shownDur % 60)}`.padStart(2, '0')}`, CYAN],
+    ];
+    const W = 280 * s;
+    const H = 74 * s;
+    const x0 = this.w / 2 - W / 2;
+    const y0 = this.h * 0.27 + 46 * s;
+    const out = age > LIFE - 0.5 ? (age - (LIFE - 0.5)) / 0.5 : 0;
+    g.save();
+    g.globalAlpha *= (1 - out) * Math.min(1, age / 0.2);
+    this.glass(g, x0, y0, W, H, s);
+    for (let i = 0; i < rows.length; i++) {
+      const [label, value, color] = rows[i];
+      const r = THREE.MathUtils.clamp((age - i * 0.1) / 0.25, 0, 1);
+      if (r <= 0) continue;
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const x = x0 + 16 * s + col * (W / 2);
+      const y = y0 + 22 * s + row * 30 * s;
+      g.save();
+      g.globalAlpha *= r;
+      g.translate((1 - r) ** 2 * -16 * s, 0);
+      this.text(g, label, x, y - 7 * s, 7.5 * s, CYAN_LABEL, 'left', JARVIS);
+      this.text(g, value, x, y + 8 * s, 14 * s, color, 'left');
+      g.restore();
+    }
+    g.restore();
   }
 
   /** A banner across the upper third: rules drawn out from the middle, the title tracking in. */
@@ -471,7 +674,80 @@ export class Hud {
     g.fillStyle = color;
     g.textAlign = align;
     g.textBaseline = 'middle';
+    // Into the sun's glare: a heavier halo, doubled up when it's strong
+    const gl = this.glareAt(x, y);
+    if (gl < 0.05) {
+      g.fillText(str, x, y);
+      return;
+    }
+    const color0 = g.shadowColor;
+    const blur0 = g.shadowBlur;
+    g.shadowColor = 'rgba(0, 8, 16, 0.95)';
+    g.shadowBlur = 5 + 7 * gl;
     g.fillText(str, x, y);
+    if (gl > 0.35) g.fillText(str, x, y);
+    g.shadowColor = color0;
+    g.shadowBlur = blur0;
+  }
+
+  /** How hard the sun glares at a point on screen (0–1). */
+  private glareAt(x: number, y: number): number {
+    if (this.sun.z < 0.02) return 0;
+    const t = this.ctx.getTransform();
+    // (in screen space: the point may be drawn under a translate)
+    const px = (t.a * x + t.c * y + t.e) / this.dpr;
+    const py = (t.b * x + t.d * y + t.f) / this.dpr;
+    const R = 0.42 * Math.max(this.w, this.h);
+    const k = Math.max(0, 1 - Math.hypot(px - this.sun.x, py - this.sun.y) / R);
+    return Math.min(1, this.sun.z) * k * k;
+  }
+
+  /** The helmet's visor polarising toward the sun: a soft dark bloom where it sits. */
+  private drawVisorTint(g: CanvasRenderingContext2D): void {
+    const vis = Math.min(1, this.sun.z);
+    if (vis < 0.02) return;
+    const R = 0.42 * Math.max(this.w, this.h);
+    const grad = g.createRadialGradient(this.sun.x, this.sun.y, 0, this.sun.x, this.sun.y, R);
+    grad.addColorStop(0, `rgba(4, 14, 24, ${0.34 * vis})`);
+    grad.addColorStop(0.5, `rgba(4, 14, 24, ${0.14 * vis})`);
+    grad.addColorStop(1, 'rgba(4, 14, 24, 0)');
+    g.save();
+    g.shadowBlur = 0;
+    g.fillStyle = grad;
+    g.fillRect(0, 0, this.w, this.h);
+    g.restore();
+  }
+
+  /**
+   * Speed: faint streaks running out from where the suit is headed, coming
+   * in past Mach 0.75 and full by Mach 1.2.
+   */
+  private drawStreaks(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, m: FlightModel, helmet: boolean, s: number): void {
+    if (m.grounded || m.speed < 4) return;
+    const k = THREE.MathUtils.smoothstep(m.mach, 0.75, 1.2) * (helmet ? 1 : 0.75);
+    if (k < 0.01) return;
+    const fp = this.project(this._v.copy(m.pos).addScaledVector(m.vel, 200 / m.speed), cam);
+    const ox = fp ? THREE.MathUtils.clamp(fp.x, this.w * 0.2, this.w * 0.8) : this.w / 2;
+    const oy = fp ? THREE.MathUtils.clamp(fp.y, this.h * 0.2, this.h * 0.8) : this.h / 2;
+    const diag = Math.hypot(this.w, this.h);
+    const pace = 0.5 + 1.2 * k;
+    g.save();
+    g.shadowBlur = 0;
+    g.lineWidth = 1;
+    for (const st of STREAKS) {
+      const u = (st.p + this.time * pace * st.v) % 1;
+      const r = diag * (0.3 + 0.38 * u);
+      const len = (24 + 110 * u) * s * k;
+      const a = 0.3 * k * Math.sin(Math.PI * u);
+      const c = Math.cos(st.a);
+      const sn = Math.sin(st.a);
+      g.strokeStyle = `rgba(225, 248, 255, ${a})`;
+      g.beginPath();
+      g.moveTo(ox + c * r, oy + sn * r);
+      g.lineTo(ox + c * (r + len), oy + sn * (r + len));
+      g.stroke();
+    }
+    g.restore();
   }
 
   private updateSway(dt: number, cam: THREE.Camera, m: FlightModel, helmet: boolean, s: number): void {
@@ -604,6 +880,27 @@ export class Hud {
     }
     g.fillStyle = WHITE;
     g.fillRect(cx - 1, cy - 1, 2, 2);
+    // A kill: a bold X slams onto the sight and lingers
+    if (this.killConfirm > 0) {
+      const t = 1 - this.killConfirm;
+      const k = (11 + 10 * (1 - Math.min(1, t / 0.12)) ** 2) * s;
+      g.save();
+      g.globalAlpha *= Math.min(1, this.killConfirm * 2);
+      g.strokeStyle = t < 0.08 ? WHITE : RED;
+      g.lineWidth = 3;
+      for (const [dx, dy] of [
+        [1, 1],
+        [-1, 1],
+        [1, -1],
+        [-1, -1],
+      ]) {
+        g.beginPath();
+        g.moveTo(cx + dx * k * 0.55, cy + dy * k * 0.55);
+        g.lineTo(cx + dx * k * 1.5, cy + dy * k * 1.5);
+        g.stroke();
+      }
+      g.restore();
+    }
     if (this.hitMarker > 0) {
       g.strokeStyle = `rgba(255,255,255,${this.hitMarker})`;
       g.lineWidth = 2;
@@ -1159,9 +1456,8 @@ export class Hud {
     const spd = m.speed * KNOTS;
     this.tape(g, lx, cy, spd, 50, (v) => (v >= 0 ? `${v}` : ''), -1, s, m.speedTarget * KNOTS);
     this.tape(g, rx, cy, m.pos.y, 100, (v) => `${v}`, 1, s);
-    // Readout boxes
-    // Readout boxes, pointing in at their tape
-    const box = (x: number, label: string, value: string, align: 1 | -1) => {
+    // Readout boxes, pointing in at their tape; their digits roll like a drum counter
+    const box = (x: number, label: string, value: number, align: 1 | -1) => {
       const bw = 74 * s;
       const bh = 24 * s;
       const tip = 7 * s;
@@ -1180,11 +1476,11 @@ export class Hud {
       g.lineWidth = 1.2;
       g.stroke();
       const mid = (near + align * tip + far) / 2;
-      this.text(g, value, mid, cy + 0.5 * s, 15 * s, WHITE, 'center');
+      this.drum(g, value, mid, cy, 15 * s, bh - 3 * s);
       this.text(g, label, mid, cy - 22 * s, 8 * s, CYAN_LABEL, 'center', JARVIS);
     };
-    box(lx, 'AIRSPEED KT', `${Math.round(spd)}`, -1);
-    box(rx, 'ALT MSL', `${Math.round(m.pos.y)}`, 1);
+    box(lx, 'AIRSPEED KT', spd, -1);
+    box(rx, 'ALT MSL', m.pos.y, 1);
     const mach = m.mach;
     this.text(g, `M ${mach.toFixed(2)}`, lx - 42 * s, cy + 26 * s, 11 * s, mach > 0.98 ? AMBER : CYAN, 'center');
     this.text(g, `G ${m.gLoad.toFixed(1)}`, lx - 42 * s, cy + 42 * s, 11 * s, m.gLoad > 8 ? AMBER : CYAN_DIM, 'center');
@@ -1192,6 +1488,40 @@ export class Hud {
     this.text(g, `R ${Math.max(0, Math.round(ra))}`, rx + 42 * s, cy + 26 * s, 11 * s, ra < 50 ? AMBER : CYAN, 'center');
     const vs = m.vel.y;
     this.text(g, `${vs >= 0 ? '▲' : '▼'} ${Math.abs(vs).toFixed(0)}`, rx + 42 * s, cy + 42 * s, 11 * s, CYAN_DIM, 'center');
+  }
+
+  /**
+   * A number on a drum counter, centred on (x, y) and clipped to a window
+   * `win` tall: the units tick over, and each higher digit turns over only
+   * as everything below it rolls past 9.
+   */
+  private drum(g: CanvasRenderingContext2D, value: number, x: number, y: number, size: number, win: number): void {
+    if (value < 0 || !Number.isFinite(value)) {
+      this.text(g, `${Math.round(value)}`, x, y + size * 0.03, size, WHITE, 'center');
+      return;
+    }
+    g.font = `500 ${size}px ${MONO}`;
+    const dw = g.measureText('0').width;
+    const n = Math.max(1, `${Math.floor(value)}`.length);
+    const pitch = size * 1.15;
+    g.save();
+    g.beginPath();
+    g.rect(x - (n * dw) / 2 - 2, y - win / 2, n * dw + 4, win);
+    g.clip();
+    for (let k = 0; k < n; k++) {
+      const place = 10 ** k;
+      const d = Math.floor(value / place) % 10;
+      // How far this digit has turned toward the next: it holds still,
+      // then flicks over in the last stretch (readable, but still a drum)
+      const below = value % place;
+      const turn = k === 0 ? value - Math.floor(value) : below > place - 1 ? below - (place - 1) : 0;
+      const roll = THREE.MathUtils.smoothstep(turn, 0.85, 1);
+      const dx = x + (n / 2 - k - 0.5) * dw;
+      const dy = y + size * 0.03 + roll * pitch;
+      this.text(g, `${d}`, dx, dy, size, WHITE, 'center');
+      if (roll > 0.01) this.text(g, `${(d + 1) % 10}`, dx, dy - pitch, size, WHITE, 'center');
+    }
+    g.restore();
   }
 
   private drawHeading(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, s: number): void {
@@ -1266,6 +1596,7 @@ export class Hud {
     for (const h of c.hostiles) {
       if (!h.alive) {
         this.seenAt.delete(h.id);
+        this.zoneAt.delete(h.id);
         continue;
       }
       const dist = h.pos.distanceTo(cam.position);
@@ -1372,6 +1703,44 @@ export class Hud {
         if (lead) {
           const on = W.assist === h;
           const r = (on ? 7 : 5) * s;
+          // On the sight: the pip fills and a bracket snaps round it (a tick, once, on the assisted one)
+          const inZone = Math.hypot(lead.x - cx, lead.y - cy) < 10 * s + r;
+          let zt = this.zoneAt.get(h.id);
+          if (inZone && zt === undefined) {
+            this.zoneAt.set(h.id, (zt = this.time));
+            if (on && this.time - this.zoneCueT > 0.25) {
+              this.zoneCueT = this.time;
+              this.onCue?.('zone');
+            }
+          } else if (!inZone && zt !== undefined) {
+            this.zoneAt.delete(h.id);
+            zt = undefined;
+          }
+          if (zt !== undefined) {
+            const snap = 1 + 1.2 * (1 - Math.min(1, (this.time - zt) / 0.12)) ** 2;
+            const b = (r + 5 * s) * snap;
+            const k = 4 * s;
+            g.save();
+            g.strokeStyle = WHITE;
+            g.lineWidth = 1.6;
+            for (let q = 0; q < 4; q++) {
+              const a = Math.PI / 4 + (q * Math.PI) / 2;
+              const bx = lead.x + Math.cos(a) * b;
+              const by = lead.y + Math.sin(a) * b;
+              const sx = -Math.sign(Math.cos(a));
+              const sy = -Math.sign(Math.sin(a));
+              g.beginPath();
+              g.moveTo(bx + sx * k, by);
+              g.lineTo(bx, by);
+              g.lineTo(bx, by + sy * k);
+              g.stroke();
+            }
+            g.fillStyle = 'rgba(235, 250, 255, 0.35)';
+            g.beginPath();
+            g.arc(lead.x, lead.y, r, 0, Math.PI * 2);
+            g.fill();
+            g.restore();
+          }
           const dx = lead.x - x;
           const dy = lead.y - y;
           const dl = Math.hypot(dx, dy);
@@ -1500,6 +1869,12 @@ export class Hud {
     }
     g.closePath();
     g.fill();
+    // Into the glare, the glass darkens so what's on it still reads
+    const gl = this.glareAt(x + w / 2, y + h / 2);
+    if (gl > 0.02) {
+      g.fillStyle = `rgba(2, 12, 20, ${0.45 * gl})`;
+      g.fill();
+    }
     g.strokeStyle = CYAN_FAINT;
     g.lineWidth = 1;
     g.stroke();
@@ -1630,7 +2005,24 @@ export class Hud {
     const x = this.w - 40 * s;
     let y = this.h - 132 * s - this.bottomInset;
     this.glass(g, x - 166 * s, y - 20 * s, 184 * s, 146 * s, s, true);
-    const row = (label: string, value: string, color: string, extra?: (bx: number, by: number) => void) => {
+    // A row lights up as its state changes (`key`: what counts as a change; defaults to the value)
+    const row = (label: string, value: string, color: string, extra?: (bx: number, by: number) => void, key = value) => {
+      let st = this.rowState.get(label);
+      if (!st) this.rowState.set(label, (st = { key, t: -99 }));
+      else if (st.key !== key) {
+        st.key = key;
+        st.t = this.time;
+      }
+      const flash = Math.max(0, 1 - (this.time - st.t) / 0.6);
+      if (flash > 0) {
+        g.save();
+        g.shadowBlur = 0;
+        g.fillStyle = `rgba(126, 232, 255, ${0.2 * flash})`;
+        g.fillRect(x - 158 * s, y - 9 * s, 166 * s, 21 * s);
+        g.fillStyle = `rgba(235, 250, 255, ${flash})`;
+        g.fillRect(x - 158 * s, y - 9 * s, 2 * s, 21 * s);
+        g.restore();
+      }
       this.text(g, label, x - 150 * s, y, 8 * s, CYAN_LABEL, 'left', JARVIS);
       this.text(g, value, x, y, 11 * s, color, 'right');
       extra?.(x - 150 * s, y + 9 * s);
@@ -1652,6 +2044,7 @@ export class Hud {
     const blink = Math.sin(this.time * 10) > 0;
     const ubText = over ? 'OVERHEAT' : W.unibeamOn ? 'DISCHARGE' : W.unibeamCharge > 0 ? `CHARGING ${Math.round(W.unibeamCharge * 100)}%` : heat > 0.02 ? `COOLING ${Math.round(heat * 100)}°` : 'READY';
     const ubColor = over ? (blink ? RED : AMBER) : W.unibeamOn ? WHITE : CYAN;
+    const ubKey = over ? 'over' : W.unibeamOn ? 'on' : W.unibeamCharge > 0 ? 'charge' : heat > 0.02 ? 'cool' : 'ready';
     row('UNIBEAM', ubText, ubColor, (bx, by) => {
       g.fillStyle = CYAN_FAINT;
       g.fillRect(bx, by, 150 * s, 3 * s);
@@ -1660,7 +2053,7 @@ export class Hud {
       // Where the lockout releases
       g.fillStyle = CYAN_DIM;
       g.fillRect(bx + 150 * s * 0.35 - 0.5 * s, by - 2 * s, 1 * s, 7 * s);
-    });
+    }, ubKey);
     row('FLARES', `${W.flares}`, W.flareCooldown > 0 ? CYAN_DIM : CYAN);
     const atBusy = W.launcherQueue.length > 0;
     row('AT LAUNCHERS', atBusy ? `FIRING ${W.launcherQueue.length}` : W.launcherAmmo ? `${W.launcherAmmo} RDS` : 'RELOAD', atBusy ? WHITE : W.launcherAmmo ? CYAN : AMBER, (bx, by) => {
@@ -1832,8 +2225,35 @@ export class Hud {
     const blink = Math.sin(this.time * 14) > 0;
     // Incoming seekers: a chevron toward each and a flashing callout
     const threats = c.missiles.threats();
+    // The nearest seeker's time to impact: the ring round the sight closes with it
+    let tti = Infinity;
+    for (const t of threats) {
+      const rel = this._v.copy(m.pos).sub(t.pos);
+      const d = rel.length();
+      const closing = (t.vel.dot(rel) - m.vel.dot(rel)) / Math.max(d, 1e-3);
+      if (closing > 1) tti = Math.min(tti, d / closing);
+    }
     if (threats.length) {
-      if (blink) this.text(g, threats.length > 1 ? `MISSILES ×${threats.length}` : 'MISSILE', cx, cy + 88 * s, 16 * s, RED, 'center', JARVIS);
+      const u = Number.isFinite(tti) ? THREE.MathUtils.clamp(tti / 6, 0, 1) : 1;
+      const goal = (40 + 110 * u) * s;
+      this.threatR = this.threatR > 0 ? this.threatR + (goal - this.threatR) * 0.25 : goal;
+      const close = tti < 1.5;
+      const pulse = close ? 0.5 + 0.5 * Math.sin(this.time * 30) : 0.7 + 0.3 * Math.sin(this.time * 8);
+      g.save();
+      g.strokeStyle = RED;
+      g.globalAlpha *= pulse * (Number.isFinite(tti) ? 1 : 0.4);
+      g.lineWidth = close ? 2.4 : 1.6;
+      // Segments turning against each other, closing to a solid ring at the end
+      const gap = 0.35 * u;
+      for (let i = 0; i < 6; i++) {
+        const a = (i * Math.PI) / 3 + this.time * (i % 2 ? 0.8 : -0.8) * u;
+        g.beginPath();
+        g.arc(cx, cy, this.threatR, a + gap / 2, a + Math.PI / 3 - gap / 2);
+        g.stroke();
+      }
+      g.restore();
+      const ttiText = Number.isFinite(tti) ? `  ${tti.toFixed(1)}s` : '';
+      if (blink || close) this.text(g, `${threats.length > 1 ? `MISSILES ×${threats.length}` : 'MISSILE'}${ttiText}`, cx, cy + 88 * s, 16 * s, RED, 'center', JARVIS);
       this.text(g, 'F — FLARES', cx, cy + 108 * s, 9 * s, AMBER, 'center', JARVIS);
       for (const t of threats) {
         const rel = this._v.copy(t.pos).applyMatrix4(cam.matrixWorldInverse);
@@ -1852,6 +2272,19 @@ export class Hud {
         g.restore();
       }
     }
+    // A seeker pulled off by the flares: the ring blows out white
+    if (this.decoyFlash > 0 && this.threatR > 0) {
+      const t = 1 - this.decoyFlash;
+      g.save();
+      g.globalAlpha *= this.decoyFlash;
+      g.strokeStyle = WHITE;
+      g.lineWidth = 2.5 * this.decoyFlash + 0.5;
+      g.beginPath();
+      g.arc(cx, cy, this.threatR + t * 90 * s, 0, Math.PI * 2);
+      g.stroke();
+      g.restore();
+    }
+    if (!threats.length && this.decoyFlash <= 0) this.threatR = 0;
     // The house being shelled: a callout and an amber caret toward each launcher doing it
     if (c.houseUnderFire) {
       if (blink) this.text(g, 'HOUSE UNDER FIRE', cx, cy - 88 * s, 13 * s, AMBER, 'center', JARVIS);

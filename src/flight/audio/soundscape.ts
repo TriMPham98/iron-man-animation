@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Combat } from '../combat/combat';
 import type { SimEvent } from '../sim/events';
 import { G_LIMIT, type FlightModel } from '../sim/flightModel';
+import type { HudCue } from '../ui/hud';
 import { SPEED_OF_SOUND } from '../world/config';
 import type { Emitter, GameAudio, Loop } from './gameAudio';
 
@@ -492,6 +493,30 @@ export class Soundscape {
         A.play(SFX.jarvisBlip, { ui: true, gain: 0.22 });
         break;
       default:
+        break;
+    }
+  }
+
+  /**
+   * The HUD's own moments, off the kit's HUD chimes: a light tick as the
+   * lead pip settles on the sight, a rising second chime on each kill of a
+   * streak, and the tally counting up after a clear.
+   */
+  hud(cue: HudCue, n = 0): void {
+    const A = this.audio;
+    if (!A.ready) return;
+    switch (cue) {
+      case 'zone':
+        A.play(SFX.lockTick, { ui: true, gain: 0.12, rate: 1.6 });
+        break;
+      case 'streak':
+        A.play(SFX.killConfirm, { ui: true, gain: 0.26, rate: Math.min(1.5, 1.08 + 0.08 * (n - 2)), delay: 0.14 });
+        break;
+      case 'tally':
+        A.play(SFX.lockTick, { ui: true, gain: 0.07, rate: 2 });
+        break;
+      case 'tallyDone':
+        A.play(SFX.killConfirm, { ui: true, gain: 0.2, rate: 0.9 });
         break;
     }
   }
