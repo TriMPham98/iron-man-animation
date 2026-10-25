@@ -1302,11 +1302,13 @@ export class Hud {
     const alive = c.hostiles.filter((h) => h.alive).length;
     if (alive) this.text(g, `HOSTILES ${alive}`, x, y + R + 42 * s, 10 * s, RED, 'center');
     else if (c.waveReady) {
-      // A wave is on offer: a slow pulse, never a timer
+      // A wave is on offer: a slow pulse, and the countdown once a run is going
       g.save();
       g.globalAlpha *= 0.55 + 0.45 * Math.sin(this.time * 3);
       this.text(g, `${this.waveKey} — CALL WAVE ${c.wave + 2}`, x, y + R + 42 * s, 9 * s, AMBER, 'center', JARVIS);
       g.restore();
+      const due = c.autoWaveIn;
+      if (due !== null) this.text(g, `INBOUND IN ${Math.ceil(due)}`, x, y + R + 56 * s, 9 * s, AMBER, 'center', JARVIS);
     }
   }
 

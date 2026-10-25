@@ -19,7 +19,8 @@ import { hazeAll } from '../render/haze';
 /**
  * The fight: the suit's armour and the hostiles that wear it down, in
  * escalating waves. Free flight until the pilot calls a wave (N, or the
- * touch WAVE button, offered whenever the sky is clear): drones from over
+ * touch WAVE button, offered whenever the sky is clear; once a run is going
+ * the next one comes on its own {@link AUTO_WAVE} s after a clear): drones from over
  * the ridges, then the mobile SAM launchers wake up, then a frigate comes
  * in off the sea (and again every third wave after). Armour regenerates out of combat; at zero the suit drops
  * dead for a few seconds and reboots in the air, on its one reserve (a cleared
@@ -31,6 +32,8 @@ import { hazeAll } from '../render/haze';
 
 /** The one reboot the suit holds at the start of a run. */
 export const RESERVES = 1;
+/** Seconds after the sky clears before the next wave comes uncalled. */
+export const AUTO_WAVE = 15;
 /** Seconds after the suit is lost before a redeploy is offered (it's seen to fall). */
 const REDEPLOY_AFTER = 2.5;
 /** Scorch marks the roofs keep before the oldest goes. */
@@ -168,6 +171,11 @@ export class Combat {
     return this.wavesEnabled && this.down <= 0 && !this.hostiles.some((h) => h.alive);
   }
 
+  /** Seconds until the next wave comes on its own, or null when none is due (free flight, mid-wave, lost). */
+  get autoWaveIn(): number | null {
+    return this.wave >= 0 && this.waveReady && !this.lost ? Math.max(0, AUTO_WAVE - this.waveT) : null;
+  }
+
   /** The suit is lost and has been seen to fall: a redeploy is on offer. */
   get redeployReady(): boolean {
     return this.lost && this.lostT > REDEPLOY_AFTER;
@@ -269,16 +277,18 @@ export class Combat {
       this.armor = Math.min(1, this.armor + dt * 0.035);
     }
 
-    // Waves only come when called (N): a clear sky just gets announced
-    // (and a cleared wave earns back a reserve)
+    // A clear sky gets announced (and a cleared wave earns back a reserve);
+    // the next wave comes when called (N) or AUTO_WAVE s on. Free flight
+    // before the first wave stays free.
     if (this.wavesEnabled && !this.lost && this.wave >= 0 && !this.hostiles.some((h) => h.alive)) {
       this.waveT += dt;
       if (this.waveT > 1.5 && this.waveT - dt <= 1.5) {
         const earned = this.reserves < RESERVES;
         if (earned) this.reserves++;
         this.events.emit('waveClear', { value: this.wave + 1 });
-        this.events.emit('jarvis', { text: `Area clear, sir.${earned ? ' A reserve is back online.' : ''} Next formation on your word.` });
+        this.events.emit('jarvis', { text: `Area clear, sir.${earned ? ' A reserve is back online.' : ''} Next formation in fifteen seconds.` });
       }
+      if (this.waveT >= AUTO_WAVE) this.callWave();
     }
 
     this.streaks.begin();
