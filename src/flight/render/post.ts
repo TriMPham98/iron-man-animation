@@ -169,6 +169,11 @@ export class FlightPost {
       depthTexture: depth,
       depthBuffer: true,
     });
+    // The float depth is there for reversed-Z's precision, not to be read:
+    // nothing samples it, so the multisampled depth is never resolved into
+    // it (a full-size 32F blit every frame: ~1 ms at 1×, ~3 ms at 1.5× on an
+    // M1 Pro) and is discarded instead
+    this.rt.resolveDepthBuffer = false;
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.32, 0.5, 1.3);
     // The glow is added in the final pass, so the pass's own last step (blend
     // it back over the scene) is skipped outright: drawn invisible, it still

@@ -20,25 +20,34 @@ const INNER = -0.2;
 export interface EyeClip {
   /** World centre (xyz) and radius (w, m); radius 0 draws everything. */
   readonly uEyeClip: THREE.IUniform<THREE.Vector4>;
-  /** Each bone's weighting segment in bind space (two ends per bone, by skin index). */
-  readonly uEyeBones: THREE.IUniform<THREE.Vector3[]>;
 }
 
 export function createEyeClip(): EyeClip {
-  const bones = BONE_NAMES.flatMap(() => [new THREE.Vector3(), new THREE.Vector3()]);
+  return { uEyeClip: { value: new THREE.Vector4(0, 0, 0, 0) } };
+}
+
+/**
+ * Each bone's weighting segment in bind space (two ends per bone, by skin
+ * index). Fixed by the rig, so compiled in: as a uniform array three
+ * re-sends all of it on every draw of every suit material (it caches no
+ * arrays), and ANGLE/Metal stalls on it — ~20 ms a frame.
+ */
+const EYE_BONES = (() => {
+  const ends: string[] = BONE_NAMES.flatMap(() => ['vec3(0.0)', 'vec3(0.0)']);
+  const v = (p: readonly number[]) => `vec3(${p.map((x) => x.toFixed(5)).join(', ')})`;
   for (const s of BONE_SPECS) {
     const [a, b] = s.capsule ?? [s.head, s.tail];
     const i = BONE_NAMES.indexOf(s.name) * 2;
-    bones[i].set(...a);
-    bones[i + 1].set(...b);
+    ends[i] = v(a);
+    ends[i + 1] = v(b);
   }
-  return { uEyeClip: { value: new THREE.Vector4(0, 0, 0, 0) }, uEyeBones: { value: bones } };
-}
+  return `const vec3 uEyeBones[${ends.length}] = vec3[](\n  ${ends.join(',\n  ')}\n);`;
+})();
 
 const VERT_HEAD = /* glsl */ `
 varying vec3 vEyeClipW;
 varying float vEyeOut;
-uniform vec3 uEyeBones[${BONE_NAMES.length * 2}];`;
+${EYE_BONES}`;
 
 // How squarely the face looks away from the bone it rides (bind space: the
 // skinned suit's own positions; the dominant bone is the first skin index)
@@ -68,7 +77,6 @@ function withEyeClip(mat: THREE.Material, clip: EyeClip): void {
     prev(shader, renderer);
     if (!shader.vertexShader.includes('#include <project_vertex>')) return;
     shader.uniforms.uEyeClip = clip.uEyeClip;
-    shader.uniforms.uEyeBones = clip.uEyeBones;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>${VERT_HEAD}`)
       .replace('#include <project_vertex>', `#include <project_vertex>${VERT_BODY}`);

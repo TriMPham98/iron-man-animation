@@ -1,6 +1,6 @@
 import './screens.css';
 import { isTouchDevice } from '../sim/touchMath';
-import { MAX_TIER, TRACKS, type RefitRefusal, type TrackId, type Upgrades } from '../sim/upgrades';
+import { UPGRADES, type RefitRefusal, type Upgrades } from '../sim/upgrades';
 import { deviceProfile, type DeviceTier } from '../../scene/deviceProfile';
 
 /**
@@ -11,7 +11,7 @@ import { deviceProfile, type DeviceTier } from '../../scene/deviceProfile';
  * controls reference (ground and flight), audio levels (master, effects,
  * JARVIS's voice) and a graphics preset. The same glass opens as the R&D
  * refit bay on the pad (or with the suit lost): the suit's upgrades,
- * bought and switched with the sim held, and nothing else. Mouse, keyboard
+ * bought with the sim held, and nothing else. Mouse, keyboard
  * (arrows, Enter, Esc) and gamepad (D-pad / left stick, A, B, Start) drive
  * both; every setting persists in localStorage. Styles: ./screens.css.
  */
@@ -116,10 +116,7 @@ export interface RefitMenu {
 
 const REFUSAL: Record<Exclude<RefitRefusal, null>, string> = {
   cost: 'NOT ENOUGH R&D',
-  max: 'FULLY UPGRADED',
-  power: 'NO POWER TO SPARE · SWITCH A TIER OFF FIRST',
-  owned: 'BUY THAT TIER FIRST',
-  reactor: 'THE REACTOR IS POWERING THOSE TIERS',
+  owned: 'ALREADY FITTED',
 };
 
 /** The title's quick start: enough to get off the pad (ESC has the rest). */
@@ -229,7 +226,7 @@ export class Screens {
             <div>
               <div class="fp-eyebrow" data-eyebrow>J.A.R.V.I.S. · FLIGHT SYSTEMS</div>
               <h2 id="fp-title">PAUSED</h2>
-              <div class="fp-status"><span class="dot"></span>SIM HELD · MK III<span data-refit></span><span data-rd-sum hidden> · <span data-rd-pts></span> R&amp;D</span><span class="fp-cam"> · <span data-cam-name></span> CAM</span></div>
+              <div class="fp-status"><span class="dot"></span>SIM HELD · MK III<span data-rd-sum hidden> · <span data-rd-pts></span> R&amp;D</span><span class="fp-cam"> · <span data-cam-name></span> CAM</span></div>
             </div>
             <button class="fp-btn primary fp-done" data-act="done">DONE <kbd>U</kbd></button>
           </header>
@@ -288,8 +285,8 @@ export class Screens {
           <footer class="fp-foot">
             <span class="kb p"><b>&#x2191;&#x2193;</b>navigate</span><span class="kb p"><b>&#x2190;&#x2192;</b>adjust</span><span class="kb p"><b>ENTER</b>select</span><span class="kb p"><b>ESC</b>resume</span>
             <span class="pad p"><b>D-PAD</b>navigate · adjust</span><span class="pad p"><b>A</b>select</span><span class="pad p"><b>B</b>back</span><span class="pad p"><b>START</b>resume</span>
-            <span class="kb r"><b>&#x2191;&#x2193;</b>track</span><span class="kb r"><b>&#x2190;&#x2192;</b>switch tiers</span><span class="kb r"><b>ENTER</b>buy</span><span class="kb r"><b>U · ESC</b>done</span>
-            <span class="pad r"><b>D-PAD</b>track · switch tiers</span><span class="pad r"><b>A</b>buy</span><span class="pad r"><b>B</b>back</span><span class="pad r"><b>START</b>done</span>
+            <span class="kb r"><b>&#x2191;&#x2193;</b>select</span><span class="kb r"><b>ENTER</b>buy</span><span class="kb r"><b>U · ESC</b>done</span>
+            <span class="pad r"><b>D-PAD</b>select</span><span class="pad r"><b>A</b>buy</span><span class="pad r"><b>B</b>back</span><span class="pad r"><b>START</b>done</span>
           </footer>
         </div>
       </div>`;
@@ -369,23 +366,15 @@ export class Screens {
       b.addEventListener('click', () => this.showTab(b.dataset.tab!));
       b.addEventListener('focus', () => this.showTab(b.dataset.tab!));
     }
-    // R&D: a pip switches the track to that tier (its own lit top pip, one
-    // down), the price buys, and Enter / A on a row (a click with no
-    // pointer behind it) buys too
+    // R&D: the price buys, and Enter / A on a row (a click with no pointer behind it) buys too
     p.querySelector('#fp-rd')!.addEventListener('click', (e) => {
       const t = e as MouseEvent;
       const target = t.target as HTMLElement;
       const row = target.closest<HTMLElement>('.rd-row');
       if (!row || !this.refitMenu) return;
-      const id = row.dataset.up as TrackId;
-      const pip = target.closest<HTMLElement>('.rd-pip');
-      if (pip) {
-        const n = Number(pip.dataset.tier);
-        const on = this.refitMenu.upgrades.state.on[id];
-        this.refit((u) => u.setOn(id, n === on ? n - 1 : n));
-      } else if (target.closest('[data-buy]') || t.detail === 0) {
-        const track = TRACKS.find((x) => x.id === id)!;
-        this.refit((u) => u.buy(id), `${track.name} · TIER ${this.refitMenu.upgrades.state.owned[id] + 1} FITTED`);
+      if (target.closest('[data-buy]') || t.detail === 0) {
+        const up = UPGRADES.find((x) => x.id === row.dataset.up)!;
+        this.refit((u) => u.buy(up.id), `${up.name} FITTED`);
       }
       row.focus();
     });
@@ -453,51 +442,36 @@ export class Screens {
     this.renderRefit();
   }
 
-  /** The R&D pane: points, refit and power up top, then a row per track. */
+  /** The R&D pane: points and upgrades fitted up top, then a row per upgrade. */
   private renderRefit(): void {
     const m = this.refitMenu;
     if (!m) return;
     const u = m.upgrades;
     for (const el of this.pause.querySelectorAll('[data-rd-pts]')) el.textContent = `${u.state.rd}`;
-    for (const el of this.pause.querySelectorAll('[data-refit]')) el.textContent = u.refitLevel ? ` · ${u.refit}` : '';
     const gate = m.gate();
     this.pause.querySelector<HTMLElement>('[data-act="refit"]')!.hidden = !!gate;
     const pane = this.pause.querySelector<HTMLElement>('#fp-rd')!;
     const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.rd-row')?.dataset.up;
     const padFocus = !!pane.querySelector('.pad-focus');
-    const next = u.toNextRefit;
-    const cells = Array.from({ length: u.power }, (_, i) => `<i class="${i < u.powerUsed ? 'on' : ''}"></i>`).join('');
-    const rowsHtml = TRACKS.map((t) => {
-      const owned = u.state.owned[t.id];
-      const on = u.state.on[t.id];
-      const cost = u.cost(t.id);
-      const pips = Array.from({ length: MAX_TIER }, (_, i) => {
-        const cls = i < on ? 'on' : i < owned ? 'owned' : '';
-        return `<button class="rd-pip ${cls}" data-tier="${i + 1}" tabindex="-1" aria-label="Tier ${i + 1}${i < on ? ', on' : i < owned ? ', off' : ', not bought'}"></button>`;
-      }).join('');
-      // Each line: now → what the next tier bought would make it
-      const stats = t.stats
-        .map((st) => {
-          const now = st.show(on);
-          const then = owned < MAX_TIER ? st.show(owned + 1) : null;
-          return `<span><small>${esc(st.label)}</small>${esc(now)}${then && then !== now ? `<em>&#x2192; ${esc(then)}</em>` : ''}</span>`;
-        })
+    const rowsHtml = UPGRADES.map((up) => {
+      const owned = u.state.owned[up.id];
+      // Each line: stock → fitted, or what it is now once fitted
+      const stats = up.stats
+        .map(([label, stock, fitted]) => `<span><small>${esc(label)}</small>${owned ? esc(fitted) : `${esc(stock)}${stock !== fitted ? `<em>&#x2192; ${esc(fitted)}</em>` : ''}`}</span>`)
         .join('');
-      const afford = cost !== null && u.state.rd >= cost;
-      const buy = cost === null ? '<span class="rd-max">MAX</span>' : `<button class="rd-buy${afford && !gate ? '' : ' dim'}" data-buy tabindex="-1">${cost}<small>R&amp;D</small></button>`;
-      return `<div class="rd-row" tabindex="0" data-up="${t.id}" aria-label="${esc(t.name)}: tier ${on} of ${owned} owned">
-        <div class="rd-name">${esc(t.name)}<small>${esc(t.part)}</small></div>
-        <div class="rd-pips">${pips}</div>
+      const afford = u.state.rd >= up.cost;
+      const buy = owned ? '<span class="rd-max">FITTED</span>' : `<button class="rd-buy${afford && !gate ? '' : ' dim'}" data-buy tabindex="-1">${up.cost}<small>R&amp;D</small></button>`;
+      return `<div class="rd-row${owned ? ' owned' : ''}" tabindex="0" data-up="${up.id}" aria-label="${esc(up.name)}: ${owned ? 'fitted' : `${up.cost} R&D`}">
+        <div class="rd-name">${esc(up.name)}<small>${esc(up.part)}</small></div>
         <div class="rd-buyc">${buy}</div>
         <div class="rd-stats">${stats}</div>
       </div>`;
     }).join('');
-    const hint = this.touch ? 'TAP A TIER TO SWITCH IT · TAP THE PRICE TO BUY' : '&#x2190; &#x2192; SWITCH TIERS · ENTER BUYS THE NEXT';
+    const hint = this.touch ? 'TAP THE PRICE TO BUY' : 'ENTER BUYS';
     pane.innerHTML = `
       <div class="rd-top">
         <div class="rd-stat"><small>R&amp;D</small><b>${u.state.rd}</b></div>
-        <div class="rd-stat"><small>MARK III</small><b>${u.refit}</b><i>${next === null ? 'FULLY REFITTED' : `${next} TIER${next === 1 ? '' : 'S'} TO THE NEXT`}</i></div>
-        <div class="rd-power"><small>POWER <b>${u.powerUsed}/${u.power}</b></small><span class="rd-cells">${cells}</span></div>
+        <div class="rd-stat"><small>FITTED</small><b>${u.fitted}/${UPGRADES.length}</b></div>
       </div>
       <p class="fp-note rd-gate${gate ? ' shut' : ''}">${esc(this.refitMsg || gate || '')}${this.refitMsg || gate ? '' : hint}</p>
       <div class="rd-rows">${rowsHtml}</div>`;
@@ -592,13 +566,8 @@ export class Screens {
       this.set(k, dir > 0);
       return true;
     }
-    if (cur.dataset.up) {
-      const id = cur.dataset.up as TrackId;
-      const on = this.refitMenu?.upgrades.state.on[id] ?? 0;
-      if (dir < 0 && on === 0) return this.mode === 'refit' || this.toNav(pad);
-      this.refit((u) => u.setOn(id, on + dir));
-      return true;
-    }
+    // (an upgrade row has nothing to adjust)
+    if (cur.dataset.up) return true;
     if (cur.dataset.act === 'camera') {
       this.actions.cycleCamera?.();
       this.showCamera();

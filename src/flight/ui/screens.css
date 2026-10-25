@@ -258,31 +258,23 @@
 #flight-ui .fp-seg button:focus-visible, #flight-ui .fp-seg button.pad-focus { outline: 1px solid #fff; outline-offset: -3px; }
 
 /* R&D refit: points, Mark and the power budget up top, then a row per track */
-#flight-ui .rd-top { display: grid; grid-template-columns: auto auto 1fr; gap: 26px; align-items: end; margin-bottom: 12px; }
-#flight-ui .rd-stat small, #flight-ui .rd-power small { display: block; font-family: Michroma, sans-serif; font-size: 8.5px; letter-spacing: 0.32em; color: rgba(var(--fc-rgb),0.7); margin-bottom: 4px; }
+#flight-ui .rd-top { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 34px; align-items: end; margin-bottom: 12px; }
+#flight-ui .rd-stat small { display: block; font-family: Michroma, sans-serif; font-size: 8.5px; letter-spacing: 0.32em; color: rgba(var(--fc-rgb),0.7); margin-bottom: 4px; }
 #flight-ui .rd-stat b { font-size: 20px; font-weight: 500; color: var(--fc-amber); font-variant-numeric: tabular-nums; }
-#flight-ui .rd-stat:nth-child(2) b { color: var(--fc-ink); font-family: Michroma, sans-serif; font-size: 16px; }
-#flight-ui .rd-stat i { display: block; font-style: normal; font-size: 9px; letter-spacing: 0.06em; color: rgba(232,246,255,0.42); margin-top: 3px; }
-#flight-ui .rd-power small b { color: var(--fc-ink); font-family: 'JetBrains Mono', monospace; letter-spacing: 0.06em; margin-left: 6px; }
-#flight-ui .rd-cells { display: flex; flex-wrap: wrap; gap: 3px; }
-#flight-ui .rd-cells i { width: 10px; height: 14px; border: 1px solid rgba(var(--fc-rgb),0.35); }
-#flight-ui .rd-cells i.on { background: var(--fc); border-color: var(--fc); box-shadow: 0 0 8px rgba(var(--fc-rgb),0.45); }
+#flight-ui .rd-stat:nth-child(2) b { color: var(--fc-ink); }
 #flight-ui .rd-gate { min-height: 15px; color: rgba(var(--fc-rgb),0.75); letter-spacing: 0.14em; font-size: 9.5px; }
 #flight-ui .rd-gate.shut { color: var(--fc-amber); }
 #flight-ui .rd-rows { display: grid; gap: 4px; }
-#flight-ui .rd-row { display: grid; grid-template-columns: 180px auto 1fr; grid-template-areas: 'name pips buy' 'stats stats stats'; gap: 6px 16px; align-items: center; padding: 8px 10px; margin: 0 -10px; border: 1px solid transparent; outline: none; transition: background-color 0.18s, border-color 0.18s; }
+#flight-ui .rd-row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: 'name buy' 'stats stats'; gap: 6px 16px; align-items: center; padding: 8px 10px; margin: 0 -10px; border: 1px solid transparent; outline: none; transition: background-color 0.18s, border-color 0.18s; }
 #flight-ui .rd-row:focus-visible, #flight-ui .rd-row.pad-focus, #flight-ui .rd-row:focus { background: rgba(var(--fc-rgb),0.05); border-color: rgba(var(--fc-rgb),0.25); }
 #flight-ui .rd-name { grid-area: name; font-family: Michroma, sans-serif; font-size: 9.5px; letter-spacing: 0.2em; color: rgba(232,246,255,0.85); }
 #flight-ui .rd-name small { display: block; margin-top: 3px; font-family: 'JetBrains Mono', monospace; font-size: 8.5px; letter-spacing: 0.16em; color: rgba(232,246,255,0.38); }
-#flight-ui .rd-pips { grid-area: pips; display: flex; gap: 4px; }
-#flight-ui .rd-pip { all: unset; box-sizing: border-box; width: 22px; height: 10px; cursor: pointer; border: 1px solid rgba(var(--fc-rgb),0.22); transform: skewX(-18deg); transition: background-color 0.15s, box-shadow 0.15s; }
-#flight-ui .rd-pip.owned { border-color: rgba(var(--fc-rgb),0.7); background: rgba(var(--fc-rgb),0.12); }
-#flight-ui .rd-pip.on { border-color: var(--fc); background: var(--fc); box-shadow: 0 0 10px rgba(var(--fc-rgb),0.45); }
 #flight-ui .rd-buyc { grid-area: buy; justify-self: end; }
 #flight-ui .rd-buy { all: unset; cursor: pointer; padding: 5px 10px; border: 1px solid var(--fc-amber); color: var(--fc-amber); font-size: 11px; font-variant-numeric: tabular-nums; transition: background-color 0.15s, color 0.15s; }
 #flight-ui .rd-buy small { margin-left: 5px; font-size: 8px; letter-spacing: 0.14em; opacity: 0.75; }
 #flight-ui .rd-buy:hover:not(.dim) { background: var(--fc-amber); color: #1a1004; }
 #flight-ui .rd-buy.dim { border-color: rgba(232,246,255,0.18); color: rgba(232,246,255,0.35); }
+#flight-ui .rd-row.owned .rd-name { color: var(--fc); }
 #flight-ui .rd-max { font-family: Michroma, sans-serif; font-size: 9px; letter-spacing: 0.3em; color: var(--fc); }
 #flight-ui .rd-stats { grid-area: stats; display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 10px; color: var(--fc-ink); font-variant-numeric: tabular-nums; }
 #flight-ui .rd-stats small { font-size: 8.5px; letter-spacing: 0.14em; color: rgba(232,246,255,0.42); margin-right: 6px; }
@@ -333,10 +325,6 @@
   #flight-ui .fp-field { grid-template-columns: 92px 1fr 44px; gap: 10px; }
   #flight-ui .fp-field.toggle { grid-template-columns: 92px 1fr; }
   #flight-ui .fp-seg { grid-template-columns: 1fr 1fr; }
-  #flight-ui .rd-top { grid-template-columns: auto auto; gap: 12px 22px; }
-  #flight-ui .rd-power { grid-column: 1 / -1; }
-  #flight-ui .rd-row { grid-template-columns: 1fr auto; grid-template-areas: 'name buy' 'pips pips' 'stats stats'; }
-  #flight-ui .rd-pip { width: 36px; height: 16px; }
   #flight-ui .fp-seg button:nth-child(2) { border-right: 0; }
   #flight-ui .fp-seg button:nth-child(-n + 2) { border-bottom: 1px solid rgba(var(--fc-rgb),0.18); }
   #flight-ui .fp-foot { padding: 9px 16px 11px; }

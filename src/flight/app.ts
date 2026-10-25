@@ -63,7 +63,7 @@ export class FlightApp {
   game!: Game;
   post!: FlightPost;
   hud!: Hud;
-  /** The suit's R&D: points earned in the air, tiers fitted on the pad. */
+  /** The suit's R&D: points earned in the air, upgrades fitted on the pad. */
   readonly upgrades = new Upgrades();
   /** Holds the sim and opens the R&D refit bay (wired by the settings). */
   refitMenu: () => void = () => {};
@@ -517,7 +517,7 @@ export class FlightApp {
     hud.takeoff = this.engaged && !this.paused && !director && !this.autopilot && !this.touch && game.model.grounded && !game.autoLand && !game.autoLandReady;
     const live = this.engaged && !this.paused && !director && !this.autopilot;
     const refit = live && (game.onPad || game.combat.redeployReady);
-    // (between waves, off the pad with a tier to buy: called home to fit it)
+    // (between waves, off the pad with an upgrade to buy: called home to fit it)
     const home = live && !refit && game.combat.autoWaveIn !== null && this.upgrades.affordable;
     hud.refitHint = refit
       ? `${this.touch ? 'REFIT' : 'U'} — R&D BAY · ${this.upgrades.state.rd} R&D`

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { EMPTY_INPUT, FlightModel, G_LIMIT, MAX_MACH, type GroundProbe } from './flightModel';
-import { TRACKS } from './upgrades';
+import { UPGRADES } from './upgrades';
 
 /** Flat ground at y = 0 (or sea, for the water tests). */
 const flat = (water = false): GroundProbe => ({
@@ -218,9 +218,9 @@ describe('FlightModel', () => {
   });
 
   it('flies a propulsion upgrade to its higher top speed up high', () => {
-    const top = (tier: number) => {
+    const top = (fitted: boolean) => {
       const m = new FlightModel(flat());
-      TRACKS.find((t) => t.id === 'propulsion')!.apply(m.spec, tier);
+      if (fitted) UPGRADES.find((u) => u.id === 'propulsion')!.apply(m.spec);
       m.pos.set(0, 8000, 0);
       m.vel.set(0, 0, 250);
       m.grounded = false;
@@ -233,10 +233,10 @@ describe('FlightModel', () => {
       });
       return m.mach;
     };
-    const stock = top(0);
-    const v = top(5);
-    expect(v).toBeGreaterThan(stock + 0.4);
-    expect(v).toBeLessThan(MAX_MACH * 1.4 + 0.02);
+    const stock = top(false);
+    const v = top(true);
+    expect(v).toBeGreaterThan(stock + 0.3);
+    expect(v).toBeLessThan(MAX_MACH * 1.25 + 0.02);
   });
 
     it('spools the boost up over a beat instead of stepping onto it', () => {

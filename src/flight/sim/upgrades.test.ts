@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SimEvent, SimEventKind } from './events';
-import { AWARD, BASE_POWER, LANDING_MIN_AIR, MAX_TIER, REACTOR_POWER, STOCK_SPEC, TIER_COST, TRACKS, Upgrades, type Store } from './upgrades';
+import { AWARD, LANDING_MIN_AIR, STOCK_SPEC, UPGRADES, Upgrades, type Store } from './upgrades';
 
 const memory = (): Store & { data: Map<string, string> } => {
   const data = new Map<string, string>();
@@ -14,94 +14,50 @@ const rich = (rd = 1e6) => {
 };
 
 describe('Upgrades', () => {
-  it('starts as the stock suit: every track at tier 0, the spec untouched', () => {
+  it('starts as the stock suit: nothing fitted, the spec untouched', () => {
     const u = new Upgrades(memory());
     expect(u.spec).toEqual(STOCK_SPEC());
-    expect(u.power).toBe(BASE_POWER);
-    expect(u.refit).toBe('STOCK');
-    for (const t of TRACKS) {
-      const s = STOCK_SPEC();
-      t.apply(s, 0);
-      expect(s).toEqual(STOCK_SPEC());
-    }
+    expect(u.fitted).toBe(0);
   });
 
-  it('buys a tier for its price and switches it on', () => {
-    const u = rich(TIER_COST[0]);
+  it('buys an upgrade once, for its price, and fits it', () => {
+    const cost = UPGRADES.find((x) => x.id === 'repulsors')!.cost;
+    const u = rich(cost);
+    expect(u.affordable).toBe(true);
     expect(u.buy('repulsors')).toBeNull();
     expect(u.state.rd).toBe(0);
-    expect(u.state.owned.repulsors).toBe(1);
-    expect(u.state.on.repulsors).toBe(1);
-    expect(u.spec.repulsorDamage).toBeCloseTo(1.12);
-    expect(u.buy('repulsors')).toBe('cost');
+    expect(u.state.owned.repulsors).toBe(true);
+    expect(u.spec.repulsorDamage).toBeCloseTo(1.35);
+    expect(u.fitted).toBe(1);
+    expect(u.buy('repulsors')).toBe('owned');
+    expect(u.buy('armour')).toBe('cost');
+    expect(u.affordable).toBe(false);
   });
 
-  it('stops at the top tier', () => {
-    const u = rich();
-    for (let i = 0; i < MAX_TIER; i++) expect(u.buy('sensors')).toBeNull();
-    expect(u.buy('sensors')).toBe('max');
-    expect(u.cost('sensors')).toBeNull();
-  });
-
-  it('holds the build to the power budget; reactor tiers raise it', () => {
-    const u = rich();
-    // Fill the budget (refits add a unit each as tiers are bought)
-    const order = ['armour', 'repulsors', 'missiles', 'launchers', 'flares', 'propulsion', 'sensors'] as const;
-    for (const id of order) for (let i = 0; i < MAX_TIER; i++) u.buy(id);
-    expect(u.powerUsed).toBe(u.power);
-    expect(u.tiersOwned).toBeGreaterThan(u.powerUsed);
-    // Something owned but off can't come on with no spare unit…
-    const off = order.find((id) => u.state.on[id] < u.state.owned[id])!;
-    expect(u.setOn(off, u.state.on[off] + 1)).toBe('power');
-    // …until the reactor makes room (a reactor tier pays for itself)
-    const before = u.power;
-    u.buy('reactor');
-    expect(u.state.on.reactor).toBe(1);
-    expect(u.power).toBeGreaterThanOrEqual(before + REACTOR_POWER);
-    expect(u.setOn(off, u.state.on[off] + 1)).toBeNull();
-    // and the reactor can't then be switched off from under it
-    expect(u.setOn('reactor', 0)).toBe('reactor');
-  });
-
-  it('only switches on tiers it owns', () => {
-    const u = rich();
-    u.buy('flares');
-    expect(u.setOn('flares', 2)).toBe('owned');
-    expect(u.setOn('flares', 0)).toBeNull();
-    expect(u.spec.flareMag).toBe(1);
-  });
-
-  it('refits the same Mark III as tiers are bought', () => {
-    const u = rich();
-    for (let i = 0; i < 5; i++) u.buy('armour');
-    expect(u.refit).toBe('REFIT I');
-    expect(u.power).toBe(BASE_POWER + 1);
-  });
-
-  it('makes every tier of every track count', () => {
-    for (const t of TRACKS) {
-      for (let i = 1; i <= MAX_TIER; i++) {
-        const shown = t.stats.map((st) => st.show(i));
-        const before = t.stats.map((st) => st.show(i - 1));
-        expect(shown.some((v, k) => v !== before[k]), `${t.id} tier ${i}`).toBe(true);
-      }
+  it('makes every upgrade count, and only touches the spec once fitted', () => {
+    for (const up of UPGRADES) {
+      expect(up.stats.some(([, stock, fitted]) => stock !== fitted), up.id).toBe(true);
+      const s = STOCK_SPEC();
+      up.apply(s);
+      expect(s, up.id).not.toEqual(STOCK_SPEC());
     }
   });
 
-  it('keeps itself between sessions, and cleans up a bad save', () => {
+  it('keeps itself between sessions, and cleans up a bad or tiered save', () => {
     const store = memory();
     const a = new Upgrades(store);
     a.earn(500, 'x');
     a.buy('propulsion');
     const b = new Upgrades(store);
-    expect(b.state.rd).toBe(500 - TIER_COST[0]);
-    expect(b.state.on.propulsion).toBe(1);
-    expect(b.spec.boostSpeed).toBeCloseTo(1.08);
-    store.setItem('mk3-flight-rd', JSON.stringify({ rd: -4, owned: { armour: 99, bogus: 3 }, on: { armour: 99 } }));
+    expect(b.state.rd).toBe(100);
+    expect(b.state.owned.propulsion).toBe(true);
+    expect(b.spec.boostSpeed).toBeCloseTo(1.25);
+    store.setItem('mk3-flight-rd', JSON.stringify({ rd: -4, owned: { armour: 3, flares: 0, bogus: 3 }, on: { armour: 2 } }));
     const c = new Upgrades(store);
     expect(c.state.rd).toBe(0);
-    expect(c.state.owned.armour).toBe(MAX_TIER);
-    expect(c.state.on.armour).toBe(MAX_TIER);
+    expect(c.state.owned.armour).toBe(true);
+    expect(c.state.owned.flares).toBe(false);
+    expect('bogus' in c.state.owned).toBe(false);
     store.setItem('mk3-flight-rd', '{nope');
     expect(new Upgrades(store).state.rd).toBe(0);
   });
