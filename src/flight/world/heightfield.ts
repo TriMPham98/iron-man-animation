@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
-import { DETAIL_RES, DETAIL_SPAN, HEIGHT_RES, SUN_DIR, TEXEL, WORLD_SIZE } from './config';
+import { DETAIL_RES, DETAIL_SPAN, HEIGHT_RES, SUN_DIR, TERRAIN_PITCH, TEXEL, WORLD_SIZE } from './config';
 import { NOISE_GLSL } from './noiseGlsl';
 
 /**
@@ -582,6 +582,43 @@ export class Heightfield {
       bilinear(this.detail, DETAIL_RES, x / DETAIL_SPAN, z / DETAIL_SPAN, true) +
       0.45 * bilinear(this.detail, DETAIL_RES, x / (DETAIL_SPAN * 0.37) + 0.31, z / (DETAIL_SPAN * 0.37) + 0.31, true);
     return b + d * amp;
+  }
+
+  /**
+   * Ground height (m) as the terrain draws it underfoot: the finest mesh's
+   * triangles (TERRAIN_PITCH apart, diagonals alternating as terrain.ts
+   * lays them) through heightAt at their corners. The crags vary inside a
+   * cell, so heightAt runs up to ~0.8 m off the drawn surface there; what
+   * stands on the ground (the suit's boots, knee and fist) uses this.
+   */
+  meshHeightAt(x: number, z: number): number {
+    const G = TERRAIN_PITCH;
+    const gx = (x + WORLD_SIZE / 2) / G;
+    const gz = (z + WORLD_SIZE / 2) / G;
+    const i = Math.floor(gx);
+    const j = Math.floor(gz);
+    const fx = gx - i;
+    const fz = gz - j;
+    const x0 = i * G - WORLD_SIZE / 2;
+    const z0 = j * G - WORLD_SIZE / 2;
+    if ((i + j) % 2 === 0) {
+      // Diagonal (i+1, j)–(i, j+1)
+      if (fx + fz <= 1) {
+        const a = this.heightAt(x0, z0);
+        return a + (this.heightAt(x0 + G, z0) - a) * fx + (this.heightAt(x0, z0 + G) - a) * fz;
+      }
+      const d = this.heightAt(x0 + G, z0 + G);
+      return d + (this.heightAt(x0, z0 + G) - d) * (1 - fx) + (this.heightAt(x0 + G, z0) - d) * (1 - fz);
+    }
+    // Diagonal (i, j)–(i+1, j+1)
+    const a = this.heightAt(x0, z0);
+    const d = this.heightAt(x0 + G, z0 + G);
+    if (fx >= fz) {
+      const b = this.heightAt(x0 + G, z0);
+      return a + (b - a) * fx + (d - b) * fz;
+    }
+    const c = this.heightAt(x0, z0 + G);
+    return a + (c - a) * fz + (d - c) * fx;
   }
 
   /** Surface the suit or a shell meets: ground, or the sea where it is deeper. */

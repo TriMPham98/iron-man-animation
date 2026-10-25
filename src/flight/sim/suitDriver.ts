@@ -289,6 +289,10 @@ const FIST_R: Array<[BoneName, [number, number, number]]> = (['index', 'middle',
 /** Armour thickness outside the measured joints (m). */
 const KNUCKLE_PAD = 0.022;
 const KNEE_PAD = 0.0;
+/** How far out (m) the ground is read round the touchdown for its slope: about the three-point's footprint. */
+const LAND_SPAN = 0.7;
+/** Most the three-point tips with the slope it lands on (rad): steeper, it leans into the hill. */
+const LAND_TILT = 0.4;
 
 export interface SuitOutputs {
   bootL: number;
@@ -380,6 +384,8 @@ export class SuitDriver {
   private landImpact = 0;
   private landPose: { limbs: Required<LimbOffsets>; wristL: number; wristR: number; fingersL: number[]; fingersR: number[] } | null = null;
   private landBend = LAND_TORSO.bend;
+  /** The 'up' the three-point levels to: the slope it came down on, tipped no further than LAND_TILT. */
+  private readonly landUp = new THREE.Vector3(0, 1, 0);
   /** Set on the frame the fist hits the ground; the sim clears it after the FX. */
   strike: FistStrike | null = null;
   /** Scratch skeleton for contact solving (model space, no carrier). */
@@ -941,8 +947,8 @@ export class SuitDriver {
       wristR = lerp(wristR, L.wristR, w);
       fingersL = fingersL.map((f, i) => lerp(f, L.fingersL[i], w));
       fingersR = fingersR.map((f, i) => lerp(f, L.fingersR[i], w));
-      // Level the body whatever attitude it came in at, then lean into the three-point
-      const ub0 = this._v.set(0, 1, 0).applyQuaternion(this._qi.copy(bodyQ).invert());
+      // Level the body to the slope whatever attitude it came in at, then lean into the three-point
+      const ub0 = this._v.copy(this.landUp).applyQuaternion(this._qi.copy(bodyQ).invert());
       const levelPitch = Math.atan2(ub0.z, ub0.y);
       const levelRoll = -Math.asin(clamp(ub0.x, -1, 1));
       pitch = lerp(pitch, levelPitch + LAND_LEAN, w);
@@ -956,13 +962,11 @@ export class SuitDriver {
       headPitch = lerp(headPitch, lerp(0.55, -0.25, look) + 0.2 * comp, w);
       headYaw = lerp(headYaw, lerp(0.05, -0.1, look), w);
       headRoll = lerp(headRoll, 0, w);
-      // Contact: the lowest of the knee, the boots and the fist sits on the
-      // ground (the solved pose puts all three there at once)
-      // Measured in the levelled frame (the carrier's tilt taken back out)
-      const pose: FlightPose = { stance: 0, chestRecoil: 0, headPitch: 0, wristL, wristR, limbs, fingersL, fingersR, pitch: pitch - levelPitch * w, roll: roll - levelRoll * w, yaw, spineYaw, spineBend, spineSide };
-      const low = this.lowest(pose, w);
-      const groundY = COM.y - m.hipHeight();
-      lift = lerp(lift, groundY - low, w);
+      // Contact: the knee, the boots and the fist (the solved pose puts all
+      // three on one plane) go down onto the ground under each of them, and
+      // none of them into it
+      const pose: FlightPose = { stance: 0, chestRecoil: 0, headPitch: 0, wristL, wristR, limbs, fingersL, fingersR, pitch, roll, yaw, spineYaw, spineBend, spineSide };
+      lift = lerp(lift, this.landingLift(pose, w, m), w);
       if (!this.struck && lt >= LAND_IN) {
         this.struck = true;
         strikeNow = true;
@@ -1114,6 +1118,15 @@ export class SuitDriver {
       this.stood = false;
       this.landImpact = clamp01((m.impactSpeed - 5) / 20) * 0.6 + 0.4;
       this.landPose ??= this.solveLanding();
+      // The slope under the three-point's footprint
+      const g = m.ground;
+      const { x, z } = m.pos;
+      const e = LAND_SPAN;
+      this.landUp.set(g.surface(x - e, z) - g.surface(x + e, z), 2 * e, g.surface(x, z - e) - g.surface(x, z + e)).normalize();
+      if (this.landUp.y < Math.cos(LAND_TILT)) {
+        const flat = Math.hypot(this.landUp.x, this.landUp.z);
+        this.landUp.set((this.landUp.x / flat) * Math.sin(LAND_TILT), Math.cos(LAND_TILT), (this.landUp.z / flat) * Math.sin(LAND_TILT));
+      }
     }
     this.prevCrouch = m.crouch;
     if (this.landT < 0) {
@@ -1268,14 +1281,34 @@ export class SuitDriver {
     return L;
   }
 
-  /** Lowest contact (y, model space at lift 0) of the pose on the scratch skeleton. */
-  private lowest(pose: FlightPose, w: number): number {
+  /**
+   * Lift (rig space) that sets the pose's contacts on the ground: each one
+   * placed in the world through this frame's carrier, the ground read under
+   * it, and the body raised or lowered until the deepest of them just
+   * touches. On a slope or a crag the downhill contacts reach for their own
+   * ground rather than a plane through the centre.
+   */
+  private landingLift(pose: FlightPose, w: number, m: FlightModel): number {
     applyPose(this.fk, { ...pose, lift: 0 });
     this.fk.root.updateWorldMatrix(true, true);
-    const soles = Math.min(this.contactMin(SOLE('L'), _p).y, this.contactMin(SOLE('R'), _p).y);
     // Knee and fist only bear as the body comes right down into the crouch
     const late = 0.6 * (1 - w);
-    return Math.min(soles, this.contactMin(KNEE_R, _p).y - KNEE_PAD + late, this.contactMin(FIST_R, _p).y - KNUCKLE_PAD + late);
+    let need = -Infinity;
+    for (const [pts, pad] of [
+      [SOLE('L'), 0],
+      [SOLE('R'), 0],
+      [KNEE_R, KNEE_PAD - late],
+      [FIST_R, KNUCKLE_PAD - late],
+    ] as const) {
+      for (const [bone, p] of pts) {
+        const h = boneSpec(bone).head;
+        const v = _n.set(p[0] - h[0], p[1] - h[1], p[2] - h[2]).applyMatrix4(this.fk.bones[bone].matrixWorld).applyMatrix4(this.carrier);
+        need = Math.max(need, m.ground.surface(v.x, v.z) - (v.y - pad));
+      }
+    }
+    // A rig-space lift moves the body along its own up
+    const upY = this.carrier.elements[5];
+    return need / Math.max(0.3, upY);
   }
 
   /** The lowest of a set of bone-carried bind points on the scratch skeleton (model space). */

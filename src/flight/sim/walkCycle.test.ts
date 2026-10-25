@@ -106,6 +106,40 @@ describe('walk cycle', () => {
     }
   });
 
+  it('lays the soles along a slope and carries the swing over a hump', () => {
+    // Uphill ahead (+z) and rising to the suit's left (+x), with a ridge across the path
+    const ridge = (z: number) => 0.25 * Math.exp(-(((z - 3) / 0.5) ** 2));
+    const hill: GroundProbe = { ...flat, surface: (x, z) => 0.3 * z + 0.15 * x + ridge(z) };
+    const m = new FlightModel(hill);
+    m.placeOnGround(0, 0, 0);
+    const input = EMPTY_INPUT();
+    let checked = 0;
+    let deepest = 0;
+    for (let t = 0; t < 8; t += 1 / 120) {
+      input.throttle = 1;
+      m.step(1 / 120, input);
+      for (const f of m.gait.feet) {
+        if (f.swinging || Math.abs(f.pos.z - 3) < 1.5) continue;
+        expect(f.tilt.x).toBeCloseTo(Math.atan(0.3), 1);
+        expect(f.tilt.y).toBeCloseTo(Math.atan(0.15), 1);
+        checked++;
+      }
+      // Toe and heel of every planted boot on or over the ground
+      for (const f of m.gait.feet) {
+        if (f.swinging) continue;
+        for (const d of [0.2, -0.08]) {
+          const x = f.pos.x + Math.sin(f.yaw) * d;
+          const z = f.pos.z + Math.cos(f.yaw) * d;
+          const sole = f.pos.y + Math.tan(f.tilt.x) * d;
+          deepest = Math.max(deepest, hill.surface(x, z) - sole);
+        }
+      }
+    }
+    expect(m.pos.z).toBeGreaterThan(5); // walked over the ridge
+    expect(checked).toBeGreaterThan(100);
+    expect(deepest).toBeLessThan(0.03);
+  });
+
   it('matches the stride to the speed', () => {
     const lengths: number[] = [];
     for (const throttle of [1, 0.5]) {

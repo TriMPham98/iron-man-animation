@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ATMOSPHERE_GLSL } from './atmosphere';
-import { HEIGHT_RES, TEXEL, WORLD_SIZE } from './config';
+import { HEIGHT_RES, TERRAIN_PITCH, TEXEL, WORLD_SIZE } from './config';
 import { TERRAIN_SAMPLE_GLSL, type Heightfield } from './heightfield';
 
 /**
@@ -15,7 +15,7 @@ import { TERRAIN_SAMPLE_GLSL, type Heightfield } from './heightfield';
 /** Cells per full patch side. */
 const CELLS = 32;
 /** Leaf (finest) node size in metres. */
-const LEAF = 128;
+const LEAF = CELLS * TERRAIN_PITCH;
 const LEVELS = Math.round(Math.log2(WORLD_SIZE / LEAF)) + 1;
 /** LOD 0 reaches this far (m); each coarser level doubles it. */
 const RANGE0 = 320;

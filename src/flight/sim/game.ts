@@ -251,6 +251,14 @@ export class Game {
     // a shot's recoil lands in between, and undoing it at the new velocity
     // left the suit a few mm off every time — a creep under sustained fire)
     const owed = this._owed.copy(this.model.vel).multiplyScalar(this.acc);
+    // …but never down past the ground the next step will stop it on: diving
+    // in fast, the carry put the suit (and the chase camera) a metre under
+    // the hillside for the frame before the touchdown
+    const mp = this.model.pos;
+    if (owed.y < 0 && !this.model.grounded && !this.ground.isWater(mp.x + owed.x, mp.z + owed.z)) {
+      const floor = this.ground.surface(mp.x + owed.x, mp.z + owed.z) + this.model.hipHeight();
+      owed.y = Math.max(owed.y, Math.min(0, floor - mp.y));
+    }
     this.model.pos.add(owed);
     this.driver.update(dt, this.suit, this.model, aim, this.combat.weapons.arms);
     // Hero landing: the fist hits the ground a beat after the boots

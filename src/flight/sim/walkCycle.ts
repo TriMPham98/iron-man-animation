@@ -92,6 +92,11 @@ interface Foot {
   t: number;
   /** Heel lift about the toe (rad, + = heel up). */
   heel: number;
+  /** The ground under the sole where it stands: rise toward the toe and toward the suit's left (rad). */
+  tilt: THREE.Vector2;
+  /** Swinging: the tilt it left and the tilt it's going to. */
+  fromTilt: THREE.Vector2;
+  toTilt: THREE.Vector2;
   /** In the air (detached): ankle in body space. */
   local: THREE.Vector3;
 }
@@ -104,6 +109,7 @@ const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _c = new THREE.Vector3();
 const _d = new THREE.Vector3();
+const _e = new THREE.Vector2();
 const _X = new THREE.Vector3(1, 0, 0);
 const _Y = new THREE.Vector3(0, 1, 0);
 const _Z = new THREE.Vector3(0, 0, 1);
@@ -117,6 +123,41 @@ const TRACK_WALK = 0.035;
 
 /** Furthest a boot is kept from its rest spot when planted out of a landing (m). */
 const PLANT_REACH = 0.32;
+
+/** The sole's reach (m) from the ground point under the ankle: toe ahead, heel behind, half its width. */
+const SOLE_TOE = 0.2;
+const SOLE_HEEL = 0.08;
+const SOLE_HALF = 0.06;
+/** Steepest ground the sole lies along (rad); past it the boot stands on its edge. */
+const SOLE_TILT = 0.45;
+
+/**
+ * Sit a boot on the ground: its sole along the slope (`tilt`), and its
+ * ground point raised wherever the toe, heel or an edge would otherwise go
+ * in (a crease, or a slope steeper than the sole will tip).
+ */
+function soleOn(ground: GroundSurface, p: THREE.Vector3, yaw: number, tilt: THREE.Vector2): void {
+  const fx = Math.sin(yaw);
+  const fz = Math.cos(yaw);
+  const c = ground.surface(p.x, p.z);
+  // A kerb or a wall face under the toe isn't a slope: the boot stands on
+  // its own ground short of it (footing() keeps it off the top)
+  const at = (x: number, z: number, d: number) => {
+    const h = ground.surface(x, z);
+    return Math.abs(h - c) > d ? c : h;
+  };
+  const toe = at(p.x + fx * SOLE_TOE, p.z + fz * SOLE_TOE, SOLE_TOE);
+  const heel = at(p.x - fx * SOLE_HEEL, p.z - fz * SOLE_HEEL, SOLE_HEEL);
+  // Left of the heading is (cos, −sin)
+  const left = at(p.x + fz * SOLE_HALF, p.z - fx * SOLE_HALF, SOLE_HALF);
+  const right = at(p.x - fz * SOLE_HALF, p.z + fx * SOLE_HALF, SOLE_HALF);
+  tilt.set(clamp(Math.atan((toe - heel) / (SOLE_TOE + SOLE_HEEL)), -SOLE_TILT, SOLE_TILT), clamp(Math.atan((left - right) / (2 * SOLE_HALF)), -SOLE_TILT, SOLE_TILT));
+  // Low enough to stand on, high enough that the tilted sole clears the
+  // ground at the toe, the heel and both edges
+  const tx = Math.tan(tilt.x);
+  const ty = Math.tan(tilt.y);
+  p.y = Math.max(c, toe - tx * SOLE_TOE, heel + tx * SOLE_HEEL, left - ty * SOLE_HALF, right + ty * SOLE_HALF);
+}
 
 /** Body-frame rest spot of a boot's ground point (x left, z forward). */
 function restOffset(side: number, wide: number, out: THREE.Vector3): THREE.Vector3 {
@@ -239,6 +280,8 @@ export class Gait {
   private foldLift = -Infinity;
   private readonly prevVel = new THREE.Vector3();
   readonly feet: [Foot, Foot] = [this.foot(1), this.foot(-1)];
+  /** The ground the boots were last stepped on (the swing arc keeps clear of it). */
+  private ground: GroundSurface | null = null;
   /** Footfalls so far (tests / debugging). */
   strikes = 0;
   /** Body state the gait was last stepped with. */
@@ -266,6 +309,9 @@ export class Gait {
       toYaw: 0,
       t: 0,
       heel: 0,
+      tilt: new THREE.Vector2(),
+      fromTilt: new THREE.Vector2(),
+      toTilt: new THREE.Vector2(),
       local: restOffset(side, 0, new THREE.Vector3()).setY(ANKLE.y),
     };
   }
@@ -279,11 +325,13 @@ export class Gait {
       rotY(restOffset(f.side, this.track, _a), heading, f.pos).add(_b.set(pos.x, 0, pos.z));
       f.pos.y = ground.surface(f.pos.x, f.pos.z);
       footing(f.pos, pos, heading, f.side, this.track, ground);
+      soleOn(ground, f.pos, heading, f.tilt);
       f.yaw = heading;
       f.swinging = false;
       f.heel = 0;
     }
     this.bob = Math.min(this.bob, 0);
+    this.ground = ground;
   }
 
   /**
@@ -301,7 +349,8 @@ export class Gait {
     if (d.length() > PLANT_REACH) d.setLength(PLANT_REACH);
     d.x = f.side * Math.max(f.side * d.x, -0.02);
     rotY(d.add(rest), heading, _c).add(_d.set(this.pos.x, 0, this.pos.z));
-    f.pos.set(_c.x, ground.surface(_c.x, _c.z), _c.z);
+    f.pos.set(_c.x, 0, _c.z);
+    soleOn(ground, f.pos, heading, f.tilt);
     f.yaw = heading;
     f.swinging = false;
     f.heel = 0;
@@ -322,6 +371,7 @@ export class Gait {
     this.pos.copy(pos);
     this.heading = heading;
     this.vel.copy(vel);
+    this.ground = ground;
     const wGoal = this.attached && crouch <= 0 ? 1 : 0;
     this.weight += (wGoal - this.weight) * approach(dt, wGoal > this.weight ? 0.18 : 0.1);
     if (!this.attached) return 0;
@@ -378,6 +428,7 @@ export class Gait {
           f.swinging = true;
           f.from.copy(f.pos);
           f.fromYaw = f.yaw;
+          f.fromTilt.copy(f.tilt);
           f.t = 0;
         }
       }
@@ -394,12 +445,14 @@ export class Gait {
         // the boot back toward its rest spot until the ground there is
         // within a step of the ground under the body
         footing(f.to, pos, heading, f.side, this.track, ground);
+        soleOn(ground, f.to, yawTo, f.toTilt);
         f.toYaw = yawTo;
         if (!inWindow || f.t >= 1) {
           // Boot down
           f.swinging = false;
           f.pos.copy(f.to);
           f.yaw = f.toYaw;
+          f.tilt.copy(f.toTilt);
           // Heel first: the toes are still up and roll down onto the ground
           f.heel = moving ? -0.16 : 0;
           const k = Math.hypot(f.to.x - f.from.x, f.to.z - f.from.z);
@@ -497,6 +550,9 @@ export class Gait {
       const rise = f.to.y - f.from.y;
       const clear = (0.07 + 0.15 * Math.abs(rise)) * Math.sin(Math.PI * Math.pow(f.t, 0.8));
       p.y = f.from.y + rise * (rise > 0 ? smooth(0, 0.55, f.t) : smooth(0.45, 1, f.t)) + clear;
+      // Over a hump between the two spots the arc rides up over the ground
+      // there instead of carving through it
+      if (this.ground) p.y = Math.max(p.y, this.ground.surface(p.x, p.z) + clear);
       heel = 0;
     } else {
       p.copy(f.pos);
@@ -564,20 +620,23 @@ export class Gait {
       // Sole flat to the ground (the rig's pitch tips it), heel up on push-off,
       // toes pointed leaving the ground and pulled up reaching for the strike
       const toes = f.swinging ? -0.18 * smooth(0.5, 0.95, f.t) + 0.25 * (1 - smooth(0, 0.4, f.t)) * this.active : f.heel;
-      const ankle = toes - out.pitch;
+      // Planted, the sole lies along the ground's slope (rolled with it too)
+      const tilt = f.swinging ? _e.lerpVectors(f.fromTilt, f.toTilt, smooth(0.6, 1, f.t)) : f.tilt;
+      const ankle = toes - out.pitch - tilt.x;
+      const footRoll = tilt.y - out.roll;
       zRel[L ? 0 : 1] = a.z - ANKLE.z;
       if (L) {
         limbs.hipL = lerp(limbs.hipL, ang.hip, w);
         limbs.hipOutL = lerp(limbs.hipOutL, ang.hipOut, w);
         limbs.kneeL = lerp(limbs.kneeL, ang.knee, w);
         limbs.ankleL = lerp(limbs.ankleL, ankle, w);
-        limbs.footRollL = lerp(limbs.footRollL, 0, w);
+        limbs.footRollL = lerp(limbs.footRollL, footRoll, w);
       } else {
         limbs.hipR = lerp(limbs.hipR, ang.hip, w);
         limbs.hipOutR = lerp(limbs.hipOutR, ang.hipOut, w);
         limbs.kneeR = lerp(limbs.kneeR, ang.knee, w);
         limbs.ankleR = lerp(limbs.ankleR, ankle, w);
-        limbs.footRollR = lerp(limbs.footRollR, 0, w);
+        limbs.footRollR = lerp(limbs.footRollR, footRoll, w);
       }
     }
     void zRel;

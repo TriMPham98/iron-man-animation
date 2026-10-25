@@ -254,8 +254,13 @@ export class CameraRig {
     }
 
     // Never under the ground or the sea (the helmet eye is wherever the
-    // head is: lifted out of a crouch it stood outside the suit)
-    const floor = Math.max(ground.surface(this.pos.x, this.pos.z), 0) + (this.mode === 'helmet' ? 0.1 : 0.8);
+    // head is: lifted out of a crouch it stood outside the suit). The ground
+    // is read round the lens too: the near plane reaches out past the eye,
+    // and on a slope it cut into the hillside and showed through it
+    const { x: cx, z: cz } = this.pos;
+    const r = 0.3;
+    const under = Math.max(ground.surface(cx, cz), ground.surface(cx + r, cz), ground.surface(cx - r, cz), ground.surface(cx, cz + r), ground.surface(cx, cz - r));
+    const floor = Math.max(under, 0) + (this.mode === 'helmet' ? 0.15 : 0.8);
     if (this.pos.y < floor) this.pos.y = floor;
 
     cam.position.copy(this.pos);

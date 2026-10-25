@@ -12,24 +12,27 @@ function shoreAmp(depth: number): number {
 
 /**
  * The heightfield (and the house and pad on it) as the flight model, camera
- * and FX see it. The sea is the moving swell the ocean draws, read at the
- * world's clock, so the suit meets the water where it is on screen.
+ * and FX see it. The land is the drawn mesh (not the finer heightAt), so the
+ * boots stand on the triangles on screen rather than sinking into a crag
+ * between their corners or hanging over a hollow. The sea is the moving
+ * swell the ocean draws, read at the world's clock, so the suit meets the
+ * water where it is on screen.
  */
 export function groundProbe(
   field: Heightfield,
   clock: () => number = () => 0,
   foam?: GroundProbe['foam'],
 ): GroundProbe & { isDeck(x: number, z: number): boolean } {
-  const isWater = (x: number, z: number) => field.heightAt(x, z) < 0 && structureTop(field, x, z) === -Infinity;
+  const isWater = (x: number, z: number) => field.meshHeightAt(x, z) < 0 && structureTop(field, x, z) === -Infinity;
   return {
     surface: (x, z) => {
       const top = structureTop(field, x, z);
-      const h = field.heightAt(x, z);
+      const h = field.meshHeightAt(x, z);
       if (h >= 0 || top !== -Infinity) return Math.max(h, 0, top);
       return Math.max(h, seaHeightAt(x, z, clock()) * shoreAmp(-field.baseAt(x, z)));
     },
     isWater,
-    seabed: (x, z) => field.heightAt(x, z),
+    seabed: (x, z) => field.meshHeightAt(x, z),
     foam,
     // The pad, the house's roofs and terraces, the bare rock of the bluff
     isDeck: (x, z) => structureTop(field, x, z) > field.surfaceAt(x, z),

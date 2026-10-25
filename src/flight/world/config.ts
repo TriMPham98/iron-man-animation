@@ -12,6 +12,8 @@ export const TEXEL = WORLD_SIZE / HEIGHT_RES;
 /** Tileable detail-noise texture: texels per side and world span (m). */
 export const DETAIL_RES = 256;
 export const DETAIL_SPAN = 192;
+/** Vertex spacing (m) of the finest terrain mesh, the one drawn underfoot. */
+export const TERRAIN_PITCH = 4;
 export const SEA_LEVEL = 0;
 
 /** Direction toward the sun (unit). Elevation ~7°. */
