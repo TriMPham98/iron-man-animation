@@ -26,8 +26,8 @@ import { UnibeamFx } from './unibeamFx';
  *  - unibeam (hold Space): the suit pulls up into a stance, the arc reactor
  *    winds up and the chest fires a beam that cuts through everything in
  *    its line until it overheats;
- *  - flares (F): the hip drums push out and, like a revolver, index a
- *    fresh port onto the station round by round, the two hips taking turns:
+ *  - flares (F, hold to dump): the hip drums push out and, like a revolver,
+ *    index a fresh port onto the station round by round, the two hips taking turns:
  *    each pellet kicks out dull, lights a beat later with a pop, and burns
  *    white-hot down an arc of thick smoke (the fan sweeps from high to low
  *    across the salvo), then cools orange and gutters out — pulling heat
@@ -128,8 +128,8 @@ const UNIBEAM_REACH = 2600;
 const REACTOR: [number, number, number] = [0, 1.436, 0.19];
 /** Flares carried, and the seconds between restocking one. */
 const FLARE_MAG = 64;
-const FLARE_RESTOCK = 2.5;
-/** Flares: a salvo, the pause before the next one (s), the beat between rounds (alternating hips), ports round each drum. */
+const FLARE_RESTOCK = 1;
+/** Flares: a salvo, the pause after F is released (s), the beat between rounds (alternating hips), ports round each drum. */
 const FLARE_SALVO = 8;
 const FLARE_SALVO_COOL = 2.5;
 const FLARE_INTERVAL = 0.075;
@@ -232,6 +232,8 @@ export class PlayerWeapons {
   private flareHold = 0;
   /** Rounds fired this salvo (the fan's sweep). */
   private flareRound = 0;
+  /** F is down and a salvo has already begun, so holding it dumps the rest. */
+  private flareDown = false;
   /** Each drum's port count turned (L, R) and how long since it began its last index (s). */
   private readonly drumPort: [number, number] = [0, 0];
   private readonly drumT: [number, number] = [1, 1];
@@ -465,13 +467,19 @@ export class PlayerWeapons {
     this.suit.setSystemsPower({ reactor: 1, eyes: 1, repulsors: 1 });
 
     // ── Flares ─────────────────────────────────────────────────────
+    // A tap is one salvo. Holding F keeps the drums going, and the pause
+    // starts when it is let go.
     this.flareCooldown = Math.max(0, this.flareCooldown - dt);
-    if (enabled && c.flares && this.flareCooldown <= 0 && this.flares > 0) {
+    if (!c.flares) {
+      if (this.flareDown) this.flareCooldown = FLARE_SALVO_COOL;
+      this.flareDown = false;
+    } else if (enabled && this.flareCooldown <= 0 && this.flares > 0 && this.flareSalvo <= 0) {
+      const fresh = !this.flareDown;
+      this.flareDown = true;
       this.flareSalvo = Math.min(FLARE_SALVO, this.flares);
       this.flareRound = 0;
-      this.flareT = 0.2;
-      this.flareCooldown = FLARE_SALVO_COOL;
-      this.events.emit('flareSalvo', { at: this.model.pos });
+      this.flareT = fresh ? 0.2 : 0;
+      if (fresh) this.events.emit('flareSalvo', { at: this.model.pos });
     }
     if (this.flareSalvo > 0) {
       this.flareHold = 0.5;
