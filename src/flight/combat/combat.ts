@@ -321,4 +321,10 @@ export class Combat {
   get incoming(): number {
     return this.missiles.threats().length;
   }
+
+  /** Where the radars holding the suit right now are (SAM trucks, the frigate's gun directors). */
+  *trackers(): Generator<THREE.Vector3> {
+    for (const s of this.sams) if (s.alive && s.track > 0.5) yield s.pos;
+    for (const f of this.ships) if (!f.sinking) yield* f.trackers();
+  }
 }

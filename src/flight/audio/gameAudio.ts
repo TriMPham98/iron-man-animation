@@ -38,6 +38,8 @@ export interface PlayOptions {
   lowpass?: number;
   /** Fade out over the last n s (or stop after `duration`). */
   duration?: number;
+  /** Fade in over the first n s (a slice cut from the middle of a recording). */
+  fadeIn?: number;
   /** Sound travels at 343 m/s (default). False: it's arriving now (a shock front reaching the ear). */
   propagate?: boolean;
 }
@@ -320,6 +322,10 @@ export class GameAudio {
       node.connect(send).connect(this.echo);
     }
     const t0 = ctx.currentTime + Math.min(delay, 12);
+    if (o.fadeIn) {
+      gain.gain.setValueAtTime(0, t0);
+      gain.gain.linearRampToValueAtTime(o.gain ?? 1, t0 + o.fadeIn);
+    }
     if (o.duration !== undefined) {
       gain.gain.setValueAtTime(o.gain ?? 1, t0 + Math.max(0, o.duration - 0.08));
       gain.gain.linearRampToValueAtTime(0, t0 + o.duration);

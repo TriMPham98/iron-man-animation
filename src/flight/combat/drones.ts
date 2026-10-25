@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Particles } from '../fx/particles';
 import type { Streaks } from '../fx/streaks';
 import type { EventBus } from '../sim/events';
 import type { Explosions, SurfaceQuery } from './explosions';
 import type { Missiles } from './missiles';
+import { box, glowMaterial, loft, merge, paint, type V3 } from './modelKit';
 import type { DamageKind, Hostile, PlayerTarget } from './types';
 
 /**
@@ -17,60 +17,128 @@ import type { DamageKind, Hostile, PlayerTarget } from './types';
  */
 
 const mats = {
-  hull: new THREE.MeshStandardMaterial({ color: 0x3a3e44, metalness: 0.75, roughness: 0.42 }),
-  dark: new THREE.MeshStandardMaterial({ color: 0x16181b, metalness: 0.6, roughness: 0.55 }),
-  eye: new THREE.MeshStandardMaterial({ color: 0x220000, emissive: new THREE.Color(1, 0.06, 0.02), emissiveIntensity: 6 }),
-  hot: new THREE.MeshStandardMaterial({ color: 0x111111, emissive: new THREE.Color(1, 0.45, 0.12), emissiveIntensity: 3 }),
+  body: new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.35, roughness: 0.5 }),
+  glow: glowMaterial(),
 };
 
-let geoCache: { hull: THREE.BufferGeometry; dark: THREE.BufferGeometry; eye: THREE.BufferGeometry; hot: THREE.BufferGeometry } | null = null;
+const C = {
+  top: 0x6c737c,
+  side: 0x5c626a,
+  belly: 0x464b52,
+  edge: 0x2a2d32,
+  flap: 0x50555c,
+  dark: 0x131416,
+  glass: 0x07090c,
+  red: 0x5c1410,
+  store: 0x8e9194,
+  storeNose: 0x2e3134,
+};
 
+let geoCache: { body: THREE.BufferGeometry; glow: THREE.BufferGeometry } | null = null;
+
+/** The airframe, nose +Z: two merged geometries shared by every drone. */
 function droneGeometry() {
   if (geoCache) return geoCache;
-  // Fuselage: a lathe along +Z (nose forward), flattened
-  const prof: THREE.Vector2[] = [];
-  const L = 4.2;
-  for (let i = 0; i <= 16; i++) {
-    const u = i / 16;
-    const r = 0.42 * Math.pow(Math.sin(Math.PI * Math.min(1, u * 1.05)), 0.7) * (1 - 0.35 * u) + 0.02;
-    prof.push(new THREE.Vector2(r, (u - 0.45) * L));
+  const body: THREE.BufferGeometry[] = [];
+  const glow: THREE.BufferGeometry[] = [];
+
+  // Fuselage: a chined, flat-bottomed blended body lofted nose to tail
+  const sec = (z: number, w: number, t: number, b: number, c = 0): V3[] => [
+    [0, t, z], [0.55 * w, 0.82 * t, z], [w, c, z], [0.62 * w, 0.75 * b, z],
+    [0, b, z], [-0.62 * w, 0.75 * b, z], [-w, c, z], [-0.55 * w, 0.82 * t, z],
+  ];
+  body.push(
+    loft(
+      [
+        sec(2.3, 0.02, 0.01, -0.01),
+        sec(1.95, 0.2, 0.11, -0.08, -0.01),
+        sec(1.35, 0.4, 0.25, -0.15, -0.02),
+        sec(0.6, 0.55, 0.33, -0.2, -0.02),
+        sec(-0.3, 0.58, 0.31, -0.2, -0.02),
+        sec(-1.2, 0.5, 0.24, -0.17),
+        sec(-1.85, 0.32, 0.16, -0.12),
+        sec(-2.0, 0.27, 0.13, -0.1),
+      ],
+      (e, s) => {
+        // A dark sensor brow over the nose; chines a shade darker; grey belly
+        if (s === 1 && (e === 0 || e === 7)) return C.glass;
+        if (e === 0 || e === 7 || s < 0 || s > 6) return C.top;
+        if (e === 1 || e === 6) return C.side;
+        return C.belly;
+      },
+    ),
+  );
+
+  // Cranked flying wing: diamond-ish aerofoil, dark leading edge, elevons
+  const wingSec = (x: number, zLE: number, zTE: number, th: number, y: number): V3[] => {
+    const ch = zLE - zTE;
+    return [
+      [x, y, zLE], [x, y + th, zLE - ch * 0.3], [x, y + th * 0.45, zTE + ch * 0.25],
+      [x, y, zTE], [x, y - th * 0.3, zTE + ch * 0.25], [x, y - th * 0.55, zLE - ch * 0.3],
+    ];
+  };
+  for (const s of [-1, 1]) {
+    body.push(
+      loft(
+        [wingSec(s * 0.25, 0.66, -1.2, 0.1, -0.05), wingSec(s * 0.92, 0.12, -0.85, 0.07, -0.04), wingSec(s * 2.05, -0.86, -1.2, 0.025, 0.02)],
+        (e, seg) => {
+          if (e === 0 || e === 5) return C.edge;
+          if (e === 2 && seg === 1) return C.flap;
+          if (e >= 3) return C.belly;
+          return C.top;
+        },
+        [false, true],
+      ),
+    );
+    // Canted tail fins with red tips
+    body.push(
+      loft(
+        [
+          [[0.03, 0, -0.78], [0, 0, -1.6], [-0.03, 0, -0.78], [0, 0, -0.5]].map(([x, y, z]) => [x, y, z] as V3),
+          [[0.016, 0.52, -1.28], [0, 0.52, -1.62], [-0.016, 0.52, -1.28], [0, 0.52, -1.14]].map(([x, y, z]) => [x, y, z] as V3),
+          [[0.012, 0.62, -1.38], [0, 0.62, -1.63], [-0.012, 0.62, -1.38], [0, 0.62, -1.28]].map(([x, y, z]) => [x, y, z] as V3),
+        ],
+        (_e, seg) => (seg >= 1 ? C.red : C.side),
+      )
+        .rotateZ(-s * 0.55)
+        .translate(s * 0.26, 0.13, 0),
+    );
+    // A heat seeker on a pylon under each wing
+    const x = s * 1.05;
+    body.push(
+      box(0.05, 0.11, 0.5, C.dark, x, -0.12, -0.05),
+      paint(new THREE.CylinderGeometry(0.055, 0.055, 1.0, 8).rotateX(Math.PI / 2).translate(x, -0.235, -0.1), C.store),
+      paint(new THREE.ConeGeometry(0.055, 0.2, 8).rotateX(Math.PI / 2).translate(x, -0.235, 0.5), C.storeNose),
+      box(0.26, 0.012, 0.12, C.storeNose, x, -0.235, -0.52),
+      box(0.012, 0.26, 0.12, C.storeNose, x, -0.235, -0.52),
+    );
+    // Nav lights on the wingtips: red to port (−x), green to starboard
+    glow.push(paint(new THREE.BoxGeometry(0.05, 0.03, 0.08).translate(s * 2.04, 0.02, -0.92), s < 0 ? 0xff2010 : 0x20ff40, 3));
   }
-  const body = new THREE.LatheGeometry(prof, 18).rotateX(Math.PI / 2);
-  body.scale(1, 0.55, 1);
-  // Swept flying wing
-  const wing = new THREE.Shape();
-  wing.moveTo(0, 0.9);
-  wing.lineTo(2.1, -0.9);
-  wing.lineTo(1.9, -1.25);
-  wing.lineTo(0.9, -0.85);
-  wing.lineTo(0, -1.35);
-  wing.lineTo(-0.9, -0.85);
-  wing.lineTo(-1.9, -1.25);
-  wing.lineTo(-2.1, -0.9);
-  wing.closePath();
-  const wingGeo = new THREE.ExtrudeGeometry(wing, { depth: 0.08, bevelEnabled: true, bevelSize: 0.03, bevelThickness: 0.02, bevelSegments: 1 });
-  wingGeo.rotateX(-Math.PI / 2).translate(0, -0.04, 0);
-  // Canted tail fins
-  const fin = new THREE.Shape();
-  fin.moveTo(0, 0);
-  fin.lineTo(0.55, 0);
-  fin.lineTo(0.15, 0.55);
-  fin.lineTo(-0.05, 0.55);
-  fin.closePath();
-  const finGeo = (s: number) =>
-    new THREE.ExtrudeGeometry(fin, { depth: 0.04, bevelEnabled: false })
-      .rotateY(-Math.PI / 2)
-      .rotateZ(s * 0.45)
-      .translate(s * 0.35, 0.12, -1.3);
-  const hull = mergeGeometries([body, wingGeo, finGeo(1), finGeo(-1)].map((g) => (g.index ? g.toNonIndexed() : g)));
-  hull.computeVertexNormals();
-  // Intake and exhaust in dark metal
-  const intake = new THREE.BoxGeometry(0.5, 0.16, 0.5).translate(0, 0.22, 0.5);
-  const nozzle = new THREE.CylinderGeometry(0.2, 0.24, 0.35, 14, 1, true).rotateX(Math.PI / 2).translate(0, 0.02, -2.0);
-  const dark = mergeGeometries([intake.toNonIndexed(), nozzle.toNonIndexed()]);
-  const eye = new THREE.SphereGeometry(0.1, 12, 8).scale(1.6, 0.6, 1).translate(0, 0.02, 2.2);
-  const hot = new THREE.CircleGeometry(0.19, 14).rotateY(Math.PI).translate(0, 0.02, -2.1);
-  geoCache = { hull, dark, eye, hot };
+
+  // Dorsal intake: a scoop faired into the spine, its mouth black
+  const intake = (z: number, w0: number, w1: number, y0: number, y1: number): V3[] => [
+    [w0, y0, z], [w1, y1, z], [-w1, y1, z], [-w0, y0, z],
+  ];
+  body.push(
+    loft(
+      [intake(0.95, 0.3, 0.24, 0.2, 0.42), intake(0.45, 0.31, 0.24, 0.22, 0.45), intake(-0.4, 0.18, 0.12, 0.24, 0.35)],
+      (e, s) => (s < 0 ? C.dark : e === 1 ? C.top : C.side),
+    ),
+  );
+  // Flattened 2D nozzle round the tail, the hot core inside it
+  const nozzle = (z: number, w: number, y0: number, y1: number): V3[] => [
+    [w, y0, z], [w * 0.92, y1, z], [-w * 0.92, y1, z], [-w, y0, z],
+  ];
+  body.push(loft([nozzle(-1.72, 0.31, -0.07, 0.15), nozzle(-2.08, 0.26, -0.03, 0.1)], C.dark, [false, false]));
+  glow.push(paint(new THREE.PlaneGeometry(0.44, 0.11).rotateY(Math.PI).translate(0, 0.035, -2.05), new THREE.Color(1, 0.45, 0.12), 3));
+  // Weapons-bay doors on the belly
+  body.push(box(0.36, 0.02, 1.0, C.edge, 0, -0.2, 0.15));
+  // Chin sensor ball with the red eye in it
+  body.push(paint(new THREE.SphereGeometry(0.1, 12, 8).translate(0, -0.11, 1.55), C.glass));
+  glow.push(paint(new THREE.CircleGeometry(0.06, 12).scale(1.4, 0.8, 1).translate(0, -0.11, 1.652), new THREE.Color(1, 0.06, 0.02), 6));
+
+  geoCache = { body: merge(body), glow: merge(glow) };
   return geoCache;
 }
 
@@ -143,12 +211,7 @@ export class Drone implements Hostile {
 
   constructor(at: THREE.Vector3, heading: THREE.Vector3) {
     const g = droneGeometry();
-    this.mesh.add(
-      new THREE.Mesh(g.hull, mats.hull),
-      new THREE.Mesh(g.dark, mats.dark),
-      new THREE.Mesh(g.eye, mats.eye),
-      new THREE.Mesh(g.hot, mats.hot),
-    );
+    this.mesh.add(new THREE.Mesh(g.body, mats.body), new THREE.Mesh(g.glow, mats.glow));
     this.mesh.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) o.castShadow = false;
     });

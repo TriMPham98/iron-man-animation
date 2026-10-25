@@ -68,6 +68,31 @@ HUD = {
     'wave-start': ('ui/_raw/ov-10a82ee3.mp3', 0.06, 0.95),
     'wave-clear': ('ui/_raw/ov-7c7afab7.mp3', 0.0, 1.0),
 }
+# Single events cut by hand out of longer takes (each picked by eye from
+# `sfx.py sheet` of the onset-split take: one transient, a clean decay, no
+# second hit inside). name: (source, start, length, fade-in, peak dB or the
+# name of a cut whose gain it shares, so a burst and its echo keep their gap)
+CUTS = {
+    # Rounds hitting the suit: eight bullet-on-steel takes, one event each
+    **{f'bullet-hit-{i + 1}': ('hit/_raw/ov-ebbae79a.mp3', s, n, 0.002, -3) for i, (s, n) in enumerate(
+        [(11.97, 0.39), (16.87, 0.45), (24.39, 0.42), (26.37, 0.38)])},
+    **{f'bullet-hit-{i + 5}': ('hit/_raw/ov-f3803d8e.mp3', s, n, 0.002, -3) for i, (s, n) in enumerate(
+        [(10.56, 0.45), (14.37, 0.41), (17.52, 0.36), (18.15, 0.37)])},
+    # The plate ringing on after a round glances off it
+    'bullet-ring': ('hit/_raw/ov-05fda62b.mp3', 0.03, 0.41, 0.002, -3),
+    # A round going past within a few metres: its supersonic snap. A whip's
+    # crack is the same thing (the tip breaks the sound barrier)
+    **{f'bullet-crack-{i + 1}': ('hit/_raw/ov-963ac838.mp3', s, 0.35, 0.002, -3) for i, s in enumerate(
+        [1.56, 7.48, 13.61, 23.99])},
+    # A Phalanx (land-based C-RAM) firing: the steady buzz-saw of its body,
+    # played in overlapping slices while a mount fires, then its echo off the
+    # land once it stops
+    'ciws-burst': ('hit/_raw/ov-26e1f863.mp3', 0.3, 3.3, 0.02, -3),
+    'ciws-tail': ('hit/_raw/ov-26e1f863.mp3', 3.62, 5.2, 0.06, 'ciws-burst'),
+    # "Missile Alert!": one of its rising sweeps — the launch warning; the
+    # sim repeats it faster as a missile closes
+    'rwr-chirp': ('ui/_raw/ov-2b8ba2d4.mp3', 0.245, 0.225, 0.004, -3),
+}
 # Loops: (source, start, length, crossfade[, keep swells: skip the levelling])
 LOOPS = {
     'wind': ('transition/_raw/ov-8ba94356.mp3', 30.0, 22.0, 2.0),
@@ -125,6 +150,16 @@ def main():
         run(['-ss', str(start), '-t', str(length), '-i', os.path.join(CAND, rel), '-af',
              f'highpass=f=80,afade=t=in:d=0.004,afade=t=out:st={length - 0.04}:d=0.04', '-ar', '44100', '-ac', '1', tmp])
         run(['-i', tmp, '-af', f'volume={-3 - peak_db(tmp):.1f}dB', '-ar', '44100', '-ac', '1', '-q:a', '3', os.path.join(OUT, name + '.mp3')])
+        os.remove(tmp)
+        credits.append(f"- `{name}.mp3` — {credit_of_search(rel)}")
+    gains = {}
+    for name, (rel, start, length, fin, peak) in CUTS.items():
+        tmp = os.path.join(OUT, f'_{name}.wav')
+        fout = min(0.08, length / 3)
+        run(['-ss', str(start), '-t', str(length), '-i', os.path.join(CAND, rel), '-af',
+             f'highpass=f=30,afade=t=in:d={fin},afade=t=out:st={length - fout}:d={fout}', '-ar', '44100', '-ac', '1', tmp])
+        gains[name] = gains[peak] if isinstance(peak, str) else peak - peak_db(tmp)
+        run(['-i', tmp, '-af', f'volume={gains[name]:.1f}dB', '-ar', '44100', '-ac', '1', '-q:a', '3', os.path.join(OUT, name + '.mp3')])
         os.remove(tmp)
         credits.append(f"- `{name}.mp3` — {credit_of_search(rel)}")
     for name, (start, length, fade, gain) in FROM_VIDEO.items():

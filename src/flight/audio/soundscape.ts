@@ -53,6 +53,7 @@ export const SFX = {
   lockTone: `${KIT}lock-tone.mp3`,
   seekerGrowl: `${KIT}seeker-growl.mp3`,
   rwrPulse: `${KIT}rwr-pulse.mp3`,
+  rwrChirp: `${KIT}rwr-chirp.mp3`,
   killConfirm: `${KIT}kill-confirm.mp3`,
   jarvisBlip: `${KIT}jarvis-blip.mp3`,
   waveStart: `${KIT}wave-start.mp3`,
@@ -63,6 +64,11 @@ export const SFX = {
   ping4: `${KIT}ping-4.mp3`,
   flarePop: `${KIT}flare-pop.mp3`,
   gun: `${KIT}gun.mp3`,
+  // A round glancing off the plates: the steel ringing on
+  bulletRing: `${KIT}bullet-ring.mp3`,
+  // The frigate's Phalanx: the buzz-saw (sliced) and its echo off the land
+  ciwsBurst: `${KIT}ciws-burst.mp3`,
+  ciwsTail: `${KIT}ciws-tail.mp3`,
   splash: `${KIT}splash.mp3`,
   splashBig: `${KIT}splash-big.mp3`,
   samLaunch: `${KIT}sam-launch.mp3`,
@@ -77,6 +83,11 @@ export const SFX = {
   trees: `${KIT}trees.mp3`,
   spray: `${KIT}spray.mp3`,
 } as const;
+
+/** Rounds hitting the suit: eight takes of bullets on steel, one event each. */
+const BULLET_HITS = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `${KIT}bullet-hit-${i}.mp3`);
+/** A round going by within a few metres: its supersonic snap (whip cracks). */
+const BULLET_CRACKS = [1, 2, 3, 4].map((i) => `${KIT}bullet-crack-${i}.mp3`);
 
 /** Points on the ring sampled round the ear for sea vs land. */
 const RING = 8;
@@ -131,6 +142,7 @@ const DEBOUNCE: Partial<Record<SimEvent['kind'], number>> = {
   padLanding: 0.4,
   splash: 0.15,
   boostStart: 0.3,
+  ricochet: 0.08,
 };
 
 const pick = <T>(xs: readonly T[]): T => xs[Math.floor(Math.random() * xs.length)];
@@ -147,6 +159,12 @@ export class Soundscape {
   private growl: Loop | null = null;
   private lockTone: Loop | null = null;
   private warnT = 0;
+  /** Next of the RWR's lock beeps (a radar holding the suit, nothing in the air yet). */
+  private lockT = 0;
+  private readonly _l = new THREE.Vector3();
+  /** The last round on the armour: when (sim s), and which take it was. */
+  private lastBullet = -99;
+  private lastBulletTake = -1;
   private readonly _r = new THREE.Vector3();
   private readonly _c = new THREE.Vector3();
   private started = false;
@@ -191,7 +209,7 @@ export class Soundscape {
   constructor(private readonly audio: GameAudio) {}
 
   static files(): string[] {
-    return Object.values(SFX);
+    return [...Object.values(SFX), ...BULLET_HITS, ...BULLET_CRACKS];
   }
 
   /** Start the loops (after unlock). */
@@ -252,6 +270,24 @@ export class Soundscape {
     }
     // The spray falling back
     if (k > 0.15) A.play(SFX.splash, { at, gain: 0.2 + 0.35 * k, rate: 1.25, vary: 0.08, ref: 12, delay: 0.35 + 0.25 * k, lowpass: 9000 });
+  }
+
+  /**
+   * A round on the armour. The frigate's gun lands up to twenty a second:
+   * each a different take of a bullet on steel (never the same one twice
+   * running), some ringing the plate on, and under them the knock of the hit
+   * through the shell — heavier in the helmet, where the pilot is inside it.
+   */
+  private bulletHit(at: THREE.Vector3, t: number): void {
+    const A = this.audio;
+    if (t >= this.lastBullet && t - this.lastBullet < 0.03) return;
+    this.lastBullet = t;
+    let i = Math.floor(Math.random() * (BULLET_HITS.length - 1));
+    if (i >= this.lastBulletTake) i++;
+    this.lastBulletTake = i;
+    A.play(BULLET_HITS[i], { at, propagate: false, gain: 0.5 + 0.3 * Math.random(), vary: 0.08, ref: 4 });
+    if (Math.random() < 0.3) A.play(SFX.bulletRing, { at, propagate: false, gain: 0.25, vary: 0.12, ref: 4, delay: 0.01 });
+    A.play(SFX.heroThud, { at, propagate: false, gain: this.helmet ? 0.35 : 0.18, rate: 1.6, vary: 0.1, lowpass: 700, ref: 4, duration: 0.2 });
   }
 
   on(e: SimEvent, m: FlightModel): void {
@@ -399,15 +435,26 @@ export class Soundscape {
         if ((e.value ?? 0) > 15) {
           A.play(SFX.metalClang, { at, gain: 0.9, vary: 0.05, ref: 6 });
           A.play(SFX.impact, { at, gain: 0.7, ref: 6 });
-        } else {
-          A.play(pick([SFX.ping1, SFX.ping2, SFX.ping3, SFX.ping4]), { at, gain: 0.7, vary: 0.12, ref: 4 });
+        } else if (at) {
+          this.bulletHit(at, e.t);
         }
         break;
       case 'ricochet':
-        A.play(SFX.zip, { at, gain: 0.5, vary: 0.15, ref: 4 });
+        // Supersonic rounds: the snap of one going past, right at the suit
+        A.play(pick(BULLET_CRACKS), { at, propagate: false, gain: 0.5, vary: 0.1, ref: 6 });
         break;
       case 'enemyFire':
-        for (let i = 0; i < (e.value ?? 4); i++) A.play(SFX.gun, { at, gain: 0.7, vary: 0.06, ref: 40, delay: i * 0.07, duration: 0.35 });
+        if (e.text === 'ciws') {
+          // The Phalanx's buzz-saw, laid down a slice at a time (one every
+          // 0.24 s, each 0.4 s long from a random point of the take, so they
+          // overlap and crossfade into one unbroken burst: ~1 dB more swing
+          // than the take itself)
+          A.play(SFX.ciwsBurst, { at, gain: 1, ref: 90, echo: 0.25, offset: Math.random() * 2.85, duration: 0.4, fadeIn: 0.16 });
+        } else if (e.text === 'ciwsCease') {
+          A.play(SFX.ciwsTail, { at, gain: 1, ref: 90, echo: 0.2 });
+        } else {
+          for (let i = 0; i < (e.value ?? 4); i++) A.play(SFX.gun, { at, gain: 0.7, vary: 0.06, ref: 40, delay: i * 0.07, duration: 0.35 });
+        }
         break;
       case 'enemyMissile':
         if (e.value === 1) A.play(SFX.samLaunch, { at, gain: 1, ref: 60, echo: 0.4 });
@@ -572,9 +619,9 @@ export class Soundscape {
     const seek = combat.weapons.seeker;
     this.growl?.set(seek === 1 ? 0.16 : seek === 2 ? 0.24 : 0, seek === 2 ? 1.3 : 1, 2800);
     this.lockTone?.set(seek === 3 ? 0.3 : 0, 1, 8000);
-    // Missile warning: the RWR pulse from the side the nearest seeker is
-    // coming from, quickening as it closes — half a second apart at five
-    // seconds out, near-continuous in the last one
+    // Missile warning: the RWR's rising sweep from the side the nearest
+    // seeker is coming from, quickening as it closes — half a second apart
+    // at five seconds out, six a second in the last one
     let tgo = Infinity;
     for (const t of combat.missiles.threats()) {
       const r = this._r.copy(t.pos).sub(m.pos);
@@ -589,13 +636,34 @@ export class Soundscape {
     if (tgo < Infinity) {
       this.warnT -= dt;
       if (this.warnT <= 0) {
-        this.warnT = THREE.MathUtils.clamp(0.1 * tgo, 0.11, 0.5);
+        this.warnT = THREE.MathUtils.clamp(0.1 * tgo, 0.16, 0.5);
         const at = this._w.sub(cam.position).normalize().multiplyScalar(3).add(cam.position);
-        // Fast pulses are cut short so they stay separate beeps
-        A.play(SFX.rwrPulse, { at, ref: 3, propagate: false, gain: 0.55, duration: Math.min(0.28, 0.75 * this.warnT) });
+        // Fast sweeps are cut short so they stay separate
+        A.play(SFX.rwrChirp, { at, ref: 3, propagate: false, gain: 0.5, duration: Math.min(0.225, 0.8 * this.warnT) });
       }
+      this.lockT = 0;
     } else {
       this.warnT = 0;
+      // Nothing in the air yet, but a fire-control radar (a SAM truck, the
+      // frigate's guns) has the suit: a low double beep every 1.2 s from its side
+      let near = Infinity;
+      for (const p of combat.trackers()) {
+        const d = p.distanceToSquared(m.pos);
+        if (d < near) {
+          near = d;
+          this._l.copy(p);
+        }
+      }
+      if (near < Infinity) {
+        this.lockT -= dt;
+        if (this.lockT <= 0) {
+          this.lockT = 1.2;
+          const at = this._l.sub(cam.position).normalize().multiplyScalar(3).add(cam.position);
+          for (const delay of [0, 0.2]) A.play(SFX.rwrPulse, { at, ref: 3, propagate: false, gain: 0.3, rate: 0.84, delay, duration: 0.15 });
+        }
+      } else {
+        this.lockT = 0;
+      }
     }
     // Engines on the nearest drones
     const near3 = combat.drones

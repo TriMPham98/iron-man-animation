@@ -5,6 +5,7 @@ import { coastZ, type Heightfield } from '../world/heightfield';
 import type { Round } from './drones';
 import type { Explosions } from './explosions';
 import type { Missiles } from './missiles';
+import { beam, box, frustum, loft, merge, paint, panelOn, quad, type Frustum, type Paint, type V3 } from './modelKit';
 import type { DamageKind, Hostile, PlayerTarget } from './types';
 
 /**
@@ -25,11 +26,7 @@ import type { DamageKind, Hostile, PlayerTarget } from './types';
  */
 
 const mats = {
-  hull: new THREE.MeshStandardMaterial({ color: 0x737a82, metalness: 0.55, roughness: 0.55 }),
-  boot: new THREE.MeshStandardMaterial({ color: 0x24262a, metalness: 0.4, roughness: 0.7 }),
-  deck: new THREE.MeshStandardMaterial({ color: 0x45494e, metalness: 0.4, roughness: 0.8 }),
-  dark: new THREE.MeshStandardMaterial({ color: 0x17191b, metalness: 0.6, roughness: 0.5 }),
-  dome: new THREE.MeshStandardMaterial({ color: 0xd4d6d8, metalness: 0.2, roughness: 0.5 }),
+  paint: new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.45, roughness: 0.6 }),
   glass: new THREE.MeshStandardMaterial({ color: 0x0b0e12, metalness: 0.9, roughness: 0.12 }),
   charred: new THREE.MeshStandardMaterial({ color: 0x0d0c0b, metalness: 0.3, roughness: 0.9 }),
   lamp: new THREE.MeshStandardMaterial({ color: 0x220000, emissive: new THREE.Color(1, 0.08, 0.02), emissiveIntensity: 4 }),
@@ -62,6 +59,309 @@ const VLS_RANGE = 5000;
 const VLS_RANGE_BLIND = 1600;
 const VLS_SALVO = 4;
 const VLS_GAP = 0.55;
+
+const C = {
+  hull: 0x737a82,
+  hullLight: 0x80878f,
+  boot: 0x24262a,
+  deck: 0x45494e,
+  dark: 0x17191b,
+  door: 0x5d636a,
+  white: 0xd4d6d8,
+  mark: 0xc9c9c0,
+  rhib: 0xa4501f,
+  rhibHull: 0x3a3d40,
+};
+
+/**
+ * Hull stations stern to bow: z, then half-beams at the deck edge, the
+ * knuckle (y 3), the boot-top (y 0.7), the bilge (y −2.2) and the keel
+ * shoulder (y −3.5), and the deck height (the foc'sle rises to the stem).
+ */
+type Station = readonly [z: number, bd: number, bm: number, bw: number, bb: number, bk: number, d: number];
+const STATIONS: readonly Station[] = [
+  [STERN, 6.6, 6.6, 6.3, 5.0, 1.5, DECK],
+  [-45, 7.4, 7.4, 7.2, 6.2, 2.0, DECK],
+  [-20, 7.6, 7.6, 7.4, 6.6, 2.2, DECK],
+  [10, 7.6, 7.6, 7.4, 6.6, 2.2, DECK],
+  [30, 7.2, 6.9, 6.2, 4.8, 1.4, DECK],
+  [44, 5.9, 5.1, 4.0, 2.6, 0.8, DECK],
+  [54, 3.9, 2.8, 1.8, 0.9, 0.3, DECK + 0.6],
+  [60, 2.0, 1.0, 0.4, 0.15, 0.05, DECK + 1.0],
+  [BOW, 0.12, 0.08, 0.05, 0.04, 0.02, DECK + 1.2],
+];
+
+function station(z: number): Station {
+  let i = 0;
+  while (i < STATIONS.length - 2 && z > STATIONS[i + 1][0]) i++;
+  const a = STATIONS[i];
+  const b = STATIONS[i + 1];
+  const t = THREE.MathUtils.clamp((z - a[0]) / (b[0] - a[0]), 0, 1);
+  return a.map((v, k) => v + (b[k] - v) * t) as unknown as Station;
+}
+
+/** The stem rakes: toward the bow, the lower a point the further aft of its station it sits. */
+const rake = (z: number, y: number, d: number) => z - THREE.MathUtils.clamp((z - 40) / 24, 0, 1) * 7 * ((d - y) / (d + 3.6));
+
+function hullRing(st: Station): V3[] {
+  const [z, bd, bm, bw, bb, bk, d] = st;
+  const half: [number, number][] = [[bk, -3.5], [bb, -2.2], [bw, 0.7], [bm, 3], [bd, d]];
+  const pts: V3[] = [[0, -3.6, rake(z, -3.6, d)]];
+  for (const [x, y] of half) pts.push([x, y, rake(z, y, d)]);
+  for (const [x, y] of [...half].reverse()) pts.push([-x, y, rake(z, y, d)]);
+  return pts;
+}
+
+/** A point on the topsides (between the knuckle, t = 0, and the deck edge, t = 1) on side s. */
+function topside(z: number, t: number, s: number): THREE.Vector3 {
+  const [, bd, bm, , , , d] = station(z);
+  const y = 3 + (d - 3) * t;
+  return new THREE.Vector3(s * (bm + (bd - bm) * t), y, rake(z, y, d));
+}
+
+/** A painted patch on the topsides: z0…z1 along, t0…t1 up, lifted off the plating. */
+function topsidePatch(z0: number, z1: number, t0: number, t1: number, s: number, color: Paint): THREE.BufferGeometry {
+  const a = topside(z0, t0, s);
+  const b = topside(z1, t0, s);
+  const c = topside(z1, t1, s);
+  const d = topside(z0, t1, s);
+  const n = new THREE.Vector3().crossVectors(b.clone().sub(a), d.clone().sub(a)).normalize();
+  if (n.x * s < 0) n.negate();
+  return quad(a.addScaledVector(n, 0.06), b.addScaledVector(n, 0.06), c.addScaledVector(n, 0.06), d.addScaledVector(n, 0.06), n, color);
+}
+
+/** Superstructure blocks (also the collision boxes' shapes, sloped in a little). */
+const BRIDGE: Frustum = { hw0: 6, z0: -13, z1: 9, y0: DECK, hw1: 5.3, z2: -12.4, z3: 8, y1: DECK + 9 };
+const PILOTHOUSE: Frustum = { hw0: 4.5, z0: -10.5, z1: -1.5, y0: DECK + 9, hw1: 4.0, z2: -10, z3: -2.2, y1: DECK + 12 };
+const MAST: Frustum = { hw0: 3.0, z0: -9.2, z1: -2.8, y0: DECK + 12, hw1: 1.3, z2: -6.9, z3: -5.1, y1: DECK + 24.6 };
+const HANGAR: Frustum = { hw0: 6.5, z0: -38, z1: -22, y0: DECK, hw1: 6.0, z2: -37.6, z3: -22.4, y1: DECK + 7 };
+
+/** CIWS pivot in the yaw frame (as the sim expects it). */
+const CIWS_PIVOT = new THREE.Vector3(0, 0.9, 0.5);
+
+interface FrigateGeometry {
+  hull: THREE.BufferGeometry;
+  glass: THREE.BufferGeometry;
+  number: THREE.BufferGeometry;
+  lid: THREE.BufferGeometry;
+  radar: THREE.BufferGeometry;
+  ciwsBase: THREE.BufferGeometry;
+  ciwsYaw: THREE.BufferGeometry;
+  ciwsPitch: THREE.BufferGeometry;
+}
+
+let geoCache: FrigateGeometry | null = null;
+let numberMat: THREE.MeshStandardMaterial | null = null;
+
+/** The VLS block's place on the foredeck, and its cells (x, z from the block's centre). */
+const VLS_AT = new THREE.Vector3(0, DECK, 30);
+const VLS_CELLS: readonly [number, number][] = Array.from({ length: 8 }, (_, i) => [i % 2 ? 1.2 : -1.2, -3 + Math.floor(i / 2) * 2]);
+
+function frigateGeometry(): FrigateGeometry {
+  if (geoCache) return geoCache;
+  const hull: THREE.BufferGeometry[] = [];
+  const glass: THREE.BufferGeometry[] = [];
+
+  // Hull: flared, knuckled topsides over a dark boot-top, raked stem, flat transom
+  const zs = STATIONS.map((s) => s[0]);
+  hull.push(
+    loft(
+      zs.map((z) => hullRing(station(z))),
+      (e, seg) => (seg < 0 ? C.hull : e === 5 ? C.deck : e === 3 || e === 4 || e === 6 || e === 7 ? C.hull : C.boot),
+      [true, false],
+      (c) => c.set(0, THREE.MathUtils.clamp(c.y, -2, DECK - 1), c.z),
+    ),
+  );
+  // Openings in the transom (the stern mooring deck) and a few hull-side doors
+  hull.push(quad(new THREE.Vector3(-4, 3.4, STERN - 0.05), new THREE.Vector3(4, 3.4, STERN - 0.05), new THREE.Vector3(4, 5.0, STERN - 0.05), new THREE.Vector3(-4, 5.0, STERN - 0.05), new THREE.Vector3(0, 0, -1), C.dark));
+  for (const s of [-1, 1]) {
+    hull.push(topsidePatch(-8, -6.6, 0.05, 0.7, s, C.door), topsidePatch(-40, -38.6, 0.05, 0.7, s, C.door), topsidePatch(-56, -50, 0.35, 0.75, s, C.dark));
+  }
+  // Guard rails round the deck edge and across the stern
+  for (const s of [-1, 1]) {
+    let prev: THREE.Vector3 | null = null;
+    for (let z = STERN + 0.4; z <= 61; z += 3.05) {
+      const st = station(z);
+      const p = new THREE.Vector3(s * (st[1] - 0.12), st[6], z);
+      hull.push(beam([p.x, p.y, p.z], [p.x, p.y + 1.05, p.z], 0.035, C.hull));
+      if (prev) for (const h of [0.5, 1.05]) hull.push(beam([prev.x, prev.y + h, prev.z], [p.x, p.y + h, p.z], 0.028, C.hull));
+      prev = p;
+    }
+  }
+  for (const h of [0.5, 1.05]) hull.push(beam([-6.4, DECK + h, STERN + 0.4], [6.4, DECK + h, STERN + 0.4], 0.028, C.hull));
+  // Mooring bollards
+  for (const z of [50, 40, -48, -58]) {
+    const hw = station(z)[1] - 1.1;
+    for (const s of [-1, 1]) for (const dz of [-0.35, 0.35]) hull.push(paint(new THREE.CylinderGeometry(0.2, 0.22, 0.55, 8).translate(s * hw, station(z)[6] + 0.27, z + dz), C.dark));
+  }
+
+  // Bow gun: a faceted stealth turret
+  const gun = (y: number, pts: [number, number][]): V3[] => pts.map(([x, z]) => [x, y, z + 45] as V3);
+  hull.push(
+    paint(new THREE.CylinderGeometry(2.1, 2.2, 0.3, 16).translate(0, DECK + 0.15, 45), C.hull),
+    loft(
+      [
+        gun(DECK + 0.3, [[1.0, 2.4], [-1.0, 2.4], [-1.8, 0.2], [-1.6, -2.3], [1.6, -2.3], [1.8, 0.2]]),
+        gun(DECK + 2.0, [[0.6, 1.7], [-0.6, 1.7], [-1.35, 0.1], [-1.25, -2.0], [1.25, -2.0], [1.35, 0.1]]),
+      ],
+      (e, seg) => (seg === 1 ? C.hullLight : e === 0 ? C.hull : C.hullLight),
+    ),
+    paint(new THREE.CylinderGeometry(0.32, 0.32, 1.0, 10).rotateX(Math.PI / 2).translate(0, DECK + 1.05, 47), C.hull),
+    paint(new THREE.CylinderGeometry(0.13, 0.17, 6.2, 10).rotateX(Math.PI / 2).translate(0, DECK + 1.05, 50), C.dark),
+    paint(new THREE.CylinderGeometry(0.2, 0.2, 0.45, 10).rotateX(Math.PI / 2).translate(0, DECK + 1.05, 52.9), C.dark),
+  );
+
+  // Harpoon racks angled out over either beam
+  for (const s of [-1, 1]) {
+    hull.push(box(1.7, 0.8, 2.2, C.hull, s * 2.6, DECK + 0.4, 17));
+    for (const x of [-0.36, 0.36]) {
+      for (const y of [-0.34, 0.34]) {
+        const tube = paint(new THREE.CylinderGeometry(0.32, 0.32, 4.4, 10).rotateX(Math.PI / 2).translate(x, y, 0), C.hullLight);
+        const end = paint(new THREE.CircleGeometry(0.29, 10).translate(x, y, 2.21), C.dark);
+        for (const g of [tube, end]) hull.push(g.rotateX(-0.2).rotateY(s * 0.45).translate(s * 2.6, DECK + 1.5, 17));
+      }
+    }
+  }
+
+  // VLS block on the foredeck: 2 × 4 cell hatches round which the lids hinge
+  hull.push(box(5.4, 0.8, 8.4, C.deck, VLS_AT.x, DECK + 0.4, VLS_AT.z));
+  for (const [x, z] of VLS_CELLS) hull.push(box(1.9, 0.05, 1.7, C.dark, x, DECK + 0.83, VLS_AT.z + z));
+
+  // Bridge block, pilothouse, the enclosed mast and its sensor faces
+  hull.push(frustum(BRIDGE, C.hull), frustum(PILOTHOUSE, C.hullLight), frustum(MAST, C.hull));
+  glass.push(panelOn(BRIDGE, 'f', -0.82, 0.82, 0.78, 0.9, 0), panelOn(BRIDGE, 'l', -0.95, -0.6, 0.78, 0.9, 0), panelOn(BRIDGE, 'r', 0.6, 0.95, 0.78, 0.9, 0));
+  glass.push(panelOn(PILOTHOUSE, 'f', -0.8, 0.8, 0.4, 0.72, 0), panelOn(PILOTHOUSE, 'l', -0.9, -0.4, 0.4, 0.72, 0), panelOn(PILOTHOUSE, 'r', 0.4, 0.9, 0.4, 0.72, 0));
+  for (const f of ['l', 'r'] as const) hull.push(panelOn(BRIDGE, f, -0.25, -0.15, 0, 0.24, C.door), panelOn(BRIDGE, f, 0.45, 0.55, 0, 0.24, C.door));
+  for (const f of ['f', 'b', 'l', 'r'] as const) hull.push(panelOn(MAST, f, -0.55, 0.55, 0.52, 0.72, C.dark));
+  hull.push(box(4.0, 0.35, 4.0, C.hull, 0, DECK + 24.75, -6), paint(new THREE.CylinderGeometry(0.55, 0.7, 2.4, 10).translate(0, DECK + 26.1, -6), C.hull));
+  hull.push(beam([-4.2, DECK + 22.5, -6.3], [4.2, DECK + 22.5, -6.3], 0.1, C.hull));
+  for (const s of [-1, 1]) {
+    hull.push(beam([s * 4.0, DECK + 22.5, -6.3], [s * 4.1, DECK + 26.8, -6.3], 0.03, C.dark));
+    // Satcom domes on sponsons either side of the mast
+    hull.push(box(1.4, 0.2, 1.4, C.hull, s * 2.75, DECK + 16.9, -4.6), paint(new THREE.SphereGeometry(0.8, 14, 10).translate(s * 2.75, DECK + 17.75, -4.6), C.white));
+  }
+
+  // Funnel: chamfered, raked aft, black-capped
+  const oct = (y: number, hx: number, hz: number, zc: number): V3[] => {
+    const c = 0.35 * Math.min(hx, hz);
+    return [
+      [hx, y, zc + hz - c], [hx - c, y, zc + hz], [-hx + c, y, zc + hz], [-hx, y, zc + hz - c],
+      [-hx, y, zc - hz + c], [-hx + c, y, zc - hz], [hx - c, y, zc - hz], [hx, y, zc - hz + c],
+    ];
+  };
+  hull.push(loft([oct(DECK, 3.0, 3.3, -18), oct(DECK + 7.6, 2.4, 2.75, -18.8), oct(DECK + 8.6, 2.3, 2.65, -18.9)], (_e, seg) => (seg >= 1 ? C.dark : C.hull)));
+  for (const s of [-1, 1]) hull.push(paint(new THREE.CylinderGeometry(0.45, 0.45, 1.0, 10).translate(s * 0.9, DECK + 9.0, -19.1), C.dark));
+
+  // RHIBs on davits abreast the funnel
+  for (const s of [-1, 1]) {
+    const sec = (z: number, w: number, lift: number): V3[] =>
+      [[0, -0.5], [0.7, -0.2], [1.0, 0.25], [1.05, 0.55], [0.75, 0.75], [-0.75, 0.75], [-1.05, 0.55], [-1.0, 0.25], [-0.7, -0.2]].map(([x, y]) => [s * 5.3 + x * w, DECK + 1.4 + y + lift, -18 + z] as V3);
+    hull.push(loft([sec(-3.4, 0.85, 0), sec(1.0, 1, 0), sec(2.6, 0.7, 0.15), sec(3.6, 0.15, 0.3)], (e) => (e >= 2 && e <= 6 && e !== 4 ? C.rhib : e === 4 ? C.dark : C.rhibHull)));
+    hull.push(box(0.6, 0.5, 0.7, C.rhibHull, s * 5.3, DECK + 2.4, -18.6));
+    for (const dz of [-2.4, 2.4]) {
+      hull.push(
+        beam([s * 7.0, DECK, -18 + dz], [s * 7.0, DECK + 3.3, -18 + dz], 0.1, C.hull),
+        beam([s * 7.0, DECK + 3.3, -18 + dz], [s * 5.3, DECK + 3.6, -18 + dz], 0.1, C.hull),
+        beam([s * 5.3, DECK + 3.6, -18 + dz], [s * 5.3, DECK + 2.1, -18 + dz], 0.02, C.dark),
+      );
+    }
+  }
+
+  // Hangar, its rolling door, life-raft canisters along the roof edges
+  hull.push(frustum(HANGAR, C.hull), panelOn(HANGAR, 'b', -0.68, 0.68, 0, 0.78, C.door));
+  for (let k = 1; k < 7; k++) hull.push(panelOn(HANGAR, 'b', -0.68, 0.68, k * 0.11, k * 0.11 + 0.012, C.dark, 0.05));
+  for (const s of [-1, 1]) for (let z = -24.5; z > -36; z -= 2.1) hull.push(paint(new THREE.CylinderGeometry(0.32, 0.32, 1.0, 10).rotateZ(Math.PI / 2).translate(s * 5.4, DECK + 7.35, z), C.white));
+  // Flight deck: touchdown circle and lines
+  hull.push(
+    paint(new THREE.RingGeometry(3.4, 3.7, 32).rotateX(-Math.PI / 2).translate(0, DECK + 0.03, -50), C.mark),
+    box(0.25, 0.02, 21, C.mark, 0, DECK + 0.02, -50.5),
+    box(8, 0.02, 0.25, C.mark, 0, DECK + 0.02, -50),
+  );
+
+  // CIWS: pedestal (static), turntable + trunnions (yaw), radome + gatling (pitch)
+  const ciwsBase = merge([paint(new THREE.CylinderGeometry(1.3, 1.5, 1.2, 14).translate(0, 0.6, 0), C.hull), paint(new THREE.CylinderGeometry(1.2, 1.3, 0.12, 14).translate(0, 1.2, 0), C.dark)]);
+  const ciwsYaw = merge([
+    paint(new THREE.CylinderGeometry(1.1, 1.1, 0.3, 16).translate(0, 0.15, 0), C.white),
+    box(0.22, 1.0, 0.8, C.white, 0.85, 0.65, CIWS_PIVOT.z - 0.1),
+    box(0.22, 1.0, 0.8, C.white, -0.85, 0.65, CIWS_PIVOT.z - 0.1),
+    box(1.2, 0.8, 0.6, C.white, 0, 0.55, -0.75),
+  ]);
+  const pitch: THREE.BufferGeometry[] = [
+    paint(new THREE.CylinderGeometry(0.95, 0.95, 1.5, 18).translate(0, 0.9, -0.5), C.white),
+    paint(new THREE.SphereGeometry(0.95, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 1.65, -0.5), C.white),
+    paint(new THREE.CylinderGeometry(0.97, 0.97, 0.12, 18).translate(0, 0.3, -0.5), C.dark),
+    paint(new THREE.CylinderGeometry(0.35, 0.35, 1.1, 12).rotateX(Math.PI / 2).translate(0, -0.25, -0.6), C.white),
+    box(0.55, 0.45, 0.9, C.dark, 0, 0, -0.05),
+    paint(new THREE.CylinderGeometry(0.19, 0.19, 0.12, 10).rotateX(Math.PI / 2).translate(0, 0, 0.6), C.dark),
+    paint(new THREE.CylinderGeometry(0.2, 0.2, 0.3, 10).rotateX(Math.PI / 2).translate(0, 0, 2.25), C.dark),
+  ];
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    pitch.push(paint(new THREE.CylinderGeometry(0.04, 0.04, 2.3, 6).rotateX(Math.PI / 2).translate(Math.cos(a) * 0.12, Math.sin(a) * 0.12, 1.25), C.dark));
+  }
+
+  // Search radar: a twin-faced, back-tilted array on a bearing
+  const arr = (x: number): V3[] => [[x, -0.95, 0.5], [x, 0.95, 0.12], [x, 0.95, -0.12], [x, -0.95, -0.5]];
+  const radar = merge([
+    paint(new THREE.CylinderGeometry(0.4, 0.45, 0.9, 12).translate(0, -1.4, 0), C.hull),
+    loft([arr(-2.6), arr(2.6)], (e, seg) => (seg < 0 || seg > 0 || e === 1 || e === 3 ? C.hull : C.dark)),
+  ]);
+
+  // Hull number either side of the bow
+  const pos: number[] = [];
+  const uv: number[] = [];
+  for (const s of [-1, 1]) {
+    const [z0, z1] = s > 0 ? [51.4, 44.6] : [44.6, 51.4];
+    const corner = (u: number, v: number) => topside(z0 + (z1 - z0) * u, 0.2 + v * 0.65, s);
+    const n = new THREE.Vector3().crossVectors(corner(1, 0).sub(corner(0, 0)), corner(0, 1).sub(corner(0, 0))).normalize();
+    const flip = n.x * s < 0;
+    if (flip) n.negate();
+    const tri = (pts: [number, number][]) => {
+      for (const [u, v] of flip ? [pts[0], pts[2], pts[1]] : pts) {
+        pos.push(...corner(u, v).addScaledVector(n, 0.08).toArray());
+        uv.push(u, v);
+      }
+    };
+    tri([[0, 0], [1, 0], [1, 1]]);
+    tri([[0, 0], [1, 1], [0, 1]]);
+  }
+  const number = new THREE.BufferGeometry();
+  number.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  number.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  number.computeVertexNormals();
+
+  geoCache = {
+    hull: merge(hull),
+    glass: merge(glass),
+    number,
+    lid: box(1.9, 0.12, 1.7, C.hull, 0, 0.06, 0),
+    radar,
+    ciwsBase,
+    ciwsYaw,
+    ciwsPitch: merge(pitch),
+  };
+  return geoCache;
+}
+
+/** The pennant number painted on the bow. */
+function numberMaterial(): THREE.MeshStandardMaterial {
+  if (!numberMat) {
+    const c = document.createElement('canvas');
+    c.width = 512;
+    c.height = 160;
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#ffffff';
+    g.font = 'bold 128px "Arial Narrow", Arial, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('H 47', 256, 86);
+    const map = new THREE.CanvasTexture(c);
+    map.colorSpace = THREE.SRGBColorSpace;
+    map.anisotropy = 4;
+    numberMat = new THREE.MeshStandardMaterial({ map, color: 0xe2e2dc, alphaTest: 0.45, roughness: 0.7, metalness: 0.2, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  }
+  return numberMat;
+}
 
 type PartRole = 'radar' | 'ciws' | 'vls' | 'hull';
 
@@ -208,108 +508,52 @@ export class Frigate {
 
   // ── Model ────────────────────────────────────────────────────────────
   private build(): void {
-    const g = this.mesh;
-    const box = (w: number, h: number, l: number, m: THREE.Material, x: number, y: number, z: number, parent: THREE.Object3D = g) => {
-      const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, l), m);
-      b.position.set(x, y, z);
-      parent.add(b);
-      return b;
-    };
-    // Hull: a pointed plan extruded up; dark boot-topping below the waterline band
-    const plan = new THREE.Shape();
-    const pts: [number, number][] = [[-6.5, STERN], [6.5, STERN], [7.6, -30], [7.6, 18], [5.6, 42], [2.6, 56], [0, BOW], [-2.6, 56], [-5.6, 42], [-7.6, 18], [-7.6, -30]];
-    pts.forEach(([x, z], i) => (i ? plan.lineTo(x, -z) : plan.moveTo(x, -z)));
-    plan.closePath();
-    const slab = (y0: number, y1: number, m: THREE.Material) => {
-      const geo = new THREE.ExtrudeGeometry(plan, { depth: y1 - y0, bevelEnabled: false }).rotateX(-Math.PI / 2).translate(0, y0, 0);
-      g.add(new THREE.Mesh(geo, m));
-    };
-    slab(-3.5, 0.7, mats.boot);
-    slab(0.7, DECK, mats.hull);
-    // Deck plating just proud of the hull top
-    const deckGeo = new THREE.ShapeGeometry(plan).rotateX(-Math.PI / 2).translate(0, DECK + 0.03, 0);
-    g.add(new THREE.Mesh(deckGeo, mats.deck));
+    const g = frigateGeometry();
+    this.mesh.add(new THREE.Mesh(g.hull, mats.paint), new THREE.Mesh(g.glass, mats.glass), new THREE.Mesh(g.number, numberMaterial()));
 
-    // Bow gun (dressing)
-    const gun = new THREE.Group();
-    gun.position.set(0, DECK, 45);
-    box(3.4, 1.8, 4.2, mats.hull, 0, 0.9, 0, gun);
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 6, 10).rotateX(Math.PI / 2), mats.dark);
-    barrel.position.set(0, 1.1, 4.6);
-    gun.add(barrel);
-    g.add(gun);
-
-    // VLS block on the foredeck: 2 × 4 cells under hinged lids
-    const vlsBlock = new THREE.Group();
-    vlsBlock.position.set(0, DECK, 30);
-    box(5.4, 0.8, 8.4, mats.deck, 0, 0.4, 0, vlsBlock);
-    for (let i = 0; i < 8; i++) {
-      const x = i % 2 ? 1.2 : -1.2;
-      const z = -3 + Math.floor(i / 2) * 2;
-      box(1.9, 0.05, 1.7, mats.dark, x, 0.83, z, vlsBlock);
+    // VLS lids, hinged at their outboard edges
+    for (const [x, z] of VLS_CELLS) {
       const lid = new THREE.Group();
-      lid.position.set(x + (i % 2 ? 0.95 : -0.95), 0.86, z);
-      box(1.9, 0.12, 1.7, mats.hull, i % 2 ? -0.95 : 0.95, 0.06, 0, lid);
-      vlsBlock.add(lid);
-      this.cells.push({ lid, at: new THREE.Vector3(x, DECK + 1, 30 + z), open: 0, firing: 0 });
+      lid.position.set(VLS_AT.x + x + (x > 0 ? 0.95 : -0.95), DECK + 0.86, VLS_AT.z + z);
+      const plate = new THREE.Mesh(g.lid, mats.paint);
+      plate.position.x = x > 0 ? -0.95 : 0.95;
+      lid.add(plate);
+      this.mesh.add(lid);
+      this.cells.push({ lid, at: new THREE.Vector3(VLS_AT.x + x, DECK + 1, VLS_AT.z + z), open: 0, firing: 0 });
     }
-    g.add(vlsBlock);
     this.parts.push(new ShipPart(this, 'vls', new THREE.Vector3(0, DECK + 1.2, 30), null));
 
-    // Bridge superstructure, the mast and its radar
-    box(12, 9, 22, mats.hull, 0, DECK + 4.5, -2);
-    box(12.2, 1.1, 0.2, mats.glass, 0, DECK + 7.6, 9.05);
-    box(9, 3, 9, mats.hull, 0, DECK + 10.5, -6);
-    box(9.2, 0.9, 0.2, mats.glass, 0, DECK + 11.2, -1.45);
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.4, 16, 8), mats.hull);
-    mast.position.set(0, DECK + 12 + 8, -6);
-    g.add(mast);
-    box(8, 0.3, 0.3, mats.hull, 0, DECK + 24, -6);
+    // The mast's search radar
     this.radarHead.position.set(0, DECK + 28.3, -6);
-    box(5.2, 1.8, 0.35, mats.dark, 0, 0, 0.3, this.radarHead);
-    box(0.6, 1.2, 0.6, mats.hull, 0, -1.2, 0, this.radarHead);
+    this.radarHead.add(new THREE.Mesh(g.radar, mats.paint));
     this.lamp.position.set(0, 1.2, 0);
     this.radarHead.add(this.lamp);
-    g.add(this.radarHead);
+    this.mesh.add(this.radarHead);
     this.parts.push(new ShipPart(this, 'radar', new THREE.Vector3(0, DECK + 28.3, -6), this.radarHead));
-
-    // Funnel and hangar
-    box(6, 7, 7, mats.hull, 0, DECK + 3.5, -18);
-    box(5, 0.4, 6, mats.dark, 0, DECK + 7.1, -18);
-    box(13, 7, 16, mats.hull, 0, DECK + 3.5, -30);
-    box(9, 5.2, 0.2, mats.dark, 0, DECK + 2.6, -38.05);
 
     // CIWS mounts: forward on the bridge roof, aft on the hangar
     this.addCiws(new THREE.Vector3(0, DECK + 9, 6), true);
     this.addCiws(new THREE.Vector3(0, DECK + 7, -33), false);
 
     this.parts.push(new ShipPart(this, 'hull', new THREE.Vector3(0, DECK + 2, -2), null));
-    g.traverse((o) => {
+    this.mesh.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) o.castShadow = false;
     });
   }
 
   private addCiws(at: THREE.Vector3, fwd: boolean): void {
+    const g = frigateGeometry();
     const root = new THREE.Group();
     root.position.copy(at);
-    const ped = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.5, 1.2, 14), mats.hull);
-    ped.position.y = 0.6;
-    root.add(ped);
+    root.add(new THREE.Mesh(g.ciwsBase, mats.paint));
     const yaw = new THREE.Group();
     yaw.position.y = 1.2;
     yaw.rotation.y = fwd ? 0 : Math.PI;
-    const dome = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 1.7, 16), mats.dome);
-    dome.position.y = 1.8;
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.95, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), mats.dome);
-    cap.position.y = 2.65;
-    const mount = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1, 1.4), mats.dome);
-    mount.position.y = 0.5;
+    yaw.add(new THREE.Mesh(g.ciwsYaw, mats.paint));
     const pitch = new THREE.Group();
-    pitch.position.set(0, 0.9, 0.5);
-    const barrels = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 2.4, 10).rotateX(Math.PI / 2), mats.dark);
-    barrels.position.z = 1.3;
-    pitch.add(barrels);
-    yaw.add(dome, cap, mount, pitch);
+    pitch.position.copy(CIWS_PIVOT);
+    pitch.add(new THREE.Mesh(g.ciwsPitch, mats.paint));
+    yaw.add(pitch);
     root.add(yaw);
     this.mesh.add(root);
     const part = new ShipPart(this, 'ciws', at.clone().add(new THREE.Vector3(0, 2, 0)), yaw);
@@ -404,14 +648,17 @@ export class Frigate {
       c.pitch.rotation.x += THREE.MathUtils.clamp(dp, -CIWS_SLEW * dt, CIWS_SLEW * dt);
       const err = Math.hypot(dy * Math.cos(elev), dp);
       // Bursts on, pauses off, while it has the suit in the barrels
-      if (c.fireT > 0) c.fireT -= dt;
-      else if (c.pauseT > 0) c.pauseT -= dt;
+      if (c.fireT > 0) {
+        c.fireT -= dt;
+        if (c.fireT <= 0) this.ceaseFire(c, events);
+      } else if (c.pauseT > 0) c.pauseT -= dt;
       else if (err < 0.06 && c.track > 0.8) {
         c.fireT = CIWS_BURST;
         c.pauseT = CIWS_PAUSE;
       }
     } else {
       c.track = 0;
+      if (c.fireT > 0) this.ceaseFire(c, events);
       c.fireT = 0;
       c.pauseT = Math.max(c.pauseT, 0.6);
     }
@@ -428,11 +675,24 @@ export class Frigate {
       if (Math.random() < 0.5) particles.emit('flash', muzzle, this.vel, { scale: 0.12 });
     }
     if (Math.random() < dt * 8) particles.emit('smoke', muzzle, this.vel, { scale: 0.35, life: 0.5 });
+    // The buzz-saw is laid down in overlapping slices (see Soundscape)
     c.soundT -= dt;
     if (c.soundT <= 0) {
-      c.soundT = 0.24;
-      events.emit('enemyFire', { at: muzzle.clone(), value: 3 });
+      c.soundT += 0.24;
+      if (c.soundT <= 0) c.soundT = 0.24;
+      events.emit('enemyFire', { at: muzzle.clone(), text: 'ciws' });
     }
+  }
+
+  /** A burst stops: its echo rolls back off the land. */
+  private ceaseFire(c: Ciws, events: EventBus): void {
+    c.soundT = 0;
+    events.emit('enemyFire', { at: c.part.pos.clone(), text: 'ciwsCease' });
+  }
+
+  /** Fire-control radars that have the suit (the RWR's lock warning). */
+  *trackers(): Generator<THREE.Vector3> {
+    for (const c of this.ciws) if (c.part.alive && c.track > 0.3) yield c.part.pos;
   }
 
   private updateVls(dt: number, player: PlayerTarget, field: Heightfield, missiles: Missiles, particles: Particles, explosions: Explosions, events: EventBus, radar: boolean): void {

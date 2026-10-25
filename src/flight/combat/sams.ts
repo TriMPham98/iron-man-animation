@@ -4,6 +4,7 @@ import type { EventBus } from '../sim/events';
 import type { Heightfield } from '../world/heightfield';
 import type { Explosions } from './explosions';
 import type { Missiles } from './missiles';
+import { beam, box, frustum, merge, paint, panelOn, type V3 } from './modelKit';
 import type { DamageKind, Hostile, PlayerTarget } from './types';
 
 /**
@@ -18,11 +19,21 @@ import type { DamageKind, Hostile, PlayerTarget } from './types';
  */
 
 const mats = {
-  olive: new THREE.MeshStandardMaterial({ color: 0x3b3d30, metalness: 0.4, roughness: 0.7 }),
-  steel: new THREE.MeshStandardMaterial({ color: 0x55585c, metalness: 0.8, roughness: 0.4 }),
-  dark: new THREE.MeshStandardMaterial({ color: 0x141414, metalness: 0.5, roughness: 0.6 }),
+  paint: new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.35, roughness: 0.72 }),
   glass: new THREE.MeshStandardMaterial({ color: 0x0c1014, metalness: 0.9, roughness: 0.15 }),
   lamp: new THREE.MeshStandardMaterial({ color: 0x220000, emissive: new THREE.Color(1, 0.08, 0.02), emissiveIntensity: 5 }),
+};
+
+const C = {
+  olive: 0x4f5240,
+  oliveDark: 0x3c3e31,
+  oliveLight: 0x5d604b,
+  steel: 0x6a6d70,
+  dark: 0x18191b,
+  rubber: 0x141414,
+  lens: 0xd6d3c4,
+  tail: 0x5a0e0a,
+  array: 0x8b8e84,
 };
 
 /** Driving speed (m/s), the steepest grade it will take, and how long it takes to set up or pack up (s). */
@@ -32,6 +43,156 @@ const DEPLOY_TIME = 3.2;
 const WHEEL_R = 0.55;
 /** Axle positions along the chassis (m, +Z forward). */
 const AXLES = [2.6, -0.9, -2.5];
+
+interface SamGeometry {
+  body: THREE.BufferGeometry;
+  glass: THREE.BufferGeometry;
+  wheel: THREE.BufferGeometry;
+  jack: THREE.BufferGeometry;
+  turret: THREE.BufferGeometry;
+  pod: THREE.BufferGeometry;
+  mast: THREE.BufferGeometry;
+  radar: THREE.BufferGeometry;
+}
+
+let geoCache: SamGeometry | null = null;
+
+/** Height of the chassis rails' centre, the pod's pivot over the turntable, and where the tube cluster sits on it. */
+const LIFT = WHEEL_R + 0.35;
+const POD_PIVOT = new THREE.Vector3(0, 0.75, -1.2);
+const TUBES_Y = 0.5;
+const TUBES_FRONT = 3.9;
+
+/** The truck in its moving parts (+Z forward), built once and shared. */
+function samGeometry(): SamGeometry {
+  if (geoCache) return geoCache;
+  const body: THREE.BufferGeometry[] = [];
+  const glass: THREE.BufferGeometry[] = [];
+
+  // Frame rails, the bed and its skirts
+  for (const s of [-1, 1]) body.push(box(0.22, 0.32, 8.2, C.dark, s * 0.55, LIFT - 0.12, 0));
+  body.push(box(2.5, 0.18, 5.6, C.olive, 0, LIFT + 0.34, -1.5));
+  for (const s of [-1, 1]) body.push(box(0.06, 0.34, 5.6, C.oliveDark, s * 1.24, LIFT + 0.12, -1.5));
+  // Cab-over: a sloped windscreen, grille, bumper, lamps, mirrors
+  const cabLow = { hw0: 1.25, z0: 2.3, z1: 4.3, y0: LIFT + 0.25, hw1: 1.25, z2: 2.3, z3: 4.36, y1: LIFT + 1.1 };
+  const cabHigh = { hw0: 1.25, z0: 2.3, z1: 4.36, y0: LIFT + 1.1, hw1: 1.12, z2: 2.4, z3: 3.76, y1: LIFT + 1.95 };
+  body.push(frustum(cabLow, C.olive), frustum(cabHigh, (e) => (e === 0 ? C.oliveDark : C.olive)));
+  glass.push(panelOn(cabHigh, 'f', -0.9, -0.04, 0.12, 0.85, 0, 0.02), panelOn(cabHigh, 'f', 0.04, 0.9, 0.12, 0.85, 0, 0.02));
+  for (const f of ['l', 'r'] as const) glass.push(panelOn(cabHigh, f, -0.15, 0.75, 0.15, 0.8, 0, 0.02));
+  body.push(
+    panelOn(cabLow, 'f', -0.6, 0.6, 0.15, 0.75, C.dark, 0.02),
+    box(2.62, 0.28, 0.3, C.dark, 0, LIFT - 0.05, 4.42),
+    box(0.32, 0.18, 0.05, C.lens, 0.85, LIFT + 0.42, 4.33),
+    box(0.32, 0.18, 0.05, C.lens, -0.85, LIFT + 0.42, 4.33),
+  );
+  for (const s of [-1, 1]) {
+    body.push(beam([s * 1.25, LIFT + 1.6, 4.0], [s * 1.5, LIFT + 1.6, 4.1], 0.025, C.dark), box(0.06, 0.4, 0.2, C.dark, s * 1.52, LIFT + 1.55, 4.1));
+  }
+  // Wheel arches over all six wheels
+  for (const z of AXLES) {
+    for (const s of [-1, 1]) {
+      const pts: V3[] = [];
+      for (let k = 0; k <= 5; k++) {
+        const a = 0.35 + (k / 5) * (Math.PI - 0.7);
+        pts.push([s * 1.25, WHEEL_R + Math.sin(a) * 0.72, z + Math.cos(a) * 0.72]);
+      }
+      for (let k = 0; k < 5; k++) {
+        const [a, b] = [pts[k], pts[k + 1]];
+        const len = Math.hypot(b[1] - a[1], b[2] - a[2]);
+        const g = new THREE.BoxGeometry(0.52, 0.05, len + 0.02).rotateX(Math.atan2(-(b[1] - a[1]), b[2] - a[2]));
+        body.push(paint(g.translate(a[0], (a[1] + b[1]) / 2, (a[2] + b[2]) / 2), C.oliveDark));
+      }
+    }
+  }
+  // Fuel tank to port, toolbox to starboard, an exhaust stack behind the cab
+  body.push(paint(new THREE.CylinderGeometry(0.3, 0.3, 1.25, 12).rotateX(Math.PI / 2).translate(-0.98, LIFT - 0.15, 0.65), C.oliveLight));
+  body.push(box(0.45, 0.5, 1.25, C.oliveDark, 0.98, LIFT - 0.15, 0.65));
+  body.push(paint(new THREE.CylinderGeometry(0.07, 0.07, 1.9, 8).translate(1.05, LIFT + 1.25, 2.18), C.dark));
+  // Tail: light bar, red lamps, mud flaps
+  body.push(box(2.5, 0.2, 0.15, C.dark, 0, LIFT - 0.1, -4.2));
+  for (const s of [-1, 1]) {
+    body.push(box(0.25, 0.12, 0.04, C.tail, s * 0.95, LIFT - 0.1, -4.29), box(0.45, 0.5, 0.03, C.rubber, s * 1.25, 0.5, -3.15));
+  }
+  // Mast hinge on the cab roof
+  body.push(box(0.5, 0.22, 0.32, C.steel, 0, LIFT + 2.0, 2.35));
+
+  // Wheel: lugged tyre round a hub, axle along X
+  const tyre = new THREE.LatheGeometry(
+    [[0.3, -0.22], [0.47, -0.225], [0.535, -0.19], [0.55, -0.1], [0.55, 0.1], [0.535, 0.19], [0.47, 0.225], [0.3, 0.22]].map(([r, y]) => new THREE.Vector2(r, y)),
+    18,
+  );
+  const wheel = [paint(tyre, C.rubber), paint(new THREE.CylinderGeometry(0.3, 0.3, 0.4, 12), C.oliveDark), paint(new THREE.CylinderGeometry(0.11, 0.11, 0.48, 8), C.dark)];
+  for (let k = 0; k < 10; k++) {
+    const a = (k / 10) * Math.PI * 2;
+    wheel.push(paint(new THREE.BoxGeometry(0.08, 0.4, 0.12).translate(0.54, 0, 0).rotateY(a), C.rubber));
+  }
+
+  // Outrigger jack: sleeve, ram, foot, hinge
+  const jack = [box(0.32, 0.22, 0.32, C.oliveDark, 0, 0, 0), box(0.26, 0.6, 0.26, C.olive, 0, -0.35, 0), box(0.16, 0.5, 0.16, C.steel, 0, -0.85, 0), box(0.62, 0.08, 0.62, C.dark, 0, -1.1, 0)];
+
+  // Turret: race ring, turntable, the trunnion cheeks either side of the pod
+  const turret = [
+    paint(new THREE.CylinderGeometry(1.0, 1.1, 0.3, 18), C.steel),
+    paint(new THREE.CylinderGeometry(1.2, 1.2, 0.1, 18).translate(0, 0.2, 0), C.oliveDark),
+  ];
+  for (const s of [-1, 1]) {
+    turret.push(
+      frustum({ hw0: 0.07, z0: -2.0, z1: -0.4, y0: 0.25, hw1: 0.07, z2: -1.5, z3: -0.9, y1: POD_PIVOT.y + 0.2, x: s * 1.18 }, C.olive),
+      paint(new THREE.CylinderGeometry(0.13, 0.13, 0.2, 10).rotateZ(Math.PI / 2).translate(s * 1.3, POD_PIVOT.y, POD_PIVOT.z), C.dark),
+    );
+  }
+  turret.push(box(0.7, 0.45, 0.5, C.oliveDark, 0, 0.47, 0.75));
+
+  // Launcher pod: four canisters 2 × 2 in a banded frame, pivot at its foot
+  const pod: THREE.BufferGeometry[] = [];
+  const len = 4.2;
+  const zc = TUBES_FRONT - len / 2;
+  for (const x of [-0.44, 0.44]) {
+    for (const y of [TUBES_Y - 0.44, TUBES_Y + 0.44]) {
+      pod.push(
+        paint(new THREE.CylinderGeometry(0.4, 0.4, len, 14, 1, true).rotateX(Math.PI / 2).translate(x, y, zc), C.olive),
+        paint(new THREE.RingGeometry(0.33, 0.41, 14).translate(x, y, TUBES_FRONT + 0.01), C.oliveDark),
+        paint(new THREE.CircleGeometry(0.34, 14).translate(x, y, TUBES_FRONT - 0.12), C.dark),
+        paint(new THREE.CircleGeometry(0.4, 14).rotateY(Math.PI).translate(x, y, TUBES_FRONT - len), C.oliveDark),
+      );
+    }
+  }
+  for (const z of [TUBES_FRONT - len + 0.2, zc, TUBES_FRONT - 0.2]) {
+    pod.push(
+      box(1.96, 0.1, 0.22, C.oliveDark, 0, TUBES_Y + 0.9, z),
+      box(1.96, 0.1, 0.22, C.oliveDark, 0, TUBES_Y - 0.9, z),
+      box(0.1, 1.9, 0.22, C.oliveDark, 0.93, TUBES_Y, z),
+      box(0.1, 1.9, 0.22, C.oliveDark, -0.93, TUBES_Y, z),
+    );
+  }
+  pod.push(box(0.3, 0.12, 0.3, C.dark, 0, TUBES_Y + 0.98, TUBES_FRONT - 0.5));
+
+  // Mast: a telescoping pole; the radar on top is a tilted flat array
+  const mast = [
+    box(0.32, 0.25, 0.3, C.oliveDark, 0, 0.1, 0),
+    paint(new THREE.CylinderGeometry(0.15, 0.17, 1.4, 8).translate(0, 0.7, 0), C.olive),
+    paint(new THREE.CylinderGeometry(0.1, 0.1, 1.8, 8).translate(0, 2.2, 0), C.steel),
+  ];
+  const radar = [
+    paint(new THREE.CylinderGeometry(0.16, 0.2, 0.3, 10).translate(0, -0.05, 0), C.dark),
+    paint(new THREE.BoxGeometry(2.1, 1.1, 0.14).rotateX(-0.25).translate(0, 0.62, 0.05), C.oliveDark),
+    paint(new THREE.BoxGeometry(1.96, 0.98, 0.04).translate(0, 0, 0.08).rotateX(-0.25).translate(0, 0.62, 0.05), C.array),
+    box(0.3, 0.5, 0.3, C.olive, 0, 0.3, -0.12),
+  ];
+  for (const x of [-0.5, 0, 0.5]) radar.push(paint(new THREE.BoxGeometry(0.03, 0.98, 0.02).translate(x, 0, 0.105).rotateX(-0.25).translate(0, 0.62, 0.05), C.dark));
+
+  geoCache = {
+    body: merge(body),
+    glass: merge(glass),
+    wheel: merge(wheel).rotateZ(Math.PI / 2),
+    jack: merge(jack),
+    turret: merge(turret),
+    pod: merge(pod),
+    mast: merge(mast),
+    radar: merge(radar),
+  };
+  return geoCache;
+}
 
 type Mode = 'ready' | 'stow' | 'drive' | 'deploy';
 
@@ -71,7 +232,8 @@ export class SamSite implements Hostile {
   private readonly wheels: THREE.Object3D[] = [];
   private readonly lamp: THREE.Mesh;
   private reload = 4 + Math.random() * 4;
-  private track = 0;
+  /** Seconds it has held the suit in its radar (the RWR's lock warning). */
+  track = 0;
   private salvo = 0;
   private salvoT = 0;
   private dustT = 0;
@@ -80,22 +242,11 @@ export class SamSite implements Hostile {
   private readonly _m = new THREE.Matrix4();
 
   constructor(at: THREE.Vector3) {
-    const box = (w: number, h: number, l: number, m: THREE.Material, x: number, y: number, z: number) => {
-      const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, l), m);
-      b.position.set(x, y, z);
-      return b;
-    };
-    // Chassis, cab up front, the bed behind
-    const lift = WHEEL_R + 0.35;
-    this.body.add(
-      box(2.5, 0.5, 8.6, mats.olive, 0, lift, 0),
-      box(2.5, 1.7, 2.0, mats.olive, 0, lift + 1.1, 3.3),
-      box(2.3, 0.7, 0.05, mats.glass, 0, lift + 1.45, 4.31),
-      box(2.2, 0.35, 5.6, mats.dark, 0, lift + 0.42, -1.3),
-    );
+    const g = samGeometry();
+    this.body.add(new THREE.Mesh(g.body, mats.paint), new THREE.Mesh(g.glass, mats.glass));
     for (const z of AXLES) {
       for (const sx of [-1, 1]) {
-        const w = new THREE.Mesh(new THREE.CylinderGeometry(WHEEL_R, WHEEL_R, 0.45, 14).rotateZ(Math.PI / 2), mats.dark);
+        const w = new THREE.Mesh(g.wheel, mats.paint);
         w.position.set(sx * 1.25, WHEEL_R, z);
         this.wheels.push(w);
         this.body.add(w);
@@ -103,38 +254,25 @@ export class SamSite implements Hostile {
     }
     // Outrigger jacks at the corners of the bed: they swing down to the ground
     for (const [x, z] of [[-1.35, 1.6], [1.35, 1.6], [-1.35, -3.8], [1.35, -3.8]]) {
-      const j = new THREE.Group();
-      j.position.set(x, lift, z);
-      const leg = box(0.22, 1.1, 0.22, mats.steel, 0, -0.55, 0);
-      const pad = box(0.6, 0.08, 0.6, mats.dark, 0, -1.1, 0);
-      j.add(leg, pad);
+      const j = new THREE.Mesh(g.jack, mats.paint);
+      j.position.set(x, LIFT, z);
       this.jacks.push(j);
       this.body.add(j);
     }
-    // The launcher: turntable on the bed, box on an elevating cradle
-    this.turret.position.set(0, lift + 0.6, -1.6);
-    const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.1, 0.35, 16), mats.steel);
-    this.turret.add(ring);
-    this.pod.position.set(0, 0.55, -1.2);
-    const tubes = box(2.2, 1.3, 4.2, mats.olive, 0, 0, 1.2);
-    this.pod.add(tubes);
-    for (let i = 0; i < 4; i++) {
-      const tube = new THREE.Mesh(new THREE.CircleGeometry(0.38, 16), mats.dark);
-      tube.position.set(i % 2 ? 0.5 : -0.5, i < 2 ? 0.3 : -0.3, 3.31);
-      this.pod.add(tube);
-    }
+    // The launcher: turntable on the bed, the canisters on an elevating cradle
+    this.turret.position.set(0, LIFT + 0.6, -1.6);
+    this.turret.add(new THREE.Mesh(g.turret, mats.paint));
+    this.pod.position.copy(POD_PIVOT);
+    this.pod.add(new THREE.Mesh(g.pod, mats.paint));
     this.lamp = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), mats.lamp);
-    this.lamp.position.set(0, 0.8, 2.9);
+    this.lamp.position.set(0, TUBES_Y + 1.12, TUBES_FRONT - 0.5);
     this.pod.add(this.lamp);
     this.turret.add(this.pod);
     // Search radar on a mast hinged at the back of the cab roof: it folds down flat over the cab
-    this.mast.position.set(0, lift + 1.95, 2.35);
-    const pole = box(0.18, 3.0, 0.18, mats.steel, 0, 1.5, 0);
+    this.mast.position.set(0, LIFT + 1.95, 2.35);
     this.radar.position.y = 3.1;
-    const dish = new THREE.Mesh(new THREE.SphereGeometry(1.1, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.35), mats.steel);
-    dish.rotation.x = Math.PI / 2;
-    this.radar.add(dish);
-    this.mast.add(pole, this.radar);
+    this.radar.add(new THREE.Mesh(g.radar, mats.paint));
+    this.mast.add(new THREE.Mesh(g.mast, mats.paint), this.radar);
     this.body.add(this.turret, this.mast);
     this.mesh.add(this.body);
     this.mesh.traverse((o) => {
@@ -233,7 +371,7 @@ export class SamSite implements Hostile {
         this.salvo--;
         this.salvoT = 0.9;
         const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(this.pod.getWorldQuaternion(new THREE.Quaternion()));
-        const from = this.pod.getWorldPosition(new THREE.Vector3()).addScaledVector(fwd, 3.6);
+        const from = this.pod.localToWorld(new THREE.Vector3(0, TUBES_Y, TUBES_FRONT + 0.3));
         missiles.launch({ team: 'enemy', from, vel: fwd.clone().multiplyScalar(60), target: player, coast: 0.15 });
         explosions.muzzle(from, fwd, 1.6);
         events.emit('enemyMissile', { at: from, value: 1 });

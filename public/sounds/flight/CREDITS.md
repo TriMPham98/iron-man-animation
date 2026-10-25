@@ -32,6 +32,22 @@ deploy) come from the project library in `public/sounds/`.
 - `jarvis-blip.mp3` — "Beep 03 Positive" by PaulMorek (https://freesound.org/people/PaulMorek/sounds/330046), CC0
 - `wave-start.mp3` — "HUD-OPEN02.wav" by newagesoup (https://freesound.org/people/newagesoup/sounds/341172), CC0
 - `wave-clear.mp3` — "Button Spacey Confirm" by GameAudio (https://freesound.org/people/GameAudio/sounds/220168), CC0
+- `bullet-hit-1.mp3` — "Foley bullet hit metal.wav" by martian (https://freesound.org/people/martian/sounds/182240), CC0
+- `bullet-hit-2.mp3` — "Foley bullet hit metal.wav" by martian (https://freesound.org/people/martian/sounds/182240), CC0
+- `bullet-hit-3.mp3` — "Foley bullet hit metal.wav" by martian (https://freesound.org/people/martian/sounds/182240), CC0
+- `bullet-hit-4.mp3` — "Foley bullet hit metal.wav" by martian (https://freesound.org/people/martian/sounds/182240), CC0
+- `bullet-hit-5.mp3` — "Foley bullet hit metal 02.wav" by martian (https://freesound.org/people/martian/sounds/182263), CC0
+- `bullet-hit-6.mp3` — "Foley bullet hit metal 02.wav" by martian (https://freesound.org/people/martian/sounds/182263), CC0
+- `bullet-hit-7.mp3` — "Foley bullet hit metal 02.wav" by martian (https://freesound.org/people/martian/sounds/182263), CC0
+- `bullet-hit-8.mp3` — "Foley bullet hit metal 02.wav" by martian (https://freesound.org/people/martian/sounds/182263), CC0
+- `bullet-ring.mp3` — "HeavyBulletPing.mp3" by wilhellboy (https://freesound.org/people/wilhellboy/sounds/351371), CC0
+- `bullet-crack-1.mp3` — "Whip Cracks.WAV" by G.Lamont (https://freesound.org/people/G.Lamont/sounds/118068), CC0
+- `bullet-crack-2.mp3` — "Whip Cracks.WAV" by G.Lamont (https://freesound.org/people/G.Lamont/sounds/118068), CC0
+- `bullet-crack-3.mp3` — "Whip Cracks.WAV" by G.Lamont (https://freesound.org/people/G.Lamont/sounds/118068), CC0
+- `bullet-crack-4.mp3` — "Whip Cracks.WAV" by G.Lamont (https://freesound.org/people/G.Lamont/sounds/118068), CC0
+- `ciws-burst.mp3` — "C-RAM - Firing (+ Echo).mp3" by gurkenjaeger13 (https://freesound.org/people/gurkenjaeger13/sounds/621817), CC0
+- `ciws-tail.mp3` — "C-RAM - Firing (+ Echo).mp3" by gurkenjaeger13 (https://freesound.org/people/gurkenjaeger13/sounds/621817), CC0
+- `rwr-chirp.mp3` — "Missile Alert!" by adh.dreaming (https://freesound.org/people/adh.dreaming/sounds/656060), CC0
 - `wind.mp3` (looped) — "Car Strong Wind Noise.mp3" by FunWithSound (https://freesound.org/people/FunWithSound/sounds/439242), CC0
 - `jet-loop.mp3` (looped) — "Jet Flyby 1" by unfa (https://freesound.org/people/unfa/sounds/168079), CC0
 - `buffet.mp3` (looped) — "air over mic.wav" by cognito perceptu (https://freesound.org/people/cognito%20perceptu/sounds/20108), CC0
