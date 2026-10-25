@@ -30,6 +30,8 @@ import { BULLSEYE_R, CENTRED_R } from '../world/landingPad';
 const CYAN = 'rgba(126, 232, 255, 0.92)';
 const CYAN_DIM = 'rgba(126, 232, 255, 0.38)';
 const CYAN_FAINT = 'rgba(126, 232, 255, 0.16)';
+/** Panel labels: dimmer than a reading, brighter than the linework (they sit on glass). */
+const CYAN_LABEL = 'rgba(150, 236, 255, 0.66)';
 const WHITE = 'rgba(235, 250, 255, 0.95)';
 const AMBER = 'rgba(255, 184, 77, 0.95)';
 const RED = 'rgba(255, 70, 60, 0.95)';
@@ -277,8 +279,8 @@ export class Hud {
     g.globalAlpha = this.alpha * (combat.lost ? Math.max(0.15, 0.5 - combat.lostT * 0.15) : combat.down > 0 ? 0.25 + 0.25 * Math.sin(this.time * 20) : 1);
     g.lineCap = 'round';
     // A dark halo keeps the linework legible against a bright sky
-    g.shadowColor = 'rgba(0, 12, 22, 0.75)';
-    g.shadowBlur = 4;
+    g.shadowColor = 'rgba(0, 10, 20, 0.85)';
+    g.shadowBlur = 5;
 
     const cx = this.w / 2;
     const cy = this.h / 2;
@@ -395,7 +397,7 @@ export class Hud {
       g.translate(x, y - rise);
       g.scale(pop, pop);
       this.text(g, 'SPLASH', 0, 0, 13 * s, WHITE, 'center', JARVIS);
-      if (sp.kind) this.text(g, sp.kind === 'SHIP' ? 'WARSHIP DOWN' : `${sp.kind} DOWN`, 0, 14 * s, 8 * s, CYAN, 'center', JARVIS);
+      if (sp.kind) this.text(g, sp.kind === 'SHIP' ? 'WARSHIP  DOWN' : `${sp.kind}  DOWN`, 0, 14 * s, 8 * s, CYAN, 'center', JARVIS);
       g.restore();
     }
   }
@@ -522,7 +524,7 @@ export class Hud {
       g.lineTo(x + dx * k, y);
       g.stroke();
     }
-    this.text(g, 'MK III  ·  HUD ONLINE', mx + 4 * s, my + k + 10 * s, 7 * s, CYAN_FAINT, 'left', JARVIS);
+    this.text(g, 'MK III  ·  HUD ONLINE', mx + 4 * s, my + k + 10 * s, 7.5 * s, CYAN_DIM, 'left', JARVIS);
     const y = ((this.time * 0.12) % 1) * this.h;
     g.fillStyle = 'rgba(126,232,255,0.03)';
     g.fillRect(0, y, this.w, 2 * s);
@@ -1118,6 +1120,8 @@ export class Hud {
       const y = cy - (v - value) * pxPer;
       // (fading out toward the ends of the tape)
       const fade = Math.max(0, 1 - (Math.abs(y - cy) / (H / 2)) ** 2);
+      // (and kept clear of the readout box and its label)
+      const clear = THREE.MathUtils.smoothstep(Math.abs(y - cy), 16 * s, 34 * s);
       g.strokeStyle = `rgba(126, 232, 255, ${0.5 * fade})`;
       g.beginPath();
       g.moveTo(x, y);
@@ -1128,7 +1132,7 @@ export class Hud {
       g.moveTo(x, half);
       g.lineTo(x + side * 5 * s, half);
       g.stroke();
-      this.text(g, label(v), x + side * 16 * s, y, 10 * s, `rgba(126, 232, 255, ${0.6 * fade})`, side > 0 ? 'left' : 'right');
+      this.text(g, label(v), x + side * 16 * s, y, 10 * s, `rgba(126, 232, 255, ${0.6 * fade * clear})`, side > 0 ? 'left' : 'right');
     }
     if (bug !== undefined) {
       const y = THREE.MathUtils.clamp(cy - (bug - value) * pxPer, cy - H / 2, cy + H / 2);
@@ -1177,7 +1181,7 @@ export class Hud {
       g.stroke();
       const mid = (near + align * tip + far) / 2;
       this.text(g, value, mid, cy + 0.5 * s, 15 * s, WHITE, 'center');
-      this.text(g, label, mid, cy - 22 * s, 8 * s, CYAN_DIM, 'center', JARVIS);
+      this.text(g, label, mid, cy - 22 * s, 8 * s, CYAN_LABEL, 'center', JARVIS);
     };
     box(lx, 'AIRSPEED KT', `${Math.round(spd)}`, -1);
     box(rx, 'ALT MSL', `${Math.round(m.pos.y)}`, 1);
@@ -1209,6 +1213,9 @@ export class Hud {
     for (let d = start; d <= hdg + 40; d += 5) {
       const x = cx + (d - hdg) * pxPerDeg;
       const major = d % 10 === 0;
+      // (fading out toward the ends)
+      const fade = Math.max(0, 1 - (Math.abs(x - cx) / (W / 2)) ** 2);
+      g.strokeStyle = `rgba(126, 232, 255, ${0.5 * fade})`;
       g.beginPath();
       g.moveTo(x, y);
       g.lineTo(x, y + (major ? 9 : 5) * s);
@@ -1216,17 +1223,29 @@ export class Hud {
       if (d % 30 === 0) {
         const n = ((d % 360) + 360) % 360;
         const name = n === 0 ? 'N' : n === 90 ? 'E' : n === 180 ? 'S' : n === 270 ? 'W' : `${n / 10}`.padStart(2, '0');
-        this.text(g, name, x, y + 20 * s, 10 * s, n % 90 === 0 ? CYAN : CYAN_DIM, 'center');
+        this.text(g, name, x, y + 20 * s, 10 * s, `rgba(126, 232, 255, ${(n % 90 === 0 ? 0.95 : 0.55) * fade})`, 'center');
       }
     }
     g.restore();
-    g.fillStyle = WHITE;
+    // The heading in a box, pointing down at the tape
+    const bw = 40 * s;
+    const bh = 17 * s;
+    const by = y - 21 * s;
     g.beginPath();
-    g.moveTo(cx, y - 2 * s);
-    g.lineTo(cx - 5 * s, y - 10 * s);
-    g.lineTo(cx + 5 * s, y - 10 * s);
+    g.moveTo(cx - bw / 2, by - bh / 2);
+    g.lineTo(cx + bw / 2, by - bh / 2);
+    g.lineTo(cx + bw / 2, by + bh / 2);
+    g.lineTo(cx + 5 * s, by + bh / 2);
+    g.lineTo(cx, y - 1 * s);
+    g.lineTo(cx - 5 * s, by + bh / 2);
+    g.lineTo(cx - bw / 2, by + bh / 2);
+    g.closePath();
+    g.fillStyle = 'rgba(2, 14, 24, 0.5)';
     g.fill();
-    this.text(g, `${Math.round(hdg).toString().padStart(3, '0')}`, cx, y - 20 * s, 12 * s, WHITE, 'center');
+    g.strokeStyle = CYAN;
+    g.lineWidth = 1.2;
+    g.stroke();
+    this.text(g, `${Math.round(hdg).toString().padStart(3, '0')}`, cx, by + 0.5 * s, 12 * s, WHITE, 'center');
   }
 
   private drawTargets(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, _m: FlightModel, c: Combat, s: number): void {
@@ -1561,7 +1580,7 @@ export class Hud {
     g.fill();
     const numColor = this.armorFlash > 0 ? RED : low && Math.sin(this.time * 8) > 0 ? RED : WHITE;
     this.text(g, `${Math.round(armor * 100)}`, ax, ay - 2 * s, 20 * s, numColor, 'center');
-    this.text(g, 'ARMOR', ax, ay + 16 * s, 7.5 * s, CYAN_DIM, 'center', JARVIS);
+    this.text(g, 'ARMOR', ax, ay + 16 * s, 7.5 * s, CYAN_LABEL, 'center', JARVIS);
     // Reserves: a diamond per reboot left, in the arc's open foot
     for (let i = 0; i < RESERVES; i++) {
       const px = ax + (i - (RESERVES - 1) / 2) * 11 * s;
@@ -1585,7 +1604,7 @@ export class Hud {
     // Thrust: segments filling (eased) to the throttle, the leading one lit;
     // on boost they shimmer amber
     const bx = x + r * 2 + 24 * s;
-    this.text(g, 'THRUST', bx, y - 6 * s, 8 * s, CYAN_DIM, 'left', JARVIS);
+    this.text(g, 'THRUST', bx, y - 6 * s, 8 * s, CYAN_LABEL, 'left', JARVIS);
     this.text(g, `${Math.round(this.thrustShown * 100)}%`, bx + 118 * s, y - 6 * s, 9 * s, CYAN, 'right');
     const N = 20;
     const lit = this.thrustShown * N;
@@ -1602,7 +1621,7 @@ export class Hud {
     }
     const cmd = m.boosting ? 'BOOST' : m.grounded ? 'GROUND' : m.flightness < 0.5 ? 'HOVER' : `CRUISE ${Math.round((m.speedCmd / CRUISE_MAX) * 100)}%`;
     this.text(g, cmd, bx, y + 36 * s, 12 * s, m.boosting ? AMBER : WHITE);
-    this.text(g, `REACTOR ${c.lost ? 'OFFLINE' : c.down > 0 ? 'REBOOT' : 'NOMINAL'}`, bx, y + 54 * s, 9 * s, c.down > 0 ? RED : CYAN_DIM);
+    this.text(g, `REACTOR ${c.lost ? 'OFFLINE' : c.down > 0 ? 'REBOOT' : 'NOMINAL'}`, bx, y + 54 * s, 9 * s, c.down > 0 ? RED : CYAN_LABEL);
     if (m.icing > 0.01) this.text(g, `ICING ${Math.round(m.icing * 100)}%`, bx, y + 70 * s, 9 * s, AMBER);
   }
 
@@ -1612,7 +1631,7 @@ export class Hud {
     let y = this.h - 132 * s - this.bottomInset;
     this.glass(g, x - 166 * s, y - 20 * s, 184 * s, 146 * s, s, true);
     const row = (label: string, value: string, color: string, extra?: (bx: number, by: number) => void) => {
-      this.text(g, label, x - 150 * s, y, 8 * s, CYAN_DIM, 'left', JARVIS);
+      this.text(g, label, x - 150 * s, y, 8 * s, CYAN_LABEL, 'left', JARVIS);
       this.text(g, value, x, y, 11 * s, color, 'right');
       extra?.(x - 150 * s, y + 9 * s);
       y += 26 * s;
@@ -1777,7 +1796,16 @@ export class Hud {
     g.lineTo(x - 4 * s, y + 4 * s);
     g.lineTo(x + 4 * s, y + 4 * s);
     g.fill();
-    this.text(g, c.wave >= 0 ? `WAVE ${c.wave + 1}` : 'FREE FLIGHT', x, y + R + 14 * s, 8 * s, CYAN_DIM, 'center', JARVIS);
+    // The tally on a plate of glass, readable over cloud
+    g.save();
+    g.shadowBlur = 0;
+    const plate = g.createLinearGradient(0, y + R + 6 * s, 0, y + R + 64 * s);
+    plate.addColorStop(0, GLASS);
+    plate.addColorStop(1, 'rgba(2, 14, 24, 0)');
+    g.fillStyle = plate;
+    g.fillRect(x - R, y + R + 6 * s, 2 * R, 58 * s);
+    g.restore();
+    this.text(g, c.wave >= 0 ? `WAVE ${c.wave + 1}` : 'FREE FLIGHT', x, y + R + 14 * s, 8 * s, CYAN_LABEL, 'center', JARVIS);
     // The tally pops on a kill
     g.save();
     const pop = 1 + 0.45 * this.killPop * this.killPop;
@@ -1859,8 +1887,35 @@ export class Hud {
       if (age > 7) continue;
       const shown = Math.min(l.text.length, Math.floor(age * 55));
       const a = age > 6 ? 1 - (age - 6) : 1;
-      g.globalAlpha = this.alpha * a * (i === this.lines.length - 1 ? 1 : 0.55);
-      this.text(g, `J.A.R.V.I.S.  ${l.text.slice(0, shown)}`, x, y, 12 * s, i === this.lines.length - 1 ? WHITE : CYAN_DIM, 'center');
+      const newest = i === this.lines.length - 1;
+      g.globalAlpha = this.alpha * a * (newest ? 1 : 0.55);
+      const full = `J.A.R.V.I.S.  ${l.text}`;
+      const typed = `J.A.R.V.I.S.  ${l.text.slice(0, shown)}`;
+      if (newest) {
+        // A strip of glass under the line (sized to the whole of it, so it
+        // doesn't grow as it types), and a block cursor while it does
+        g.font = `500 ${12 * s}px ${MONO}`;
+        const fw = g.measureText(full).width;
+        g.save();
+        g.shadowBlur = 0;
+        const grad = g.createLinearGradient(x - fw / 2 - 30 * s, 0, x + fw / 2 + 30 * s, 0);
+        grad.addColorStop(0, 'rgba(2, 14, 24, 0)');
+        grad.addColorStop(0.15, GLASS);
+        grad.addColorStop(0.85, GLASS);
+        grad.addColorStop(1, 'rgba(2, 14, 24, 0)');
+        g.fillStyle = grad;
+        g.fillRect(x - fw / 2 - 30 * s, y - 11 * s, fw + 60 * s, 22 * s);
+        g.fillStyle = CYAN;
+        g.fillRect(x - fw / 2 - 12 * s, y - 6 * s, 2 * s, 12 * s);
+        g.restore();
+        // Typed from the left of where the whole line will sit, so it doesn't drift
+        this.text(g, typed, x - fw / 2, y, 12 * s, WHITE, 'left');
+        if (shown < l.text.length || (age < 2.5 && Math.sin(this.time * 9) > 0)) {
+          const tw = g.measureText(typed).width;
+          g.fillStyle = CYAN;
+          g.fillRect(x - fw / 2 + tw + 2 * s, y - 6 * s, 6 * s, 12 * s);
+        }
+      } else this.text(g, full, x, y, 12 * s, CYAN_DIM, 'center');
       y += top ? 20 * s : -20 * s;
     }
     g.globalAlpha = this.alpha;

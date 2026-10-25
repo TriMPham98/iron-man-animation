@@ -208,9 +208,7 @@ export class FlightApp {
     hud.pad = new THREE.Vector3(PAD.x, PAD_Y, PAD.y);
     game.events.on((e) => {
       this.sounds.on(e, game.model);
-      if (e.kind === 'jarvis' && e.text) hud.say(e.text);
-      if (e.kind === 'kill') hud.kill();
-      if (e.kind === 'repulsorHit' && e.value) hud.hit();
+      hud.event(e);
     });
     screens.onSettings = () => this.applySettings();
     this.applySettings();
@@ -423,6 +421,7 @@ export class FlightApp {
     this.touch?.setOpacity(s.touchOpacity);
     this.touch?.setLeftHanded(s.leftHanded);
     this.audio.setVolume(s.volume * this.volumeScale);
+    if (this.hud) this.hud.glow = s.quality !== 'low';
   }
 
   /** Hands off: what the sim reads while there are no controls yet. */
