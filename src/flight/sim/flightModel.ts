@@ -242,24 +242,24 @@ const PAD_HOLD_MAX = 10;
  * down to the deck (m of height per m out), the clearance it keeps over
  * anything on the way (m), and the sink it touches down at (m/s).
  */
-const AUTOLAND_SPEED = 70;
-const AUTOLAND_PUSH = 40;
-const AUTOLAND_JERK = 45;
+const AUTOLAND_SPEED = 95;
+const AUTOLAND_PUSH = 55;
+const AUTOLAND_JERK = 60;
 /** Boot authority it flies on (× the full throttle; a hover holds 1.1). */
 const AUTOLAND_THRUST = 1.7;
 /** The stop it plans for coming down (m/s²). */
-const AUTOLAND_SINK_DECEL = 7.2;
-const AUTOLAND_SLOPE = 0.6;
+const AUTOLAND_SINK_DECEL = 10;
+const AUTOLAND_SLOPE = 0.45;
 const AUTOLAND_CLEAR = 6;
-const AUTOLAND_SINK = 1.6;
+const AUTOLAND_SINK = 2.2;
 /**
  * Quickest run-in it plans (s), the time-to-go it settles onto the mark over
  * at the end (s), and the snappier one it trims the last few centimetres on
  * (s: on the settle's it crept in and the pause before letting down dragged).
  */
 const AUTOLAND_T_MIN = 1.5;
-const AUTOLAND_T_END = 1.8;
-const AUTOLAND_T_TRIM = 0.9;
+const AUTOLAND_T_END = 1.3;
+const AUTOLAND_T_TRIM = 0.6;
 /**
  * Auto-land's last look before it lets down: hovering just off the deck it
  * trims onto the centre until it's within this far (m), drifting no faster
@@ -269,10 +269,10 @@ const AUTOLAND_T_TRIM = 0.9;
  */
 export const AUTOLAND_LOCK_R = 0.015;
 const AUTOLAND_LOCK_V = 0.06;
-const AUTOLAND_LOCK_T = 0.3;
+const AUTOLAND_LOCK_T = 0.2;
 const AUTOLAND_SLIP = 0.03;
 /** How quickly the body's lean follows the thrust under auto-land (rad/s, critically damped). */
-const AUTOLAND_LEAN = 6;
+const AUTOLAND_LEAN = 5;
 /** Least lift it keeps on the way down (× g): on next to none, the lean swung wild on every touch across. */
 const AUTOLAND_LIFT = 0.5;
 /** Auto-land turns the suit to face the pad while it's further off the centre than this (m); closer, it holds the heading it came in on. */
@@ -1320,7 +1320,7 @@ export class FlightModel {
     // it stepped the sink and jolted the lean)
     const clear = (floor + AUTOLAND_CLEAR) * smooth(4, 8, d);
     const hGoal = Math.max(Math.min(h, AUTOLAND_SLOPE * d), clear);
-    let vy = clamp((hGoal - h) * 1.6, -20, 6);
+    let vy = clamp((hGoal - h) * 2, -32, 6);
     // Locked on: dead on the centre and all but still for a beat (and let
     // go of again if it's pushed off the mark on the way down)
     const hv = Math.hypot(this.vel.x, this.vel.z);
@@ -1358,7 +1358,9 @@ export class FlightModel {
     const sx = hv > 1e-3 ? this.pos.x + (this.vel.x / hv) * stop : this.pos.x;
     const sz = hv > 1e-3 ? this.pos.z + (this.vel.z / hv) * stop : this.pos.z;
     const closing = d > 1e-3 ? (ex * this.vel.x + ez * this.vel.z) / d : 0;
-    if (!this.homing) this.homing = Math.hypot(aid.x - sx, aid.z - sz) > HOME_R;
+    // (not for a stop short of it on the way in: the run-in flies that, and
+    // boosting it round from close in only orbited the pad)
+    if (!this.homing) this.homing = Math.hypot(aid.x - sx, aid.z - sz) > HOME_R && !(closing > 0.97 * hv && d > stop);
     // (and lined up on it, so the flare comes out of straight flight, not the turn)
     else if (closing > 0.97 * hv && d - stop < HOME_LEAD && d - stop > -HOME_PAST) this.homing = false;
     if (!this.homing) return input;

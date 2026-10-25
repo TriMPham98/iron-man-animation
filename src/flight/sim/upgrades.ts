@@ -312,6 +312,14 @@ export class Upgrades {
     return MARK_NAMES[this.markIndex];
   }
 
+  /** Some tier's next step is within the points banked. */
+  get affordable(): boolean {
+    return TRACKS.some((t) => {
+      const c = this.cost(t.id);
+      return c !== null && c <= this.state.rd;
+    });
+  }
+
   /** Tiers still to buy before the next Mark, or null at the last. */
   get toNextMark(): number | null {
     const next = MARK_AT[this.markIndex + 1];

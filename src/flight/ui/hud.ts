@@ -1404,7 +1404,7 @@ export class Hud {
     g.globalAlpha = this.alpha;
   }
 
-  /** Under the take-off prompt: the key to the R&D refit and the points to spend. */
+  /** Under the take-off prompt: the key to the R&D refit and the points to spend (or, between waves, the call home to it). */
   private drawRefitHint(g: CanvasRenderingContext2D, dt: number, s: number): void {
     const on = !!this.refitHint;
     if (this.refitHint) this.refitText = this.refitHint;

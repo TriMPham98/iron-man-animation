@@ -509,8 +509,15 @@ export class FlightApp {
     hud.autoLand = !this.engaged || director ? null : game.autoLand ? 'active' : game.autoLandReady ? 'ready' : null;
     // TEMP: the take-off prompt (touch screens have their own stick mapping)
     hud.takeoff = this.engaged && !this.paused && !director && !this.autopilot && !this.touch && game.model.grounded && !game.autoLand && !game.autoLandReady;
-    const refit = this.engaged && !this.paused && !director && !this.autopilot && (game.onPad || game.combat.redeployReady);
-    hud.refitHint = refit ? `${this.touch ? 'II' : 'U'} — R&D REFIT · ${this.upgrades.state.rd} R&D` : null;
+    const live = this.engaged && !this.paused && !director && !this.autopilot;
+    const refit = live && (game.onPad || game.combat.redeployReady);
+    // (between waves, off the pad with a tier to buy: called home to fit it)
+    const home = live && !refit && game.combat.autoWaveIn !== null && this.upgrades.affordable;
+    hud.refitHint = refit
+      ? `${this.touch ? 'II' : 'U'} — R&D REFIT · ${this.upgrades.state.rd} R&D`
+      : home
+        ? `RETURN TO THE PAD TO REFIT · ${this.upgrades.state.rd} R&D`
+        : null;
     hud.draw(dt, camera, game.model, game.combat, game.ground, game.rig.mode === 'helmet');
     this.sounds.update(dt, game.model, game.combat, camera, game.rig.mode === 'helmet', game.combat.weapons.unibeamOn);
     this.post.render(dt, this.lens);
@@ -540,6 +547,7 @@ export class FlightApp {
     };
     upgrades.onChange(sync);
     sync();
+    combat.refitDue = () => !game.onPad && upgrades.affordable;
     upgrades.onAward = (points, reason) => game.events.emit('rdAward', { value: points, text: reason });
     game.events.on((e) => {
       if (!this.director && !this.autopilot) upgrades.event(e);

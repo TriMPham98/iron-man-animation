@@ -33,8 +33,8 @@ import { hazeAll } from '../render/haze';
 
 /** The one reboot the suit holds at the start of a run. */
 export const RESERVES = 1;
-/** Seconds after the sky clears before the next wave comes uncalled. */
-export const AUTO_WAVE = 15;
+/** Seconds after the sky clears before the next wave comes uncalled (time to get down on the pad and refit). */
+export const AUTO_WAVE = 45;
 /** Seconds after the suit is lost before a redeploy is offered (it's seen to fall). */
 const REDEPLOY_AFTER = 2.5;
 /** Scorch marks the roofs keep before the oldest goes. */
@@ -99,6 +99,8 @@ export class Combat {
   reserves = RESERVES;
   /** The suit's upgrades (the app shares the live one; stock until then). */
   spec: SuitSpec = STOCK_SPEC();
+  /** The R&D has a refit waiting and the suit is off the pad (set by the app): the all-clear calls it home. */
+  refitDue: () => boolean = () => false;
   /** Knocked out with no reserve left: down for good until {@link resetRun}. */
   lost = false;
   /** Seconds since the suit was lost. */
@@ -294,7 +296,8 @@ export class Combat {
         const earned = this.reserves < this.maxReserves;
         if (earned) this.reserves++;
         this.events.emit('waveClear', { value: this.wave + 1 });
-        this.events.emit('jarvis', { text: `Area clear, sir.${earned ? ' A reserve is back online.' : ''} Next formation in fifteen seconds.` });
+        const home = this.refitDue() ? ' R&D has a refit ready — bring her down on the pad.' : '';
+        this.events.emit('jarvis', { text: `Area clear, sir.${earned ? ' A reserve is back online.' : ''}${home} Next formation in forty-five seconds.` });
       }
       if (this.waveT >= AUTO_WAVE) this.callWave();
     }
