@@ -93,11 +93,17 @@ function exhaustTexture(): THREE.Texture {
 
 let nextId = 1;
 
-interface Round {
+export interface Round {
   p: THREE.Vector3;
   v: THREE.Vector3;
   life: number;
+  /** Armour it takes off on a hit (default 4). */
+  dmg?: number;
 }
+
+/** Beyond this far from the suit (m) an attacking drone runs in at {@link INGRESS_DASH} × cruise. */
+const INGRESS_DIST = 1800;
+const INGRESS_DASH = 1.5;
 
 type Mode = 'patrol' | 'attack' | 'extend' | 'break' | 'dying';
 
@@ -266,7 +272,9 @@ export class Drone implements Hostile {
       const axis = new THREE.Vector3().crossVectors(dir, want).normalize();
       dir.applyAxisAngle(axis, Math.min(ang, maxRate * dt));
     }
-    const sp = speed + (this.cruise * (this.mode === 'extend' ? 1.25 : 1) - speed) * (1 - Math.exp(-dt * 0.8));
+    // Running in from far out they dash, and settle to cruise for the merge
+    const dash = this.mode === 'extend' ? 1.25 : this.mode === 'attack' && dist > INGRESS_DIST ? INGRESS_DASH : 1;
+    const sp = speed + (this.cruise * dash - speed) * (1 - Math.exp(-dt * 0.8));
     // Bank into the turn: roll by the lateral acceleration
     const lateral = new THREE.Vector3().crossVectors(dir, want).y;
     this.roll += (THREE.MathUtils.clamp(-lateral * 4, -1.3, 1.3) - this.roll) * (1 - Math.exp(-dt * 3));
@@ -349,7 +357,7 @@ export class Guns {
         const t = THREE.MathUtils.clamp(this._b.copy(player.pos).sub(prev).dot(seg) / Math.max(len * len, 1e-6), 0, 1);
         const closest = this._b.copy(prev).addScaledVector(seg, t);
         if (closest.distanceToSquared(player.pos) < 1.15 ** 2) {
-          player.hit(4, closest, 'bullet');
+          player.hit(r.dmg ?? 4, closest, 'bullet');
           particles.burst('spark', closest, 8, 12, seg.normalize().negate(), 0.9);
           this.rounds.splice(i, 1);
           continue;

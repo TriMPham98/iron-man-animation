@@ -131,6 +131,13 @@ export class Game {
     this.rig.lookHeading(heading, -0.05);
   }
 
+  /** The suit was lost: a fresh run from the pad, wave one next. */
+  redeploy(): void {
+    this.combat.resetRun();
+    this.reset();
+    this.events.emit('jarvis', { text: 'Mark III redeployed. Full armour, two reserves, sir.' });
+  }
+
   applyControls(c: Controls): void {
     this.controls = c;
     this.rig.turn(c.aimYaw, c.aimPitch);

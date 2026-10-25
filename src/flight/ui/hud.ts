@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MINI_ROCKETS } from '../../animation/flightCheck';
-import type { Combat } from '../combat/combat';
+import { RESERVES, type Combat } from '../combat/combat';
 import { ASSIST_RANGE, LAUNCHER_PER_ARM } from '../combat/playerWeapons';
 import type { FlightModel } from '../sim/flightModel';
 import { AUTOLAND_LOCK_R, CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
@@ -139,7 +139,8 @@ export class Hud {
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     g.clearRect(0, 0, this.w, this.h);
     if (this.alpha <= 0.01) return;
-    g.globalAlpha = this.alpha * (combat.down > 0 ? 0.25 + 0.25 * Math.sin(this.time * 20) : 1);
+    // Rebooting it flickers; lost, it fades back behind the card
+    g.globalAlpha = this.alpha * (combat.lost ? Math.max(0.15, 0.5 - combat.lostT * 0.15) : combat.down > 0 ? 0.25 + 0.25 * Math.sin(this.time * 20) : 1);
     g.lineCap = 'round';
     // A dark halo keeps the linework legible against a bright sky
     g.shadowColor = 'rgba(0, 12, 22, 0.75)';
@@ -173,7 +174,21 @@ export class Hud {
     this.drawTakeoff(g, dt, s);
     this.drawLines(g, s);
     g.restore();
+    if (combat.lost) this.drawLost(g, combat, cx, cy, s);
     g.globalAlpha = 1;
+  }
+
+  /** The suit is lost: the run's tally, then the redeploy prompt. */
+  private drawLost(g: CanvasRenderingContext2D, c: Combat, cx: number, cy: number, s: number): void {
+    g.save();
+    g.globalAlpha = this.alpha * Math.min(1, c.lostT / 0.6);
+    this.text(g, 'SUIT LOST', cx, cy - 70 * s, 26 * s, RED, 'center', JARVIS);
+    this.text(g, `WAVE ${Math.max(1, c.wave + 1)}  ·  KILLS ${c.kills}`, cx, cy - 38 * s, 13 * s, WHITE, 'center');
+    if (c.redeployReady) {
+      g.globalAlpha *= 0.55 + 0.45 * Math.sin(this.time * 3);
+      this.text(g, `${this.waveKey === 'N' ? 'R / N' : this.waveKey} — REDEPLOY`, cx, cy + 46 * s, 11 * s, AMBER, 'center', JARVIS);
+    }
+    g.restore();
   }
 
   private text(g: CanvasRenderingContext2D, str: string, x: number, y: number, size: number, color: string, align: CanvasTextAlign = 'left', font = MONO): void {
@@ -933,7 +948,7 @@ export class Hud {
       const dist = h.pos.distanceTo(cam.position);
       const p = this.project(h.pos, cam);
       const onScreen = p && p.x > 0 && p.x < this.w && p.y > 0 && p.y < this.h;
-      const hostileColor = h.kind === 'sam' ? AMBER : RED;
+      const hostileColor = h.kind === 'drone' ? RED : AMBER;
       if (!onScreen) {
         if (dist > 7000) continue;
         // Edge arrow pointing toward it
@@ -973,7 +988,7 @@ export class Hud {
         g.lineTo(x + sx * (size - k), y + sy * size);
         g.stroke();
       }
-      const label = `${h.kind === 'sam' ? 'SAM' : 'DRN'} ${dist > 1000 ? (dist / 1000).toFixed(1) + 'k' : Math.round(dist)}`;
+      const label = `${h.label ?? (h.kind === 'sam' ? 'SAM' : 'DRN')} ${dist > 1000 ? (dist / 1000).toFixed(1) + 'k' : Math.round(dist)}`;
       this.text(g, label, x + size + 6 * s, y - size + 6 * s, 9 * s, hostileColor);
       // Health bar
       const hp = h.hp / h.maxHp;
@@ -1129,6 +1144,26 @@ export class Hud {
     g.stroke();
     this.text(g, `${Math.round(armor * 100)}`, ax, ay - 2 * s, 18 * s, WHITE, 'center');
     this.text(g, 'ARMOR', ax, ay + 16 * s, 7 * s, CYAN_DIM, 'center', JARVIS);
+    // Reserves: a diamond per reboot left, in the arc's open foot
+    for (let i = 0; i < RESERVES; i++) {
+      const px = ax + (i - (RESERVES - 1) / 2) * 11 * s;
+      const py = ay + 28 * s;
+      const d = 3.5 * s;
+      g.beginPath();
+      g.moveTo(px, py - d);
+      g.lineTo(px + d, py);
+      g.lineTo(px, py + d);
+      g.lineTo(px - d, py);
+      g.closePath();
+      if (i < c.reserves) {
+        g.fillStyle = c.reserves === 1 ? AMBER : CYAN;
+        g.fill();
+      } else {
+        g.strokeStyle = CYAN_FAINT;
+        g.lineWidth = 1.2 * s;
+        g.stroke();
+      }
+    }
     // Thrust + boost bar
     const bx = x + r * 2 + 22 * s;
     const bh = 64 * s;
@@ -1140,7 +1175,7 @@ export class Hud {
     }
     const cmd = m.boosting ? 'BOOST' : m.grounded ? 'GROUND' : m.flightness < 0.5 ? 'HOVER' : `CRUISE ${Math.round((m.speedCmd / CRUISE_MAX) * 100)}%`;
     this.text(g, cmd, bx, y + 34 * s, 11 * s, m.boosting ? AMBER : WHITE);
-    this.text(g, `REACTOR ${c.down > 0 ? 'REBOOT' : 'NOMINAL'}`, bx, y + 52 * s, 9 * s, c.down > 0 ? RED : CYAN_DIM);
+    this.text(g, `REACTOR ${c.lost ? 'OFFLINE' : c.down > 0 ? 'REBOOT' : 'NOMINAL'}`, bx, y + 52 * s, 9 * s, c.down > 0 ? RED : CYAN_DIM);
     if (m.icing > 0.01) this.text(g, `ICING ${Math.round(m.icing * 100)}%`, bx, y + 68 * s, 9 * s, AMBER);
     void bh;
   }
@@ -1253,7 +1288,7 @@ export class Hud {
       g.closePath();
       g.stroke();
     }
-    for (const h of c.hostiles) if (h.alive) plot(h.pos, h.kind === 'sam' ? AMBER : RED, 4 * s, h.kind === 'sam');
+    for (const h of c.hostiles) if (h.alive) plot(h.pos, h.kind === 'drone' ? RED : AMBER, 4 * s, h.kind !== 'drone');
     for (const ms of c.missiles.threats()) plot(ms.pos, WHITE, 3 * s);
     g.fillStyle = WHITE;
     g.beginPath();
@@ -1301,7 +1336,7 @@ export class Hud {
       }
     }
     if (m.pos.y > ICING_ALT && blink) this.text(g, 'ICE ON THE AIRFOILS', cx, cy - 64 * s, 11 * s, AMBER, 'center', JARVIS);
-    if (c.down > 0) this.text(g, 'POWER FAILURE — REBOOTING', cx, cy - 40 * s, 14 * s, RED, 'center', JARVIS);
+    if (c.down > 0 && !c.lost) this.text(g, 'POWER FAILURE — REBOOTING', cx, cy - 40 * s, 14 * s, RED, 'center', JARVIS);
   }
 
   private drawLines(g: CanvasRenderingContext2D, s: number): void {

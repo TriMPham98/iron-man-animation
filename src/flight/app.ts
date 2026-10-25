@@ -468,6 +468,11 @@ export class FlightApp {
     }
     for (const code of c.pressed) {
       if (code === 'KeyV') game.rig.cycle();
+      // Once the suit is lost, R or the wave key (N, WAVE, D-pad up) redeploys
+      if (game.combat.lost) {
+        if ((code === 'KeyR' || code === 'KeyN') && game.combat.redeployReady) game.redeploy();
+        continue;
+      }
       if (code === 'KeyR') game.reset();
       if (code === 'KeyN') game.combat.callWave();
     }
@@ -482,7 +487,7 @@ export class FlightApp {
     hud.alpha += (hudGoal - hud.alpha) * (1 - Math.exp(-dt / 0.6));
     if (this.touch) {
       this.touch.setActive(this.engaged && !this.paused && !director && !this.autopilot);
-      this.touch.setWaveReady(game.combat.waveReady);
+      this.touch.setWaveReady(game.combat.waveReady || game.combat.redeployReady);
       this.touch.setLandReady(game.autoLand || game.autoLandReady);
       hud.bottomInset = this.touch.bottomInset;
       hud.minScale = 0.55;

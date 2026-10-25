@@ -8,6 +8,7 @@ import type { Suit } from '../../suit/Suit';
 import { HOME, type Heightfield } from '../world/heightfield';
 import { Drone, Guns } from './drones';
 import { Explosions, type SurfaceQuery } from './explosions';
+import { Frigate, type ShipPart } from './frigate';
 import { Missiles } from './missiles';
 import { PlayerWeapons } from './playerWeapons';
 import { SamSite, samSites } from './sams';
@@ -18,15 +19,24 @@ import { hazeAll } from '../render/haze';
  * The fight: the suit's armour and the hostiles that wear it down, in
  * escalating waves. Free flight until the pilot calls a wave (N, or the
  * touch WAVE button, offered whenever the sky is clear): drones from over
- * the ridges, then the SAM sites wake up. Armour regenerates out of combat; at zero the suit drops
- * dead for a few seconds and reboots in the air.
+ * the ridges, then the mobile SAM launchers wake up, then a frigate comes
+ * in off the sea (and again every third wave after). Armour regenerates out of combat; at zero the suit drops
+ * dead for a few seconds and reboots in the air, on one of {@link RESERVES}
+ * reserves (a cleared wave earns one back). With none left the suit is lost:
+ * it stays down until the pilot redeploys, back to wave one on the pad.
  */
 
-const WAVES: ReadonlyArray<{ drones: number; sams: number; line: string }> = [
+/** Reboots the suit holds in reserve at the start of a run. */
+export const RESERVES = 2;
+/** Seconds after the suit is lost before a redeploy is offered (it's seen to fall). */
+const REDEPLOY_AFTER = 2.5;
+
+const WAVES: ReadonlyArray<{ drones: number; sams: number; frigate?: boolean; line: string }> = [
   { drones: 3, sams: 0, line: 'Sir, three bogeys coming over the ridge. Drone signatures.' },
   { drones: 5, sams: 0, line: 'Five more inbound. They are learning.' },
   { drones: 4, sams: 2, line: 'Surface-to-air sites are lighting up on the ridgeline. I suggest the flares.' },
   { drones: 7, sams: 3, line: 'A larger formation, sir. Shall I alert the authorities? No? Very well.' },
+  { drones: 2, sams: 1, frigate: true, line: 'A warship off the coast, sir. Guns fore and aft, a missile launcher on the foredeck. Take the radar first.' },
 ];
 
 export class Combat {
@@ -38,6 +48,7 @@ export class Combat {
   readonly weapons: PlayerWeapons;
   readonly drones: Drone[] = [];
   readonly sams: SamSite[] = [];
+  readonly ships: Frigate[] = [];
   readonly hostiles: Hostile[] = [];
   /** Armour 0–1. */
   armor = 1;
@@ -48,6 +59,12 @@ export class Combat {
   damageFlash = 0;
   wave = -1;
   kills = 0;
+  /** Reboots left this run. */
+  reserves = RESERVES;
+  /** Knocked out with no reserve left: down for good until {@link resetRun}. */
+  lost = false;
+  /** Seconds since the suit was lost. */
+  lostT = 0;
   private waveT = 0;
   private readonly samSpots: THREE.Vector3[];
   private readonly player: PlayerTarget;
@@ -85,7 +102,18 @@ export class Combat {
         if (self.armor <= 0) {
           self.down = 3.2;
           events.emit('suitCritical', { at: model.pos });
-          events.emit('jarvis', { text: 'Armour critical. Rerouting power. Hold on, sir.' });
+          // Scripted runs (waves off) always reboot
+          if (!self.wavesEnabled || self.reserves > 0) {
+            if (self.wavesEnabled) self.reserves--;
+            const left = !self.wavesEnabled ? '' : self.reserves === 0 ? ' That was the last reserve, sir.' : ' One reserve left.';
+            events.emit('jarvis', { text: `Armour critical. Rerouting power. Hold on, sir.${left}` });
+          } else {
+            self.lost = true;
+            self.lostT = 0;
+            self.down = Infinity;
+            events.emit('suitLost', { at: model.pos, value: self.wave + 1 });
+            events.emit('jarvis', { text: 'Reserves exhausted. I’m losing the suit, sir.' });
+          }
         }
       },
     };
@@ -103,6 +131,33 @@ export class Combat {
     return this.wavesEnabled && this.down <= 0 && !this.hostiles.some((h) => h.alive);
   }
 
+  /** The suit is lost and has been seen to fall: a redeploy is on offer. */
+  get redeployReady(): boolean {
+    return this.lost && this.lostT > REDEPLOY_AFTER;
+  }
+
+  /** A fresh run: the sky cleared, wave one next, full armour and reserves. */
+  resetRun(): void {
+    for (const d of this.drones) this.group.remove(d.mesh);
+    for (const s of this.sams) this.group.remove(s.mesh);
+    for (const f of this.ships) this.group.remove(f.mesh);
+    this.drones.length = this.sams.length = this.ships.length = this.hostiles.length = 0;
+    this.missiles.clear();
+    this.guns.rounds.length = 0;
+    this.counted.clear();
+    this.wave = -1;
+    this.kills = 0;
+    this.armor = 1;
+    this.sinceHit = 99;
+    this.down = 0;
+    this.damageFlash = 0;
+    this.reserves = RESERVES;
+    this.lost = false;
+    this.lostT = 0;
+    this.waveT = 0;
+    this.events.emit('redeploy', { at: this.model.pos });
+  }
+
   /** One drone at a point, flying a heading (scripted encounters). */
   spawnDrone(at: THREE.Vector3, heading: THREE.Vector3): Drone {
     const d = new Drone(at, heading);
@@ -114,6 +169,16 @@ export class Combat {
     return d;
   }
 
+  /** A frigate on patrol offshore of the suit. */
+  spawnFrigate(): Frigate {
+    const f = new Frigate(this.field, this.model.pos);
+    this.ships.push(f);
+    this.hostiles.push(...f.parts);
+    hazeAll(f.mesh, this.hazeUniforms);
+    this.group.add(f.mesh);
+    return f;
+  }
+
   /** Start the next wave, if one is on offer. */
   callWave(): void {
     if (!this.waveReady) return;
@@ -122,11 +187,12 @@ export class Combat {
     const w = WAVES[Math.min(this.wave, WAVES.length - 1)];
     const extra = Math.max(0, this.wave - (WAVES.length - 1));
     const n = w.drones + extra * 2;
-    // From inland, over the ridges, 5–7 km out
+    if (w.frigate || (extra > 0 && extra % 3 === 0)) this.spawnFrigate();
+    // From inland, over the ridges, 2.6–3.5 km out (a few seconds' dash, not half a minute's wait)
     const base = Math.atan2(-1, 0.2) + (Math.random() - 0.5) * 1.2;
     for (let i = 0; i < n; i++) {
       const a = base + (i - n / 2) * 0.12;
-      const r = 5200 + Math.random() * 1500;
+      const r = 2600 + Math.random() * 900;
       const at = new THREE.Vector3(this.model.pos.x + Math.cos(a) * r, 0, this.model.pos.z + Math.sin(a) * r);
       at.y = Math.max(this.field.surfaceAt(at.x, at.z), 0) + 450 + Math.random() * 400;
       const d = new Drone(at, this.model.pos.clone().sub(at).setY(0));
@@ -151,7 +217,8 @@ export class Combat {
   update(dt: number, t: number, c: Controls, aim: THREE.Vector3, eye: THREE.Vector3): void {
     this.sinceHit += dt;
     this.damageFlash = Math.max(0, this.damageFlash - dt * 1.6);
-    if (this.down > 0) {
+    if (this.lost) this.lostT += dt;
+    else if (this.down > 0) {
       this.down -= dt;
       if (this.down <= 0) {
         this.armor = 0.5;
@@ -163,11 +230,14 @@ export class Combat {
     }
 
     // Waves only come when called (N): a clear sky just gets announced
-    if (this.wavesEnabled && this.wave >= 0 && !this.hostiles.some((h) => h.alive)) {
+    // (and a cleared wave earns back a reserve)
+    if (this.wavesEnabled && !this.lost && this.wave >= 0 && !this.hostiles.some((h) => h.alive)) {
       this.waveT += dt;
       if (this.waveT > 1.5 && this.waveT - dt <= 1.5) {
+        const earned = this.reserves < RESERVES;
+        if (earned) this.reserves++;
         this.events.emit('waveClear', { value: this.wave + 1 });
-        this.events.emit('jarvis', { text: 'Area clear, sir. Next formation on your word.' });
+        this.events.emit('jarvis', { text: `Area clear, sir.${earned ? ' A reserve is back online.' : ''} Next formation on your word.` });
       }
     }
 
@@ -181,7 +251,11 @@ export class Combat {
       }
       if (d.flybyDone && d.pos.distanceTo(this.model.pos) > 400) d.flybyDone = false;
     }
-    for (const s of this.sams) s.update(dt, t, this.player, this.field, this.missiles, this.events, this.explosions);
+    for (const s of this.sams) s.update(dt, t, this.player, this.field, this.missiles, this.events, this.explosions, this.particles);
+    for (const f of this.ships) {
+      f.update(dt, t, this.player, this.field, this.guns.rounds, this.missiles, this.particles, this.explosions, this.events);
+      f.collide(this.model.pos, this.model.vel);
+    }
     this.guns.update(dt, this.player, this.ground, this.particles, this.streaks, this.events);
     this.missiles.update(dt, this.hostiles, this.player);
     // Kills: count, blow the SAMs (drones crash on their own)
@@ -194,6 +268,9 @@ export class Combat {
           this.explosions.blast(h.pos, 10, { debris: 14, burn: true });
           const sam = h as SamSite;
           sam.mesh.visible = false;
+        } else if (h.kind === 'ship') {
+          const part = h as ShipPart;
+          part.ship.partDestroyed(part, this.explosions, this.events);
         } else {
           this.explosions.blast(h.pos, 4, { debris: 5, vel: h.vel.clone().multiplyScalar(0.3) });
         }
@@ -213,6 +290,15 @@ export class Combat {
         this.group.remove(s.mesh);
         this.sams.splice(i, 1);
         this.hostiles.splice(this.hostiles.indexOf(s), 1);
+      }
+    }
+    // Ship parts leave the target list as they go; the ship stays until it's under
+    for (let i = this.hostiles.length - 1; i >= 0; i--) if (this.hostiles[i].kind === 'ship' && !this.hostiles[i].alive) this.hostiles.splice(i, 1);
+    for (let i = this.ships.length - 1; i >= 0; i--) {
+      const f = this.ships[i];
+      if (f.sunk) {
+        this.group.remove(f.mesh);
+        this.ships.splice(i, 1);
       }
     }
     this.explosions.update(dt);

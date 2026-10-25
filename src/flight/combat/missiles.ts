@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Particles } from '../fx/particles';
 import type { EventBus } from '../sim/events';
 import type { Explosions, SurfaceQuery } from './explosions';
+import { coreDistance } from './hitShape';
 import type { Decoy, Hostile, PlayerTarget } from './types';
 
 /**
@@ -112,7 +113,17 @@ function glowTexture(): THREE.Texture {
   return glowTex;
 }
 
+/** Squared distance from `p` to the segment a → b. */
+function segDistSq(p: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3): number {
+  const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
+  const l2 = abx * abx + aby * aby + abz * abz;
+  const t = l2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby + (p.z - a.z) * abz) / l2)) : 0;
+  const dx = a.x + abx * t - p.x, dy = a.y + aby * t - p.y, dz = a.z + abz * t - p.z;
+  return dx * dx + dy * dy + dz * dz;
+}
+
 const isHostile = (t: unknown): t is Hostile => !!t && typeof (t as Hostile).damage === 'function';
+const isDecoy = (t: unknown): t is Decoy => !!t && typeof (t as Decoy).heat === 'number';
 const isPlayer = (t: unknown): t is PlayerTarget => !!t && typeof (t as PlayerTarget).hit === 'function';
 
 export class Missiles {
@@ -199,6 +210,15 @@ export class Missiles {
     return this.live.filter((m) => m.team === 'enemy' && isPlayer(m.target));
   }
 
+  /** Every round in the air gone, without a bang (a fresh run). */
+  clear(): void {
+    for (const m of this.live) {
+      this.group.remove(m.mesh, m.glow);
+      m.glow.material.dispose();
+    }
+    this.live.length = 0;
+  }
+
   update(dt: number, hostiles: readonly Hostile[], player: PlayerTarget): void {
     for (let i = this.live.length - 1; i >= 0; i--) {
       const m = this.live[i];
@@ -211,7 +231,8 @@ export class Missiles {
       const tgt = m.target;
       let tp: THREE.Vector3 | null = null;
       let tv: THREE.Vector3 | null = null;
-      if (tgt && 'alive' in tgt && !(tgt as Hostile).alive) m.target = null;
+      // (a flare another seeker already ate is gone: fly on blind)
+      if ((tgt && 'alive' in tgt && !(tgt as Hostile).alive) || (isDecoy(tgt) && tgt.eaten)) m.target = null;
       else if (tgt) {
         tp = tgt.pos;
         tv = 'vel' in tgt ? (tgt as Hostile).vel : null;
@@ -271,7 +292,7 @@ export class Missiles {
       if (m.team === 'player') {
         for (const h of hostiles) {
           if (!h.alive) continue;
-          if (h.pos.distanceToSquared(m.pos) < (h.radius + 3.5) ** 2) {
+          if (coreDistance(h, m.pos) < h.radius + 3.5) {
             h.damage(m.damage, m.pos, m.heavy ? 'launcher' : 'missile');
             boom = true;
             break;
@@ -283,7 +304,11 @@ export class Missiles {
           player.hit(m.damage, m.pos, 'missile');
           boom = true;
         }
-      } else if (m.target && m.pos.distanceToSquared(m.target.pos) < 4 ** 2) {
+      } else if (isDecoy(m.target) && segDistSq(m.target.pos, prev, m.pos) < 4 ** 2) {
+        // A decoyed seeker runs down its flare and goes off on it (swept, so
+        // a fast one can't step past it between frames), taking it with it
+        m.pos.copy(m.target.pos);
+        m.target.eaten = true;
         boom = true;
       }
       const surf = this.ground.surface(m.pos.x, m.pos.z);
@@ -296,7 +321,7 @@ export class Missiles {
         if (m.team === 'player') {
           for (const h of hostiles) {
             if (!h.alive) continue;
-            const d = h.pos.distanceTo(m.pos);
+            const d = Math.max(0, coreDistance(h, m.pos) - (h.span ? h.radius : 0));
             if (d < m.blast * 3) h.damage(m.damage * 0.5 * (1 - d / (m.blast * 3)), m.pos, 'missile');
           }
         } else if (player.alive) {

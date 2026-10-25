@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 
-export type HostileKind = 'drone' | 'sam';
+export type HostileKind = 'drone' | 'sam' | 'ship';
 
 /** Anything the suit can lock, shoot and blow up. */
 export interface Hostile {
@@ -8,8 +8,12 @@ export interface Hostile {
   readonly kind: HostileKind;
   readonly pos: THREE.Vector3;
   readonly vel: THREE.Vector3;
-  /** Hit sphere (m). */
+  /** Hit sphere (m), or the capsule's radius round {@link span}. */
   readonly radius: number;
+  /** A long hit shape: the ends of its spine, in world space (see hitShape). */
+  readonly span?: readonly [THREE.Vector3, THREE.Vector3];
+  /** What the HUD calls it, when its kind isn't enough. */
+  readonly label?: string;
   hp: number;
   readonly maxHp: number;
   alive: boolean;
@@ -34,4 +38,6 @@ export interface PlayerTarget {
 export interface Decoy {
   pos: THREE.Vector3;
   heat: number;
+  /** A seeker flew into it: snuffed out by the blast. */
+  eaten?: boolean;
 }

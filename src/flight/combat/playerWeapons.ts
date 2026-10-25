@@ -11,6 +11,7 @@ import { IDLE_ARMS, type ArmsState } from '../sim/suitDriver';
 import { GRAVITY } from '../world/config';
 import type { Heightfield } from '../world/heightfield';
 import type { Explosions } from './explosions';
+import { segmentToCore } from './hitShape';
 import { paintLock } from './locks';
 import type { Missiles } from './missiles';
 import type { Decoy, Hostile } from './types';
@@ -757,12 +758,10 @@ export class PlayerWeapons {
       const len2 = seg.lengthSq();
       for (const h of hostiles) {
         if (!h.alive) continue;
-        const t = THREE.MathUtils.clamp(this._w.copy(h.pos).sub(prev).dot(seg) / Math.max(len2, 1e-6), 0, 1);
-        const c = this._w.copy(prev).addScaledVector(seg, t);
-        if (c.distanceToSquared(h.pos) < h.radius * h.radius) {
+        if (segmentToCore(h, prev, b.p, this._w, this._l) < h.radius * h.radius) {
           // The hit sphere is generous (aim assist): the burst sits on the
           // airframe, between the bolt's line and the target's middle
-          hit = c.clone().lerp(h.pos, 0.6);
+          hit = this._w.clone().lerp(this._l, 0.6);
           // A repulsor hits like a ram: the target is shoved off its line
           h.vel.addScaledVector(seg, REPULSOR_KNOCK / Math.sqrt(Math.max(len2, 1e-6)));
           struck = h;
@@ -905,10 +904,9 @@ export class PlayerWeapons {
       const P = this.particles;
       for (const h of hostiles) {
         if (!h.alive) continue;
-        const rel = this._v.copy(h.pos).sub(from);
-        const t = rel.dot(dir);
-        if (t < 0 || t > reach) continue;
-        if (rel.addScaledVector(dir, -t).lengthSq() < (h.radius + 1.2 + t * 0.002) ** 2) {
+        const d2 = segmentToCore(h, from, this.beamEnd, this._v, this._n);
+        const t = this._v.distanceTo(from);
+        if (d2 < (h.radius + 1.2 + t * 0.002) ** 2) {
           const at = this._w.copy(from).addScaledVector(dir, Math.max(0, t - h.radius * 0.6));
           if (h.damage(UNIBEAM_DPS * dt * power, at, 'unibeam')) this.onKill(h);
           if (Math.random() < 0.8) P.burst('spark', at, 3, 22, this._n.copy(dir).negate(), 1.2);
@@ -1048,7 +1046,7 @@ export class PlayerWeapons {
         }
       }
       const ground = f.pos.y < this.field.surfaceAt(f.pos.x, f.pos.z);
-      if (left <= 0 || ground) {
+      if (left <= 0 || ground || f.eaten) {
         if (ground && burn > 0.1) P.burst('spark', f.pos, 10, 6, this._v.set(0, 1, 0), 0.8, { scale: 0.8 });
         else if (f.lit) P.burst('ember', f.pos, 3, 2, undefined, 1, { scale: 0.5 });
         this.group.remove(f.sprite);

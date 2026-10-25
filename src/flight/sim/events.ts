@@ -57,6 +57,10 @@ export type SimEventKind =
   | 'waveClear'
   | 'suitCritical'
   | 'reboot'
+  /** Knocked out with no reserve left: value = the wave reached. */
+  | 'suitLost'
+  /** A fresh run from the pad after the suit was lost. */
+  | 'redeploy'
   | 'jarvis'
   // Picture (directed reels)
   | 'cameraCut';
