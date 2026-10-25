@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { MINI_ROCKETS } from '../../animation/flightCheck';
 import { RESERVES, type Combat } from '../combat/combat';
-import { ASSIST_RANGE, LAUNCHER_PER_ARM } from '../combat/playerWeapons';
+import { LAUNCHER_PER_ARM } from '../combat/playerWeapons';
 import type { SimEvent } from '../sim/events';
 import type { FlightModel } from '../sim/flightModel';
-import { AUTOLAND_LOCK_R, CRUISE_MAX, ICING_ALT } from '../sim/flightModel';
+import { AUTOLAND_LOCK_R, CRUISE_MAX } from '../sim/flightModel';
 import type { GroundProbe } from '../sim/flightModel';
 import type { SuitWireframe } from './suitWireframe';
 import { BULLSEYE_R, CENTRED_R } from '../world/landingPad';
@@ -92,6 +92,8 @@ interface Tally {
   hits: number;
   /** Armour lost (points of 100). */
   lost: number;
+  /** R&D earned. */
+  rd?: number;
   /** Set on the clear: when it was cleared and how long the wave took (s). */
   t?: number;
   dur?: number;
@@ -147,6 +149,11 @@ export class Hud {
   autoLand: 'ready' | 'active' | null = null;
   /** TEMP: on the ground and free to lift off (set by the app each frame). */
   takeoff = false;
+  /** The R&D refit on offer (standing on the pad, or with the suit lost): its prompt, or null. */
+  refitHint: string | null = null;
+  private refitAlpha = 0;
+  /** The prompt as last shown (it fades out on it). */
+  private refitText = '';
   private takeoffAlpha = 0;
   private promptAlpha = 0;
   private promptT = 0;
@@ -188,6 +195,8 @@ export class Hud {
   private thrustShown = 0;
   private readonly splashes: Splash[] = [];
   private banner: Banner | null = null;
+  /** R&D awards as they come in (points, what for, when), each shown a moment under the sight. */
+  private readonly awards: Array<{ pts: number; why: string; t: number }> = [];
   /** When each contact was first seen on screen and first locked (HUD time), for the snap-in. */
   private readonly seenAt = new Map<number, number>();
   private readonly lockedAt = new Map<number, number>();
@@ -286,6 +295,15 @@ export class Hud {
         this.showBanner('DECOYED', 'MISSILE OFF THE SCENT', CYAN, true);
         this.decoyFlash = 1;
         break;
+      case 'rdAward': {
+        const pts = e.value ?? 0;
+        this.awards.push({ pts, why: e.text ?? '', t: this.time });
+        if (this.awards.length > 4) this.awards.shift();
+        // (the clear's own payout lands just after the clear: it joins that tally)
+        const sm = this.tally ?? (this.summary && this.time - (this.summary.t ?? 0) < 0.5 ? this.summary : null);
+        if (sm) sm.rd = (sm.rd ?? 0) + pts;
+        break;
+      }
       case 'redeploy':
         this.bootT = 0;
         this.tally = null;
@@ -411,9 +429,11 @@ export class Hud {
     this.drawScope(g, dt, cam, m, s);
     this.drawAutoLand(g, dt, m, s);
     this.drawTakeoff(g, dt, s);
+    this.drawRefitHint(g, dt, s);
     this.drawLines(g, s);
     this.drawBanner(g, s);
     this.drawSummary(g, dt, s);
+    this.drawAwards(g, s);
     g.restore();
     if (combat.lost) this.drawLost(g, combat, cx, cy, s);
     g.restore();
@@ -579,8 +599,9 @@ export class Hud {
       ['ARMOUR LOST', `${Math.round(sm.lost * ease)}`, sm.lost > 40 ? AMBER : CYAN],
       ['TIME', `${Math.floor(shownDur / 60)}:${`${Math.floor(shownDur % 60)}`.padStart(2, '0')}`, CYAN],
     ];
+    if (sm.rd) rows.push(['R&D EARNED', `+${Math.round(sm.rd * ease)}`, AMBER]);
     const W = 280 * s;
-    const H = 74 * s;
+    const H = (14 + 30 * Math.ceil(rows.length / 2)) * s;
     const x0 = this.w / 2 - W / 2;
     const y0 = this.h * 0.27 + 46 * s;
     const out = age > LIFE - 0.5 ? (age - (LIFE - 0.5)) / 0.5 : 0;
@@ -603,6 +624,26 @@ export class Hud {
       g.restore();
     }
     g.restore();
+  }
+
+  /** R&D awards, stacked under the sight: each rises in, holds, and fades. */
+  private drawAwards(g: CanvasRenderingContext2D, s: number): void {
+    const LIFE = 2.2;
+    while (this.awards.length && this.time - this.awards[0].t > LIFE) this.awards.shift();
+    const x = this.w / 2;
+    let y = this.h * 0.64;
+    for (let i = this.awards.length - 1; i >= 0; i--) {
+      const a = this.awards[i];
+      const age = this.time - a.t;
+      const k = Math.min(1, age / 0.2);
+      const out = age > LIFE - 0.5 ? (age - (LIFE - 0.5)) / 0.5 : 0;
+      g.save();
+      g.globalAlpha *= k * (1 - out);
+      this.text(g, `+${a.pts} R&D`, x - 6 * s, y + (1 - k) * 8 * s, 11 * s, AMBER, 'right');
+      this.text(g, a.why, x + 6 * s, y + (1 - k) * 8 * s, 7.5 * s, CYAN_LABEL, 'left', JARVIS);
+      g.restore();
+      y += 16 * s;
+    }
   }
 
   /** A banner across the upper third: rules drawn out from the middle, the title tracking in. */
@@ -1363,6 +1404,20 @@ export class Hud {
     g.globalAlpha = this.alpha;
   }
 
+  /** Under the take-off prompt: the key to the R&D refit and the points to spend. */
+  private drawRefitHint(g: CanvasRenderingContext2D, dt: number, s: number): void {
+    const on = !!this.refitHint;
+    if (this.refitHint) this.refitText = this.refitHint;
+    this.refitAlpha += ((on ? 1 : 0) - this.refitAlpha) * (1 - Math.exp(-dt / (on ? 0.2 : 0.25)));
+    if (this.refitAlpha < 0.01) return;
+    g.save();
+    g.globalAlpha = this.alpha * this.refitAlpha;
+    g.shadowBlur = 0;
+    this.text(g, this.refitText, this.w / 2, this.h / 2 + 222 * s, 7.5 * s, AMBER, 'center', JARVIS);
+    g.restore();
+    g.globalAlpha = this.alpha;
+  }
+
   private drawLadder(g: CanvasRenderingContext2D, cam: THREE.PerspectiveCamera, cx: number, cy: number, s: number): void {
     const e = this._e.setFromQuaternion(cam.quaternion, 'YXZ');
     const pitch = e.x;
@@ -1698,7 +1753,7 @@ export class Hud {
       // Lead pip (repulsors, or the unibeam's short sweep lag) on every
       // target in gun range, tied to it by a line: put the sight on the pip.
       // The assisted one is bold, with a dot at its centre
-      if (dist < ASSIST_RANGE) {
+      if (dist < W.assistRange) {
         const lead = this.project(W.leadPoint(h, this._v), cam);
         if (lead) {
           const on = W.assist === h;
@@ -2305,7 +2360,7 @@ export class Hud {
         g.restore();
       }
     }
-    if (m.pos.y > ICING_ALT && blink) this.text(g, 'ICE ON THE AIRFOILS', cx, cy - 64 * s, 11 * s, AMBER, 'center', JARVIS);
+    if (m.pos.y > m.icingAlt && blink) this.text(g, 'ICE ON THE AIRFOILS', cx, cy - 64 * s, 11 * s, AMBER, 'center', JARVIS);
     if (c.down > 0 && !c.lost) this.text(g, 'POWER FAILURE — REBOOTING', cx, cy - 40 * s, 14 * s, RED, 'center', JARVIS);
   }
 

@@ -11,6 +11,7 @@ import { Game } from './sim/game';
 import { DEFAULT_CAMERA } from './sim/cameraRig';
 import { Director } from './sim/director';
 import { Input, type Controls } from './sim/input';
+import { Upgrades } from './sim/upgrades';
 import { Hud } from './ui/hud';
 import { SuitWireframe } from './ui/suitWireframe';
 import { TouchControls } from './ui/touchControls';
@@ -62,6 +63,10 @@ export class FlightApp {
   game!: Game;
   post!: FlightPost;
   hud!: Hud;
+  /** The suit's R&D: points earned in the air, tiers fitted on the pad. */
+  readonly upgrades = new Upgrades();
+  /** Opens the pause menu on the R&D tab (wired by the settings). */
+  refitMenu: () => void = () => {};
   /**
    * Keyboard / mouse / pad. Created only once the sim is shown: its window
    * listeners swallow Space / Tab / F / G / Q, which the workshop still needs
@@ -213,6 +218,7 @@ export class FlightApp {
       this.sounds.on(e, game.model);
       hud.event(e);
     });
+    this.bindUpgrades();
     screens.onSettings = () => this.applySettings();
     this.applySettings();
     bindFlightSettings(this);
@@ -474,10 +480,12 @@ export class FlightApp {
       // Once the suit is lost, R or the wave key (N, WAVE, D-pad up) redeploys
       if (game.combat.lost) {
         if ((code === 'KeyR' || code === 'KeyN') && game.combat.redeployReady) game.redeploy();
+        if (code === 'KeyU') this.refitMenu();
         continue;
       }
       if (code === 'KeyR') game.reset();
       if (code === 'KeyN') game.combat.callWave();
+      if (code === 'KeyU' && game.onPad) this.refitMenu();
     }
     game.applyControls(c);
     if (!this.paused) game.update(dt);
@@ -501,9 +509,45 @@ export class FlightApp {
     hud.autoLand = !this.engaged || director ? null : game.autoLand ? 'active' : game.autoLandReady ? 'ready' : null;
     // TEMP: the take-off prompt (touch screens have their own stick mapping)
     hud.takeoff = this.engaged && !this.paused && !director && !this.autopilot && !this.touch && game.model.grounded && !game.autoLand && !game.autoLandReady;
+    const refit = this.engaged && !this.paused && !director && !this.autopilot && (game.onPad || game.combat.redeployReady);
+    hud.refitHint = refit ? `${this.touch ? 'II' : 'U'} — R&D REFIT · ${this.upgrades.state.rd} R&D` : null;
     hud.draw(dt, camera, game.model, game.combat, game.ground, game.rig.mode === 'helmet');
     this.sounds.update(dt, game.model, game.combat, camera, game.rig.mode === 'helmet', game.combat.weapons.unibeamOn);
     this.post.render(dt, this.lens);
+  }
+
+  /**
+   * The R&D ledger on the suit: every system reads the one live spec, the
+   * sim's events pay out (not in a directed reel), and the pause menu
+   * refits on the pad or once the suit is lost.
+   */
+  private bindUpgrades(): void {
+    const { game, upgrades } = this;
+    const { combat } = game;
+    combat.spec = combat.weapons.spec = game.model.spec = upgrades.spec;
+    // A refit fits what it adds at once (another reserve, a bigger drum)
+    // and takes away what it removes; points coming in change nothing.
+    // (Counted from the stock suit's full load, so a saved build starts full)
+    let reserves = combat.reserves;
+    let flares = combat.weapons.flares;
+    const sync = () => {
+      game.mark = upgrades.mark;
+      const W = combat.weapons;
+      if (!combat.lost) combat.reserves = Math.max(0, Math.min(combat.maxReserves, combat.reserves + combat.maxReserves - reserves));
+      W.flares = Math.max(0, Math.min(W.flareMag, W.flares + W.flareMag - flares));
+      reserves = combat.maxReserves;
+      flares = W.flareMag;
+    };
+    upgrades.onChange(sync);
+    sync();
+    upgrades.onAward = (points, reason) => game.events.emit('rdAward', { value: points, text: reason });
+    game.events.on((e) => {
+      if (!this.director && !this.autopilot) upgrades.event(e);
+    });
+    this.opts.screens.setRefit({
+      upgrades,
+      gate: () => (combat.lost || game.onPad ? null : 'SET DOWN ON THE PAD TO REFIT'),
+    });
   }
 
   /** Optional per-frame observer (frame-time stats). */

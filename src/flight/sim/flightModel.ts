@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GRAVITY, SPEED_OF_SOUND } from '../world/config';
 import { BACK_SPEED, Gait, STRAFE_SPEED, WALK_SPEED } from './walkCycle';
+import { STOCK_SPEC, type SuitSpec } from './upgrades';
 
 /**
  * Flight dynamics of the suit. A point mass with a body attitude: the boots
@@ -449,6 +450,8 @@ export class FlightModel {
   crouch = 0;
   boosting = false;
   icing = 0;
+  /** The suit's upgrades (the app shares the live one; stock until then). */
+  spec: SuitSpec = STOCK_SPEC();
   /** Suit power 0–1 (0 = rebooting: no thrust, the suit falls). */
   power = 1;
   /** The legs: gait, planted boots and footfalls while on the ground. */
@@ -544,7 +547,11 @@ export class FlightModel {
   }
   /** Airspeed the boots are flying to: the boost's, a boost still bleeding off, or the throttle's. */
   get speedTarget(): number {
-    return this.boosting ? BOOST_SPEED : Math.max(this.speedCmd, this.boostCarry);
+    return this.boosting ? BOOST_SPEED * this.spec.boostSpeed : Math.max(this.speedCmd, this.boostCarry);
+  }
+  /** Height the airfoils start to ice at (m): de-icing lifts it toward the ceiling. */
+  get icingAlt(): number {
+    return Math.min(ICING_ALT + this.spec.icingLift, CEILING - 300);
   }
   get mach(): number {
     return this.speed / SPEED_OF_SOUND;
@@ -827,7 +834,7 @@ export class FlightModel {
     // ── Forces ───────────────────────────────────────────────────────
     const alt = Math.max(0, this.pos.y);
     const rho = Math.exp(-alt / 8500);
-    this.icing = smooth(ICING_ALT, CEILING, alt);
+    this.icing = smooth(this.icingAlt, CEILING, alt);
     const ceilingK = 1 - this.icing * 0.85;
     const acc = this._a.set(0, -GRAVITY, 0);
     const axis = this.thrustAxis(this._t);
@@ -914,7 +921,7 @@ export class FlightModel {
     const boostOn = this.boosting || carrying;
     this.spool += ((boostOn ? 1 : 0) - this.spool) * approach(dt, BOOST_SPOOL);
     const tFrom = boostOn ? Math.min(this.thrust, THRUST_MAX) : THRUST_MAX;
-    const tMax = THREE.MathUtils.lerp(tFrom, THRUST_BOOST, this.spool) * ceilingK;
+    const tMax = THREE.MathUtils.lerp(tFrom, THRUST_BOOST * this.spec.boostThrust, this.spool) * ceilingK;
     const flightThrust = clamp(need, 0, tMax);
 
     // Blend the regimes

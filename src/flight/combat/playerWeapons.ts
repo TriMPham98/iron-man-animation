@@ -8,6 +8,7 @@ import type { EventBus } from '../sim/events';
 import type { FlightModel } from '../sim/flightModel';
 import type { Controls } from '../sim/input';
 import { IDLE_ARMS, type ArmsState } from '../sim/suitDriver';
+import { STOCK_SPEC, type SuitSpec } from '../sim/upgrades';
 import { GRAVITY } from '../world/config';
 import type { Heightfield } from '../world/heightfield';
 import type { Explosions } from './explosions';
@@ -202,6 +203,8 @@ export class PlayerWeapons {
   /** Where the pilot's aim meets the world (m) and the assisted target. */
   readonly aimPoint = new THREE.Vector3();
   assist: Hostile | null = null;
+  /** The suit's upgrades (shared with the combat; stock until the app hands over the live one). */
+  spec: SuitSpec = STOCK_SPEC();
 
   private readonly bolts: Bolt[] = [];
   private readonly flareList: Flare[] = [];
@@ -287,6 +290,16 @@ export class PlayerWeapons {
     return this.pods[0] + this.pods[1];
   }
 
+  /** Flares the hip drums carry. */
+  get flareMag(): number {
+    return Math.round(FLARE_MAG * this.spec.flareMag);
+  }
+
+  /** How far out the aim assist takes a target (m). */
+  get assistRange(): number {
+    return ASSIST_RANGE * this.spec.assistRange;
+  }
+
   /** Unibeam reserve 0–1 (1 − heat). */
   get unibeamEnergy(): number {
     return 1 - this.unibeamHeat;
@@ -339,7 +352,7 @@ export class PlayerWeapons {
       this.chargeSide = A.aimSide > 0 ? 'L' : A.aimSide < 0 ? 'R' : this.nextSide;
       this.chargeT = 0;
       this.nextSide = this.chargeSide === 'L' ? 'R' : 'L';
-      this.repulsorT = REPULSOR_INTERVAL;
+      this.repulsorT = REPULSOR_INTERVAL * this.spec.repulsorInterval;
       this.events.emit('repulsorCharge', { side: this.chargeSide });
     }
     if (this.chargeSide) {
@@ -385,10 +398,10 @@ export class PlayerWeapons {
       const cap = Math.min(SALVO_MAX, this.rockets);
       if (A.silos > 0.95) {
         this.lockT += dt;
-        this.lockProgress = this.locks.length >= cap ? 1 : Math.min(1, this.lockT / LOCK_TIME);
-        if (this.lockT >= LOCK_TIME) {
+        this.lockProgress = this.locks.length >= cap ? 1 : Math.min(1, this.lockT / (LOCK_TIME * this.spec.missileLock));
+        if (this.lockT >= LOCK_TIME * this.spec.missileLock) {
           // One lock per enemy: the paint never doubles up on a target
-          const next = paintLock(this.locks, cap, eye, aim, hostiles, MISSILE_CONE, MISSILE_RANGE);
+          const next = paintLock(this.locks, cap, eye, aim, hostiles, MISSILE_CONE, MISSILE_RANGE * this.spec.missileRange);
           if (next) this.events.emit(this.locks.length >= cap ? 'lockFull' : 'lockTick', { at: next.pos, value: this.locks.length });
           this.lockT = 0;
         }
@@ -423,7 +436,7 @@ export class PlayerWeapons {
     A.siloArmed = this.siloArming;
     if (this.rockets < this.rocketCapacity && this.siloOpen < 0.05) {
       this.reloadT += dt;
-      if (this.reloadT > 1.2) {
+      if (this.reloadT > 1.2 * this.spec.rocketReload) {
         this.pods[this.pods[0] <= this.pods[1] ? 0 : 1]++;
         this.reloadT = 0;
       }
@@ -447,7 +460,7 @@ export class PlayerWeapons {
     if (!beamNow && this.unibeamOn) this.events.emit('unibeamEnd', { at: this.model.pos });
     this.unibeamOn = beamNow;
     if (this.unibeamOn) {
-      this.unibeamHeat = Math.min(1, this.unibeamHeat + dt / UNIBEAM_MAX);
+      this.unibeamHeat = Math.min(1, this.unibeamHeat + dt / (UNIBEAM_MAX * this.spec.unibeamTime));
       if (this.unibeamHeat >= 1) {
         // Overheat: the beam cuts, the chest vents, locked out until it cools
         this.unibeamOverheat = true;
@@ -458,7 +471,7 @@ export class PlayerWeapons {
         this.events.emit('jarvis', { text: 'Unibeam overheated, sir. Venting.' });
       }
     } else {
-      this.unibeamHeat = Math.max(0, this.unibeamHeat - dt / UNIBEAM_COOL);
+      this.unibeamHeat = Math.max(0, this.unibeamHeat - dt / (UNIBEAM_COOL * this.spec.unibeamCool));
       if (this.unibeamOverheat && this.unibeamHeat <= UNIBEAM_RESET) this.unibeamOverheat = false;
     }
     // The beam swells in over a few frames and collapses as fast
@@ -547,9 +560,9 @@ export class PlayerWeapons {
         // The next arm up rides the aim line while the lasers range
         this.launchHold[this.nextReady()] = 0.3;
         this.launcherLockT += dt;
-        this.launcherLockProgress = this.launcherLocks.length >= cap ? 1 : Math.min(1, this.launcherLockT / LAUNCHER_LOCK_TIME);
-        if (this.launcherLockT >= LAUNCHER_LOCK_TIME) {
-          const next = paintLock(this.launcherLocks, cap, eye, aim, hostiles, LAUNCHER_CONE, LAUNCHER_RANGE);
+        this.launcherLockProgress = this.launcherLocks.length >= cap ? 1 : Math.min(1, this.launcherLockT / (LAUNCHER_LOCK_TIME * this.spec.launcherLock));
+        if (this.launcherLockT >= LAUNCHER_LOCK_TIME * this.spec.launcherLock) {
+          const next = paintLock(this.launcherLocks, cap, eye, aim, hostiles, LAUNCHER_CONE, LAUNCHER_RANGE * this.spec.launcherRange);
           if (next) this.events.emit(this.launcherLocks.length >= cap ? 'lockFull' : 'lockTick', { at: next.pos, value: this.launcherLocks.length });
           this.launcherLockT = 0;
         }
@@ -577,7 +590,7 @@ export class PlayerWeapons {
           const target = this.launcherQueue.shift() ?? null;
           this.pending.push({ kind: 'launcher', side, target: target && target.alive ? target : null });
           this.launcherRounds[side]--;
-          this.bayEmpty[side] = BAY_RELOAD;
+          this.bayEmpty[side] = BAY_RELOAD * this.spec.launcherReload;
           this.nextLauncher = side === 0 ? 1 : 0;
           this.launcherT = LAUNCHER_INTERVAL;
           if (!this.launcherQueue.length) this.launcherHold = 0.9;
@@ -600,7 +613,7 @@ export class PlayerWeapons {
     // Rounds come back up from the forearm magazine while stowed
     if (this.launcherAmmo < LAUNCHER_PER_ARM * 2 && this.launcherOut < 0.05) {
       this.launcherReloadT += dt;
-      if (this.launcherReloadT > 3) {
+      if (this.launcherReloadT > 3 * this.spec.launcherReload) {
         this.launcherRounds[this.launcherRounds[0] <= this.launcherRounds[1] ? 0 : 1]++;
         this.launcherReloadT = 0;
       }
@@ -657,13 +670,13 @@ export class PlayerWeapons {
    */
   private findAim(aim: THREE.Vector3, eye: THREE.Vector3, hostiles: readonly Hostile[]): void {
     let best: Hostile | null = null;
-    let bestDot = Math.cos(THREE.MathUtils.degToRad(ASSIST_CONE));
+    let bestDot = Math.cos(THREE.MathUtils.degToRad(ASSIST_CONE * this.spec.assistCone));
     const keep = Math.cos(THREE.MathUtils.degToRad(ASSIST_KEEP));
     for (const h of hostiles) {
       if (!h.alive) continue;
       const d = this._v.copy(h.pos).sub(eye);
       const dist = d.length();
-      if (dist > ASSIST_RANGE) continue;
+      if (dist > this.assistRange) continue;
       const lead = this.leadPoint(h, this._w).sub(eye);
       let dot = Math.max(d.dot(aim) / dist, lead.dot(aim) / Math.max(1e-6, lead.length()));
       // The current target wins anything inside the wider cone
@@ -765,7 +778,7 @@ export class PlayerWeapons {
           // A repulsor hits like a ram: the target is shoved off its line
           h.vel.addScaledVector(seg, REPULSOR_KNOCK / Math.sqrt(Math.max(len2, 1e-6)));
           struck = h;
-          const killed = h.damage(REPULSOR_DAMAGE, hit, 'repulsor');
+          const killed = h.damage(REPULSOR_DAMAGE * this.spec.repulsorDamage, hit, 'repulsor');
           if (killed) this.onKill(h);
           break;
         }
@@ -1061,8 +1074,9 @@ export class PlayerWeapons {
     if (sum > 1e-3) this.flareLight.position.copy(light.addScaledVector(this.flarePort, pop * 0.8).divideScalar(sum));
     this.flareLight.intensity = FLARE_LIGHT * Math.min(glow, 4) + FLARE_POP_LIGHT * pop * pop;
     // Slowly restock
-    if (this.flares < FLARE_MAG) this.flareRestock += dt;
-    if (this.flareRestock > FLARE_RESTOCK) {
+    this.flares = Math.min(this.flares, this.flareMag);
+    if (this.flares < this.flareMag) this.flareRestock += dt;
+    if (this.flareRestock > FLARE_RESTOCK * this.spec.flareRestock) {
       this.flares++;
       this.flareRestock = 0;
     }

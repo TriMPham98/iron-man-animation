@@ -71,6 +71,11 @@ export function bindFlightSettings(app: FlightApp): void {
   };
   // The on-screen pause button
   app.pauseMenu = pause;
+  // U on the pad: straight to the R&D refit
+  app.refitMenu = () => {
+    pause();
+    screens.showRefit();
+  };
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape' && !e.repeat && !document.pointerLockElement) pause();
   });

@@ -14,6 +14,7 @@ import { Missiles } from './missiles';
 import { PlayerWeapons } from './playerWeapons';
 import { SamSite, samSites } from './sams';
 import type { Hostile, HouseTarget, PlayerTarget } from './types';
+import { STOCK_SPEC, type SuitSpec } from '../sim/upgrades';
 import { hazeAll } from '../render/haze';
 
 /**
@@ -96,6 +97,8 @@ export class Combat {
   kills = 0;
   /** Reboots left this run. */
   reserves = RESERVES;
+  /** The suit's upgrades (the app shares the live one; stock until then). */
+  spec: SuitSpec = STOCK_SPEC();
   /** Knocked out with no reserve left: down for good until {@link resetRun}. */
   lost = false;
   /** Seconds since the suit was lost. */
@@ -134,7 +137,7 @@ export class Combat {
       },
       hit(amount: number, at: THREE.Vector3, kind: 'bullet' | 'missile') {
         if (self.down > 0) return;
-        self.armor = Math.max(0, self.armor - amount / 100);
+        self.armor = Math.max(0, self.armor - (amount * self.spec.damageTaken) / 100);
         self.sinceHit = 0;
         self.damageFlash = Math.min(1, self.damageFlash + (kind === 'missile' ? 0.9 : 0.25));
         onHit(amount, at);
@@ -145,7 +148,7 @@ export class Combat {
           // Scripted runs (waves off) always reboot
           if (!self.wavesEnabled || self.reserves > 0) {
             if (self.wavesEnabled) self.reserves--;
-            const left = !self.wavesEnabled ? '' : self.reserves === 0 ? ' That was the last reserve, sir.' : ' One reserve left.';
+            const left = !self.wavesEnabled ? '' : self.reserves === 0 ? ' That was the last reserve, sir.' : self.reserves === 1 ? ' One reserve left.' : ` ${self.reserves} reserves left.`;
             events.emit('jarvis', { text: `Armour critical. Rerouting power. Hold on, sir.${left}` });
           } else {
             self.lost = true;
@@ -196,13 +199,18 @@ export class Combat {
     this.sinceHit = 99;
     this.down = 0;
     this.damageFlash = 0;
-    this.reserves = RESERVES;
+    this.reserves = this.maxReserves;
     this.lost = false;
     this.lostT = 0;
     this.waveT = 0;
     for (const m of this.scorch) this.group.remove(m);
     this.scorch.length = 0;
     this.events.emit('redeploy', { at: this.model.pos });
+  }
+
+  /** Reboots a full run carries. */
+  get maxReserves(): number {
+    return RESERVES + this.spec.reserves;
   }
 
   /** One drone at a point, flying a heading (scripted encounters). */
@@ -273,8 +281,8 @@ export class Combat {
         this.events.emit('reboot', { at: this.model.pos });
         this.events.emit('jarvis', { text: 'Systems restored. Fifty percent armour.' });
       }
-    } else if (this.sinceHit > 6) {
-      this.armor = Math.min(1, this.armor + dt * 0.035);
+    } else if (this.sinceHit > 6 * this.spec.regenDelay) {
+      this.armor = Math.min(1, this.armor + dt * 0.035 * this.spec.regenRate);
     }
 
     // A clear sky gets announced (and a cleared wave earns back a reserve);
@@ -283,7 +291,7 @@ export class Combat {
     if (this.wavesEnabled && !this.lost && this.wave >= 0 && !this.hostiles.some((h) => h.alive)) {
       this.waveT += dt;
       if (this.waveT > 1.5 && this.waveT - dt <= 1.5) {
-        const earned = this.reserves < RESERVES;
+        const earned = this.reserves < this.maxReserves;
         if (earned) this.reserves++;
         this.events.emit('waveClear', { value: this.wave + 1 });
         this.events.emit('jarvis', { text: `Area clear, sir.${earned ? ' A reserve is back online.' : ''} Next formation in fifteen seconds.` });
@@ -314,6 +322,7 @@ export class Combat {
       if (!h.alive && !this.counted.has(h.id)) {
         this.counted.add(h.id);
         this.kills++;
+        this.events.emit('destroyed', { at: h.pos, text: h.kind });
         if (h.kind === 'sam') {
           this.explosions.blast(h.pos, 10, { debris: 14, burn: true });
           const sam = h as SamSite;
@@ -347,6 +356,7 @@ export class Combat {
     for (let i = this.ships.length - 1; i >= 0; i--) {
       const f = this.ships[i];
       if (f.sunk) {
+        this.events.emit('destroyed', { at: f.mesh.position, text: 'frigate' });
         this.group.remove(f.mesh);
         this.ships.splice(i, 1);
       }

@@ -70,6 +70,8 @@ export class Game {
   private wasBoosting = false;
   /** The pad capture is holding (with hysteresis, for the cue). */
   private padHeld = false;
+  /** The suit's Mark as the R&D ledger has it (set by the app). */
+  mark = 'III';
   /** The suit is flying itself down onto the pad (L: {@link toggleAutoLand}). */
   autoLand = false;
   /** The pilot has let go since auto-land took over (from then on a hand on the controls takes it back). */
@@ -140,7 +142,14 @@ export class Game {
   redeploy(): void {
     this.combat.resetRun();
     this.reset();
-    this.events.emit('jarvis', { text: 'Mark III redeployed. Full armour, one reserve, sir.' });
+    const n = this.combat.reserves;
+    this.events.emit('jarvis', { text: `Mark ${this.mark} redeployed. Full armour, ${n === 1 ? 'one reserve' : `${n} reserves`}, sir.` });
+  }
+
+  /** Standing on the pad's deck: the suit can be refitted there. */
+  get onPad(): boolean {
+    const m = this.model;
+    return m.grounded && Math.hypot(m.pos.x - PAD.x, m.pos.z - PAD.y) < PAD_R && Math.abs(m.pos.y - PAD_Y) < 2;
   }
 
   applyControls(c: Controls): void {

@@ -55,6 +55,10 @@ export type SimEventKind =
   | 'missileDecoyed'
   | 'droneFlyby'
   | 'kill'
+  /** A hostile counted down (by any weapon, or a frigate gone under): text = drone / sam / ship / frigate. */
+  | 'destroyed'
+  /** R&D points earned: value = points, text = what for. */
+  | 'rdAward'
   | 'waveStart'
   | 'waveClear'
   | 'suitCritical'

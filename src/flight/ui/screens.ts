@@ -1,5 +1,6 @@
 import './screens.css';
 import { isTouchDevice } from '../sim/touchMath';
+import { MAX_TIER, TRACKS, type RefitRefusal, type TrackId, type Upgrades } from '../sim/upgrades';
 import { deviceProfile, type DeviceTier } from '../../scene/deviceProfile';
 
 /**
@@ -7,6 +8,7 @@ import { deviceProfile, type DeviceTier } from '../../scene/deviceProfile';
  * of the way the moment the suit is flying.
  *
  * The pause menu is a holographic panel: resume / restart / camera, the
+ * R&D refit (the suit's upgrades, bought and switched on the pad), the
  * controls reference (ground and flight), audio levels (master, effects,
  * JARVIS's voice) and a graphics preset. Mouse, keyboard (arrows, Enter,
  * Esc) and gamepad (D-pad / left stick, A, B, Start) all drive it; every
@@ -44,6 +46,7 @@ export const CONTROLS: { ground: Row[]; flight: Row[]; always: Row[] } = {
     ['WHEEL', 'camera distance'],
     ['R', 'reset to the house'],
     ['N', 'call a wave (sky clear)'],
+    ['U', 'R&D refit (on the pad)'],
     ['L', 'auto-land (near the pad)'],
     ['ESC', 'pause'],
   ],
@@ -102,6 +105,21 @@ export interface PauseActions {
   forceResume?: () => void;
 }
 
+/** The R&D refit the pause menu shows (wired by the app). */
+export interface RefitMenu {
+  upgrades: Upgrades;
+  /** Why the suit can't be refitted right now, or null when it can. */
+  gate(): string | null;
+}
+
+const REFUSAL: Record<Exclude<RefitRefusal, null>, string> = {
+  cost: 'NOT ENOUGH R&D',
+  max: 'FULLY UPGRADED',
+  power: 'NO POWER TO SPARE · SWITCH A TIER OFF FIRST',
+  owned: 'BUY THAT TIER FIRST',
+  reactor: 'THE REACTOR IS POWERING THOSE TIERS',
+};
+
 /** The title's quick start: enough to get off the pad (ESC has the rest). */
 const TITLE_KEYS: Row[] = [
   ['MOUSE', 'aim'],
@@ -135,6 +153,9 @@ export class Screens {
   /** The app's settings hook (kept for the app; others use {@link addSettingsListener}). */
   onSettings: (s: Settings) => void = () => {};
   actions: PauseActions = {};
+  private refitMenu: RefitMenu | null = null;
+  /** The refit's last word (a refusal, a purchase), shown over the tracks. */
+  private refitMsg = '';
   /** A touch-first device: tap copy, the touch settings and reference. */
   readonly touch = isTouchDevice();
 
@@ -200,7 +221,7 @@ export class Screens {
             <div>
               <div class="fp-eyebrow">J.A.R.V.I.S. · FLIGHT SYSTEMS</div>
               <h2 id="fp-title">PAUSED</h2>
-              <div class="fp-status"><span class="dot"></span>SIM HELD · MK III · <span data-cam-name></span> CAM</div>
+              <div class="fp-status"><span class="dot"></span>SIM HELD · MK <span data-mark>III</span> · <span data-cam-name></span> CAM</div>
             </div>
           </header>
           <div class="fp-body">
@@ -209,6 +230,7 @@ export class Screens {
               <button class="fp-btn" data-act="restart">RESTART <small>at the house</small></button>
               <button class="fp-btn" data-act="camera">CAMERA <span class="val" data-cam-name></span></button>
               <div class="fp-sep"></div>
+              <button class="fp-btn" data-tab="rd" role="tab" aria-selected="false" aria-controls="fp-rd" hidden>R&amp;D <span class="val" data-rd-pts></span></button>
               <button class="fp-btn" data-tab="controls" role="tab" aria-selected="true" aria-controls="fp-controls">CONTROLS</button>
               <button class="fp-btn" data-tab="audio" role="tab" aria-selected="false" aria-controls="fp-audio">AUDIO</button>
               <button class="fp-btn" data-tab="graphics" role="tab" aria-selected="false" aria-controls="fp-graphics">GRAPHICS</button>
@@ -237,6 +259,7 @@ export class Screens {
                   ])}</div></section>
                 </div>
               </section>
+              <section class="fp-pane" id="fp-rd" role="tabpanel" data-pane="rd"></section>
               <section class="fp-pane" id="fp-audio" role="tabpanel" data-pane="audio">
                 <div class="fp-h">LEVELS</div>
                 ${pct('volume', 'MASTER', 'fp-vol')}
@@ -335,6 +358,26 @@ export class Screens {
       b.addEventListener('click', () => this.showTab(b.dataset.tab!));
       b.addEventListener('focus', () => this.showTab(b.dataset.tab!));
     }
+    // R&D: a pip switches the track to that tier (its own lit top pip, one
+    // down), the price buys, and Enter / A on a row (a click with no
+    // pointer behind it) buys too
+    p.querySelector('#fp-rd')!.addEventListener('click', (e) => {
+      const t = e as MouseEvent;
+      const target = t.target as HTMLElement;
+      const row = target.closest<HTMLElement>('.rd-row');
+      if (!row || !this.refitMenu) return;
+      const id = row.dataset.up as TrackId;
+      const pip = target.closest<HTMLElement>('.rd-pip');
+      if (pip) {
+        const n = Number(pip.dataset.tier);
+        const on = this.refitMenu.upgrades.state.on[id];
+        this.refit((u) => u.setOn(id, n === on ? n - 1 : n));
+      } else if (target.closest('[data-buy]') || t.detail === 0) {
+        const track = TRACKS.find((x) => x.id === id)!;
+        this.refit((u) => u.buy(id), `${track.name} · TIER ${this.refitMenu.upgrades.state.owned[id] + 1} FITTED`);
+      }
+      row.focus();
+    });
     p.addEventListener('click', (e) => {
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
       if (!el) return;
@@ -356,9 +399,88 @@ export class Screens {
     p.addEventListener('pointermove', () => p.classList.remove('gamepad'));
   }
 
+  /** Hands the menu the suit's R&D ledger: the tab shows from here on. */
+  setRefit(menu: RefitMenu): void {
+    this.refitMenu = menu;
+    this.pause.querySelector<HTMLElement>('[data-tab="rd"]')!.hidden = false;
+    menu.upgrades.onChange(() => this.renderRefit());
+    this.renderRefit();
+  }
+
+  /** Opens the pause menu's R&D tab with the first track focused (the menu must be up). */
+  showRefit(): void {
+    if (!this.refitMenu || !this.paused) return;
+    this.showTab('rd');
+    requestAnimationFrame(() => this.focus(this.paneItems()[0], this.pause.classList.contains('gamepad')));
+  }
+
+  /** A refit, if the suit can take one here: refused, the reason shows. */
+  private refit(fn: (u: Upgrades) => RefitRefusal, done?: string): void {
+    const m = this.refitMenu;
+    if (!m) return;
+    const gate = m.gate();
+    const no = gate ? null : fn(m.upgrades);
+    this.refitMsg = gate ?? (no ? REFUSAL[no] : (done ?? ''));
+    this.renderRefit();
+  }
+
+  /** The R&D pane: points, Mark and power up top, then a row per track. */
+  private renderRefit(): void {
+    const m = this.refitMenu;
+    if (!m) return;
+    const u = m.upgrades;
+    for (const el of this.pause.querySelectorAll('[data-rd-pts]')) el.textContent = `${u.state.rd}`;
+    for (const el of this.pause.querySelectorAll('[data-mark]')) el.textContent = u.mark;
+    const pane = this.pause.querySelector<HTMLElement>('#fp-rd')!;
+    const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.rd-row')?.dataset.up;
+    const padFocus = !!pane.querySelector('.pad-focus');
+    const gate = m.gate();
+    const next = u.toNextMark;
+    const cells = Array.from({ length: u.power }, (_, i) => `<i class="${i < u.powerUsed ? 'on' : ''}"></i>`).join('');
+    const rowsHtml = TRACKS.map((t) => {
+      const owned = u.state.owned[t.id];
+      const on = u.state.on[t.id];
+      const cost = u.cost(t.id);
+      const pips = Array.from({ length: MAX_TIER }, (_, i) => {
+        const cls = i < on ? 'on' : i < owned ? 'owned' : '';
+        return `<button class="rd-pip ${cls}" data-tier="${i + 1}" tabindex="-1" aria-label="Tier ${i + 1}${i < on ? ', on' : i < owned ? ', off' : ', not bought'}"></button>`;
+      }).join('');
+      // Each line: now → what the next tier bought would make it
+      const stats = t.stats
+        .map((st) => {
+          const now = st.show(on);
+          const then = owned < MAX_TIER ? st.show(owned + 1) : null;
+          return `<span><small>${esc(st.label)}</small>${esc(now)}${then && then !== now ? `<em>&#x2192; ${esc(then)}</em>` : ''}</span>`;
+        })
+        .join('');
+      const afford = cost !== null && u.state.rd >= cost;
+      const buy = cost === null ? '<span class="rd-max">MAX</span>' : `<button class="rd-buy${afford && !gate ? '' : ' dim'}" data-buy tabindex="-1">${cost}<small>R&amp;D</small></button>`;
+      return `<div class="rd-row" tabindex="0" data-up="${t.id}" aria-label="${esc(t.name)}: tier ${on} of ${owned} owned">
+        <div class="rd-name">${esc(t.name)}<small>${esc(t.part)}</small></div>
+        <div class="rd-pips">${pips}</div>
+        <div class="rd-buyc">${buy}</div>
+        <div class="rd-stats">${stats}</div>
+      </div>`;
+    }).join('');
+    const hint = this.touch ? 'TAP A TIER TO SWITCH IT · TAP THE PRICE TO BUY' : '&#x2190; &#x2192; SWITCH TIERS · ENTER BUYS THE NEXT';
+    pane.innerHTML = `
+      <div class="rd-top">
+        <div class="rd-stat"><small>R&amp;D</small><b>${u.state.rd}</b></div>
+        <div class="rd-stat"><small>MARK</small><b>${u.mark}</b><i>${next === null ? 'FINAL MARK' : `${next} TIER${next === 1 ? '' : 'S'} TO THE NEXT`}</i></div>
+        <div class="rd-power"><small>POWER <b>${u.powerUsed}/${u.power}</b></small><span class="rd-cells">${cells}</span></div>
+      </div>
+      <p class="fp-note rd-gate${gate ? ' shut' : ''}">${esc(this.refitMsg || gate || '')}${this.refitMsg || gate ? '' : hint}</p>
+      <div class="rd-rows">${rowsHtml}</div>`;
+    if (focused) this.focus(pane.querySelector<HTMLElement>(`[data-up="${focused}"]`) ?? undefined, padFocus);
+  }
+
   private showTab(tab: string): void {
     for (const b of this.pause.querySelectorAll<HTMLElement>('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
     for (const s of this.pause.querySelectorAll<HTMLElement>('[data-pane]')) s.classList.toggle('on', s.dataset.pane === tab);
+    if (tab === 'rd' && this.refitMsg) {
+      this.refitMsg = '';
+      this.renderRefit();
+    }
   }
 
   private showCamera(): void {
@@ -379,14 +501,14 @@ export class Screens {
   // ── Navigation ──────────────────────────────────────────────────────────
 
   private navItems(): HTMLElement[] {
-    return [...this.pause.querySelectorAll<HTMLElement>('.fp-nav .fp-btn')];
+    return [...this.pause.querySelectorAll<HTMLElement>('.fp-nav .fp-btn:not([hidden])')];
   }
 
   /** The focusable controls of the open pane, in order (a radio group is one stop). */
   private paneItems(): HTMLElement[] {
     const pane = this.pause.querySelector<HTMLElement>('.fp-pane.on');
     if (!pane) return [];
-    return [...pane.querySelectorAll<HTMLElement>('input.fp-range, .fp-switch, [data-q][aria-checked="true"]')];
+    return [...pane.querySelectorAll<HTMLElement>('input.fp-range, .fp-switch, [data-q][aria-checked="true"], .rd-row')];
   }
 
   private focus(el: HTMLElement | undefined, pad = false): void {
@@ -431,6 +553,13 @@ export class Screens {
       const k = cur.dataset.k as 'invertY' | 'leftHanded';
       if (dir < 0 && !this.settings[k]) return this.toNav(pad);
       this.set(k, dir > 0);
+      return true;
+    }
+    if (cur.dataset.up) {
+      const id = cur.dataset.up as TrackId;
+      const on = this.refitMenu?.upgrades.state.on[id] ?? 0;
+      if (dir < 0 && on === 0) return this.toNav(pad);
+      this.refit((u) => u.setOn(id, on + dir));
       return true;
     }
     if (cur.dataset.act === 'camera') {
@@ -587,6 +716,8 @@ export class Screens {
     if (paused) {
       this.showCamera();
       this.syncInputs();
+      this.refitMsg = '';
+      this.renderRefit();
       if (!was) {
         this.padPrev = [];
         this.padAxisHeld = 0;
