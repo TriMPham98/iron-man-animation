@@ -34,3 +34,16 @@ export const TOUCH_MAX_ASPECT = 16 / 9;
 export function wideZoom(aspect: number, maxAspect = TOUCH_MAX_ASPECT): number {
   return aspect > maxAspect ? aspect / maxAspect : 1;
 }
+
+/** Screens narrower than this (portrait) see at least as far across as this would. */
+export const PORTRAIT_MIN_ASPECT = 0.7;
+
+/**
+ * Camera zoom (< 1: wider) that keeps a portrait screen's horizontal field of
+ * view to what the same vertical one gives at {@link PORTRAIT_MIN_ASPECT}. A
+ * phone held upright (~0.46) at a fixed vertical fov sees a sliver across —
+ * the suit's shoulders and the arms beside it fall out of the frame. 1 above it.
+ */
+export function portraitZoom(aspect: number, minAspect = PORTRAIT_MIN_ASPECT): number {
+  return aspect < minAspect ? aspect / minAspect : 1;
+}

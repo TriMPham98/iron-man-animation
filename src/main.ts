@@ -10,6 +10,7 @@ import { CONTACT_SHADOW_LAYER, createContactShadow } from './scene/contactShadow
 import { createAdaptiveResolution } from './scene/adaptiveResolution';
 import { warmUp } from './scene/warmUp';
 import { createRenderer } from './scene/createRenderer';
+import { deviceProfile } from './scene/deviceProfile';
 import { applyStudioEnvironment } from './scene/createStudioEnv';
 import { createAssemblySession } from './session/assemblySession';
 import { buildSuitUpPlan } from './animation/suitUpChoreography';
@@ -72,6 +73,12 @@ async function boot(): Promise<void> {
   installButtonFocusRelease();
   // Cyan holographic reticle (fine-pointer desktops only).
   const teardownCursor = installJarvisCursor();
+
+  // Phones / tablets: touch chrome (no key hints, tap transport) and a
+  // drawing buffer sized for their GPUs (styles.css: body.is-touch)
+  const device = deviceProfile();
+  document.body.classList.toggle('is-touch', device.touch);
+  document.body.dataset.tier = device.tier;
 
   const ui = createOverlay();
   const reducedMotion = prefersReducedMotion();
@@ -146,8 +153,8 @@ async function boot(): Promise<void> {
   report('hangar', 0, 'hangar');
 
   // ── Phase 2: build scene off-screen (#app still hidden) ──────────
-  // Full fidelity: max DPR 1.75, full-res bloom (software GL still skips bloom).
-  const renderer = createRenderer(canvas, { maxPixelRatio: 1.75 });
+  // Full fidelity on desktop: max DPR 1.75 (phones / tablets: deviceProfile)
+  const renderer = createRenderer(canvas, { maxPixelRatio: device.maxPixelRatio });
   const scene = new THREE.Scene();
   const camera = createCamera();
   // Match suit feet clearance + HERO_END / OPEN_WIDE look height
@@ -237,6 +244,7 @@ async function boot(): Promise<void> {
     seekCycle: session.seekCycle,
     setCyclePlaying: session.setCyclePlaying,
     isEnabled: () => ui.hasInitiated() && !reducedMotion,
+    touch: device.touch ? { toggleMute: () => audioTimeline.toggleMute(), isMuted: () => audioTimeline.isMuted() } : undefined,
   });
 
   bindInput({
@@ -260,7 +268,9 @@ async function boot(): Promise<void> {
   };
   window.addEventListener('resize', onResize);
   // Trim / restore pixel ratio with the measured frame time
-  const adaptive = createAdaptiveResolution(renderer, () => post.resize(window.innerWidth, window.innerHeight));
+  const adaptive = createAdaptiveResolution(renderer, () => post.resize(window.innerWidth, window.innerHeight), {
+    min: device.minPixelRatio,
+  });
 
   let raf = 0;
   let visible = true;
@@ -358,7 +368,7 @@ async function boot(): Promise<void> {
     renderer.getDrawingBufferSize(drawingBuffer);
     suit.update(
       delta,
-      drawingBuffer.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)),
+      (drawingBuffer.y * camera.zoom) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)),
     );
 
     // Timeline-synced HUD clock (scrub-aware; keeps counting after complete).

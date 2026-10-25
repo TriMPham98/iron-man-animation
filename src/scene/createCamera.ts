@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SUIT_GROUND_CLEARANCE } from '../suit/loadSuitModel';
+import { portraitZoom } from '../flight/render/viewport';
 
 export function createCamera(): THREE.PerspectiveCamera {
   // Slightly tighter FOV + closer start for armor detail
@@ -13,10 +14,13 @@ export function createCamera(): THREE.PerspectiveCamera {
   const g = SUIT_GROUND_CLEARANCE;
   camera.position.set(0, 1.25 + g, 4.6);
   camera.lookAt(0, 0.95 + g, 0);
+  updateCameraAspect(camera);
   return camera;
 }
 
 export function updateCameraAspect(camera: THREE.PerspectiveCamera): void {
   camera.aspect = window.innerWidth / window.innerHeight;
+  // Upright phones: widen (the shots' fovs are vertical, framed for landscape)
+  camera.zoom = portraitZoom(camera.aspect);
   camera.updateProjectionMatrix();
 }

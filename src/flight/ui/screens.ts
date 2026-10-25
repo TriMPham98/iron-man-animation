@@ -1,5 +1,6 @@
 import './screens.css';
 import { isTouchDevice } from '../sim/touchMath';
+import { deviceProfile, type DeviceTier } from '../../scene/deviceProfile';
 
 /**
  * Boot, title and pause screens over the sim: JARVIS-styled, quiet, and out
@@ -71,6 +72,9 @@ export interface Settings {
 }
 
 const DEFAULTS: Settings = { invertY: false, sensitivity: 1, volume: 0.9, sfx: 1, quality: 'ultra', touchOpacity: 0.75, leftHanded: false };
+
+/** First-run graphics preset: a phone's or tablet's GPU starts lower (the menu still goes up to ULTRA). */
+const TIER_QUALITY: Record<DeviceTier, Quality> = { phone: 'medium', tablet: 'high', desktop: 'ultra' };
 
 /** The on-screen controls reference (touch screens, in place of the keys). */
 const TOUCH_ROWS: Row[] = [
@@ -147,8 +151,9 @@ export class Screens {
         return null;
       }
     })();
-    this.settings = { ...DEFAULTS, ...(saved ?? {}) };
-    if (!(this.settings.quality in QUALITY)) this.settings.quality = DEFAULTS.quality;
+    const defaults: Settings = { ...DEFAULTS, quality: TIER_QUALITY[deviceProfile().tier] };
+    this.settings = { ...defaults, ...(saved ?? {}) };
+    if (!(this.settings.quality in QUALITY)) this.settings.quality = defaults.quality;
     this.root.classList.toggle('touch', this.touch);
     const touchFields = `
                 <div class="fp-h" style="margin-top:16px">TOUCH</div>

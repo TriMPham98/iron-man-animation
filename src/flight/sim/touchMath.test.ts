@@ -4,7 +4,8 @@ import {
   applyTouch, BOOST_RING, CLIMB_OUT, inBoostRing, isTouchDevice, LOOK_CLIMB_DEAD, LOOK_DESCENT_MAX, sideRole, stickOrigin, stickVector,
   TOUCH_BINDINGS, TOUCH_LOOK_SENS, touchVertical, TouchState,
 } from './touchMath';
-import { viewportSize, wideZoom } from '../render/viewport';
+import { portraitZoom, viewportSize, wideZoom } from '../render/viewport';
+import { tierOf } from '../../scene/deviceProfile';
 
 const controls = (over: Partial<Controls> = {}): Controls => ({
   aimYaw: 0, aimPitch: 0, throttle: 0, lateral: 0, vertical: 0, forward: 0,
@@ -212,6 +213,21 @@ describe('viewport', () => {
     expect(wideZoom(1440 / 900)).toBe(1);
     expect(wideZoom(16 / 9)).toBe(1);
     expect(wideZoom(915 / 412)).toBeCloseTo(915 / 412 / (16 / 9));
+  });
+  it('portrait zoom widens an upright phone to a 0.7 screen across, and leaves the rest', () => {
+    expect(portraitZoom(16 / 9)).toBe(1);
+    expect(portraitZoom(0.7)).toBe(1);
+    const z = portraitZoom(390 / 844);
+    // tan(hfov/2) = tan(vfov/2) · aspect / zoom: what 0.7 gives
+    expect((390 / 844) / z).toBeCloseTo(0.7);
+  });
+});
+
+describe('device tier', () => {
+  it('splits touch screens at a 600 px short side; the rest is desktop', () => {
+    expect(tierOf(true, 390)).toBe('phone');
+    expect(tierOf(true, 820)).toBe('tablet');
+    expect(tierOf(false, 390)).toBe('desktop');
   });
 });
 

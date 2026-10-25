@@ -6,6 +6,11 @@ export interface CycleScrubberOptions {
   setCyclePlaying: (play: boolean) => void;
   /** Transport is live (after INITIATE). */
   isEnabled: () => boolean;
+  /**
+   * Touch screens (no Space / M to reach for): hold and sound buttons in the
+   * bar, and a tap anywhere on the scene brings it up.
+   */
+  touch?: { toggleMute: () => boolean; isMuted: () => boolean };
 }
 
 export interface CycleScrubber {
@@ -52,6 +57,12 @@ export function createCycleScrubber(opts: CycleScrubberOptions): CycleScrubber {
       <span class="cs-phase" aria-hidden="true"></span>
       <span class="cs-keys" aria-hidden="true">1 · 2 · 3 jump &nbsp;·&nbsp; ← → step &nbsp;·&nbsp; Space hold</span>
       <span class="cs-time" aria-hidden="true"></span>
+      ${
+        opts.touch
+          ? `<button type="button" class="cs-btn cs-play" aria-label="Hold"></button>
+      <button type="button" class="cs-btn cs-mute" aria-label="Mute"></button>`
+          : ''
+      }
     </div>
     <div class="cs-track" role="slider" tabindex="0" aria-label="Sequence position" aria-valuemin="0" aria-valuemax="100">
       ${PHASES.map(
@@ -158,6 +169,36 @@ export function createCycleScrubber(opts: CycleScrubberOptions): CycleScrubber {
   });
   // Keep the scene's orbit / pick handlers out of it
   root.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+  const playBtn = root.querySelector<HTMLButtonElement>('.cs-play');
+  const muteBtn = root.querySelector<HTMLButtonElement>('.cs-mute');
+  const syncMute = () => {
+    if (!muteBtn || !opts.touch) return;
+    const muted = opts.touch.isMuted();
+    muteBtn.classList.toggle('is-muted', muted);
+    muteBtn.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+  };
+  playBtn?.addEventListener('click', () => {
+    if (!opts.isEnabled()) return;
+    opts.setCyclePlaying(!opts.getCycle().playing);
+    wake();
+  });
+  muteBtn?.addEventListener('click', () => {
+    opts.touch?.toggleMute();
+    syncMute();
+    wake();
+  });
+  syncMute();
+  if (opts.touch) {
+    // No hover to wake it: any touch on the page does (a drag to orbit too)
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.pointerType === 'touch') wake();
+      },
+      { passive: true },
+    );
+  }
   root.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
 
   window.addEventListener(
@@ -205,6 +246,13 @@ export function createCycleScrubber(opts: CycleScrubberOptions): CycleScrubber {
     const show = enabled && (dragging !== null || hovering || !c.playing || now() - lastWake < LINGER_SEC);
     root.classList.toggle('is-visible', show);
     root.classList.toggle('is-held', enabled && !c.playing);
+    if (playBtn) {
+      const label = c.playing ? 'Hold' : 'Play';
+      if (playBtn.getAttribute('aria-label') !== label) {
+        playBtn.setAttribute('aria-label', label);
+        playBtn.classList.toggle('is-paused', !c.playing);
+      }
+    }
   };
 
   return { update, poke: wake };

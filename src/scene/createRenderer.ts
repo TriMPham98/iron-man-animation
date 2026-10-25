@@ -35,16 +35,19 @@ export function createRenderer(
   // JARVIS diagnostic wireframe uses material clippingPlanes for the reveal.
   renderer.localClippingEnabled = true;
 
-  const setSize = () => {
+  const setSize = (first: boolean) => {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const dpr = Math.min(window.devicePixelRatio || 1, maxPixelRatio);
-    renderer.setPixelRatio(dpr);
+    // After the first size the adaptive resolution owns the ratio: a resize
+    // (a phone's toolbar or rotation) keeps what it has settled on rather
+    // than snapping back to the ceiling and shedding it again
+    renderer.setPixelRatio(first ? dpr : Math.min(renderer.getPixelRatio(), dpr));
     renderer.setSize(w, h, false);
   };
 
-  setSize();
-  window.addEventListener('resize', setSize);
+  setSize(true);
+  window.addEventListener('resize', () => setSize(false));
 
   return renderer;
 }

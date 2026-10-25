@@ -6,7 +6,7 @@ import { SFX, Soundscape } from './audio/soundscape';
 import { CONTEXT_ATTRIBUTES, canReverseDepth, useReversedDepth } from './render/depth';
 import { FlightPost, type LensState } from './render/post';
 import './render/shaderGuards';
-import { viewportSize, wideZoom } from './render/viewport';
+import { portraitZoom, viewportSize, wideZoom } from './render/viewport';
 import { Game } from './sim/game';
 import { DEFAULT_CAMERA } from './sim/cameraRig';
 import { Director } from './sim/director';
@@ -160,8 +160,9 @@ export class FlightApp {
     for (const c of [this.opts.canvas, this.opts.hudCanvas]) Object.assign(c.style, { width: `${w}px`, height: `${h}px` });
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
-    // Ultra-wide phones: no wider across than 16:9 (desktop is left alone)
-    this.camera.zoom = this.opts.screens.touch ? wideZoom(this.camera.aspect) : 1;
+    // Ultra-wide phones: no wider across than 16:9 (desktop is left alone);
+    // portrait: no narrower than the workshop's lens it's flown in from
+    this.camera.zoom = (this.opts.screens.touch ? wideZoom(this.camera.aspect) : 1) * portraitZoom(this.camera.aspect);
     this.camera.updateProjectionMatrix();
     this.post?.resize();
     this.hud?.resize(w, h);

@@ -5223,3 +5223,289 @@ body.reduced-motion #flight-layer {
 body.reduced-motion #flight-handoff .ho-flare {
   display: none;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Phones & tablets (main.ts sets body.is-touch and body[data-tier])
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* No live blur over the canvas on mobile GPUs: each backdrop-filter re-blurs
+   the WebGL frame under it every frame. A denser glass reads the same. */
+body.is-touch {
+  --glass: linear-gradient(180deg, rgba(8, 20, 34, 0.88), rgba(5, 11, 20, 0.74));
+}
+body.is-touch .jarvis-panel-inner,
+body.is-touch .flight-panel,
+body.is-touch .cycle-scrubber,
+body.is-touch .reclass-panel,
+body.is-touch .audio-timeline,
+body.is-touch .atl-track-top {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+body.is-touch .cycle-scrubber {
+  background: linear-gradient(180deg, rgba(6, 16, 26, 0.94) 0%, rgba(3, 8, 14, 0.9) 100%);
+}
+/* Invisible at a phone's density, and one more full-screen layer to composite */
+body.is-touch #scanlines {
+  display: none;
+}
+
+/* Nothing to press a key on */
+body.is-touch .gate-hint,
+body.is-touch .cs-keys {
+  display: none;
+}
+body.is-touch .cs-time {
+  margin-left: auto;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+
+/* Full-bleed canvas (viewport-fit=cover): chrome keeps out of the notch and
+   off the home indicator */
+body.is-touch .hud-top {
+  padding-left: calc(1.1rem + env(safe-area-inset-left, 0px));
+  padding-right: calc(1.1rem + env(safe-area-inset-right, 0px));
+  padding-top: calc(2.15rem + env(safe-area-inset-top, 0px));
+}
+body.is-touch .hud-frame {
+  top: calc(0.45rem + env(safe-area-inset-top, 0px));
+  right: calc(0.55rem + env(safe-area-inset-right, 0px));
+  bottom: calc(0.55rem + env(safe-area-inset-bottom, 0px));
+  left: calc(0.55rem + env(safe-area-inset-left, 0px));
+}
+
+/* Transport in the bar: hold / play and sound (Space and M on a keyboard) */
+.cs-btn {
+  flex: none;
+  position: relative;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin: -0.55rem 0 -0.45rem;
+  padding: 0;
+  border: 1px solid rgba(126, 232, 255, 0.28);
+  background: rgba(126, 232, 255, 0.05);
+  color: var(--cyan-bright);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.cs-btn:active {
+  background: rgba(126, 232, 255, 0.16);
+}
+.cs-btn::before,
+.cs-btn::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+}
+/* Hold: two bars */
+.cs-play::before,
+.cs-play::after {
+  width: 0.2rem;
+  height: 0.8rem;
+  margin-top: -0.4rem;
+  background: currentColor;
+}
+.cs-play::before {
+  margin-left: -0.32rem;
+}
+.cs-play::after {
+  margin-left: 0.12rem;
+}
+/* Play: a triangle */
+.cs-play.is-paused::before {
+  width: 0;
+  height: 0;
+  margin: -0.45rem 0 0 -0.22rem;
+  background: none;
+  border-style: solid;
+  border-width: 0.45rem 0 0.45rem 0.72rem;
+  border-color: transparent transparent transparent var(--gold-bright);
+}
+.cs-play.is-paused::after {
+  display: none;
+}
+/* Sound: a speaker, struck through when muted */
+.cs-mute::before {
+  background: currentColor;
+  clip-path: polygon(0 30%, 40% 30%, 100% 0, 100% 100%, 40% 70%, 0 70%);
+  width: 0.62rem;
+  height: 0.62rem;
+  margin: -0.31rem 0 0 -0.46rem;
+}
+.cs-mute::after {
+  width: 0.34rem;
+  height: 0.6rem;
+  margin: -0.3rem 0 0 0.18rem;
+  border: 1.5px solid currentColor;
+  border-left: 0;
+  border-radius: 0 0.6rem 0.6rem 0;
+}
+.cs-mute.is-muted {
+  color: rgba(255, 106, 77, 0.9);
+}
+.cs-mute.is-muted::after {
+  width: 0.7rem;
+  height: 0;
+  margin: 0 0 0 0.05rem;
+  border: 0;
+  border-top: 1.5px solid currentColor;
+  border-radius: 0;
+  transform: rotate(-45deg);
+}
+body.is-touch .cs-head {
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.65rem;
+}
+/* A finger-sized track */
+body.is-touch .cs-track {
+  height: 2.1rem;
+}
+body.is-touch .cycle-scrubber {
+  bottom: max(0.75rem, env(safe-area-inset-bottom, 0px) + 0.4rem);
+  width: min(46rem, calc(100vw - 1.5rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+}
+/* The FLY button steps up over the bar while it is up */
+body.is-touch #fly-link {
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  min-height: 44px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.8s ease, bottom 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+body.is-touch:has(.cycle-scrubber.is-visible) #fly-link {
+  bottom: calc(6.4rem + env(safe-area-inset-bottom, 0px));
+}
+body.is-touch:has(.cycle-scrubber.is-visible) .jarvis-telemetry {
+  bottom: calc(10.2rem + env(safe-area-inset-bottom, 0px));
+}
+/* The checklist clears the bar while it is up */
+body.is-touch .flight-panel {
+  transition:
+    opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    bottom 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+body.is-touch:has(.cycle-scrubber.is-visible) .flight-panel {
+  bottom: calc(7.6rem + env(safe-area-inset-bottom, 0px));
+}
+/* Its hint never runs off a narrow screen */
+#fly-link::before {
+  max-width: calc(100vw - 2rem);
+}
+@media (max-width: 600px) {
+  #fly-link::before {
+    white-space: normal;
+    width: max-content;
+    max-width: calc(100vw - 2.5rem);
+    text-align: right;
+    line-height: 1.6;
+  }
+}
+
+/* ── Phones ─────────────────────────────────────────────────────────── */
+
+/* The director's tools want a mouse and a wide screen */
+body[data-tier='phone'] .director-btn {
+  display: none;
+}
+
+/* Flight check: the step in hand and the gauges, not the whole list —
+   the suit is the picture */
+body[data-tier='phone'] .flight-panel {
+  left: calc(0.75rem + env(safe-area-inset-left, 0px));
+  right: auto;
+  width: min(19rem, calc(100vw - 1.5rem));
+  padding: 0.6rem 0.8rem 0.65rem;
+}
+body[data-tier='phone'] .flight-list li:not(.is-active) {
+  display: none;
+}
+body[data-tier='phone'] .flight-head {
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+body[data-tier='phone'] .flight-telemetry {
+  grid-template-columns: 3.6rem 1fr;
+  gap: 0.6rem;
+}
+body[data-tier='phone'] .flight-telemetry.is-open {
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+}
+body[data-tier='phone'] .flight-adi {
+  width: 3.6rem;
+  height: 3.6rem;
+}
+
+/* The bar's segments already name the phase: room for the time and buttons */
+body[data-tier='phone'] .cs-phase {
+  display: none;
+}
+/* One flavour line at a time: the ticker gives way to the checklist */
+body[data-tier='phone']:has(.flight-panel.is-visible) .jarvis-telemetry {
+  visibility: hidden;
+}
+
+/* Upright: the panel above the FLY button (and above the bar while it is up) */
+@media (orientation: portrait) {
+  body[data-tier='phone'] .flight-panel {
+    bottom: calc(4.4rem + env(safe-area-inset-bottom, 0px));
+  }
+  body[data-tier='phone']:has(.cycle-scrubber.is-visible) .flight-panel {
+    bottom: calc(9.8rem + env(safe-area-inset-bottom, 0px));
+  }
+  body[data-tier='phone'] .gate-name {
+    font-size: clamp(1.9rem, 10vw, 2.6rem);
+  }
+  body[data-tier='phone'] .gate-kicker {
+    font-size: 0.5rem;
+    letter-spacing: 0.3em;
+  }
+  body[data-tier='phone'] .start-btn.jarvis-orb {
+    --orb-size: min(14.5rem, 62vw, 36vh);
+  }
+}
+
+/* On its side: a short screen — tighter top bar and title card, and the
+   flight panel tucked to the left edge */
+@media (orientation: landscape) and (max-height: 500px) {
+  body.is-touch .hud-top {
+    padding-top: calc(1.2rem + env(safe-area-inset-top, 0px));
+    padding-bottom: 0.4rem;
+  }
+  body.is-touch .start-gate {
+    flex-direction: row;
+    gap: clamp(1.2rem, 5vw, 3rem);
+  }
+  body.is-touch .gate-title {
+    align-items: flex-start;
+    text-align: left;
+  }
+  body.is-touch .gate-name {
+    font-size: clamp(1.6rem, 5vw, 2.6rem);
+  }
+  body.is-touch .gate-sub::before {
+    display: none;
+  }
+  body.is-touch .start-btn.jarvis-orb {
+    --orb-size: min(12rem, 48vh);
+  }
+  body[data-tier='phone'] .flight-panel {
+    top: auto;
+    bottom: calc(0.9rem + env(safe-area-inset-bottom, 0px));
+    width: min(17rem, 40vw);
+  }
+  body[data-tier='phone']:has(.cycle-scrubber.is-visible) .flight-panel {
+    bottom: calc(6.6rem + env(safe-area-inset-bottom, 0px));
+  }
+  body.is-touch .jarvis-telemetry {
+    max-width: min(28rem, calc(100vw - 20rem));
+  }
+}
