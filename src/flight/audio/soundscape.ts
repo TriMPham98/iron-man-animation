@@ -141,6 +141,7 @@ const DEBOUNCE: Partial<Record<SimEvent['kind'], number>> = {
   heroLanding: 0.4,
   padLanding: 0.4,
   splash: 0.15,
+  skip: 0.15,
   boostStart: 0.3,
   ricochet: 0.08,
 };
@@ -326,6 +327,10 @@ export class Soundscape {
         break;
       case 'splash':
         if (at) this.splash(at, e.value ?? 5);
+        break;
+      case 'skip':
+        // Skipped off the top: the slap without the body going under
+        if (at) A.play(SFX.splash, { at, gain: Math.min(1, 0.35 + (e.value ?? 5) / 30), rate: 1.15, vary: 0.08, ref: 12 });
         break;
       case 'autoLand':
         // Handed over: the HUD's lock and the boots trimming; handed back: a click
@@ -531,7 +536,8 @@ export class Soundscape {
     this.trees?.set(leaves + 0.55 * wash, 1 + 0.25 * wash, 5000 + 12000 * Math.min(1, leaves * 3 + wash));
     // Skimming the sea: the boots' jets tearing up white water, louder with
     // the throttle and the speed it's dragged across the surface at
-    const skim = !overLand && !m.grounded ? THREE.MathUtils.smoothstep(-below, -18, -1.5) : 0;
+    // (and in it, the body itself cutting through the water)
+    const skim = !overLand && !m.grounded ? Math.max(THREE.MathUtils.smoothstep(-below, -18, -1.5), Math.min(1, m.immersion * 4)) : 0;
     const fast = THREE.MathUtils.smoothstep(m.speed, 5, 140);
     this.spray?.set(skim * Math.min(1.2, 0.45 * m.throttle + 0.8 * fast), 0.85 + 0.35 * fast, 2500 + 15000 * skim);
     // A ridge crest taken fast and close: the air slaps back off the rock

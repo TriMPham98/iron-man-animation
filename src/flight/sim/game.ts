@@ -4,6 +4,7 @@ import { Jets } from '../fx/jets';
 import { Particles } from '../fx/particles';
 import { SonicBoomFx } from '../fx/sonicBoom';
 import { GVaporFx } from '../fx/gVapor';
+import { WaterFx } from '../fx/water';
 import { patchLogDepth } from '../render/depth';
 import { PAD, PAD_R, PAD_Y } from '../world/house';
 import { gradeLanding } from '../world/landingPad';
@@ -64,6 +65,8 @@ export class Game {
   /** Vapour cone and shock ring at Mach 1 (and when, with hysteresis). */
   readonly sonic: SonicBoomFx;
   readonly gVapor: GVaporFx;
+  /** Splashes, wakes and water running off the armour. */
+  readonly water: WaterFx;
   private wasBoosting = false;
   /** The pad capture is holding (with hysteresis, for the cue). */
   private padHeld = false;
@@ -90,7 +93,8 @@ export class Game {
     readonly scene: THREE.Scene,
     camera: THREE.PerspectiveCamera,
   ) {
-    this.ground = groundProbe(world.field);
+    // (the sea's swell at the clock the ocean is drawn at, and its foam map)
+    this.ground = groundProbe(world.field, () => world.time, (ax, az, bx, bz, r, amount, inner) => world.ocean.foam(ax, az, bx, bz, r, amount, inner));
     this.model = new FlightModel(this.ground);
     this.model.landingAid = { x: PAD.x, z: PAD.y, y: PAD_Y };
     this.rig = new CameraRig(camera);
@@ -99,6 +103,7 @@ export class Game {
     scene.add(this.sonic.group);
     this.gVapor = new GVaporFx(suit, world.atmosphere.uniforms);
     scene.add(this.gVapor.group);
+    this.water = new WaterFx(suit);
     this.combat = new Combat(world.field, this.ground, this.model, suit, this.particles, this.events, (amount, at) => {
       this.rig.shake += amount > 15 ? 1.4 : 0.25;
       this.particles.burst('spark', at, 6, 10, undefined, 1);
@@ -135,7 +140,7 @@ export class Game {
   redeploy(): void {
     this.combat.resetRun();
     this.reset();
-    this.events.emit('jarvis', { text: 'Mark III redeployed. Full armour, two reserves, sir.' });
+    this.events.emit('jarvis', { text: 'Mark III redeployed. Full armour, one reserve, sir.' });
   }
 
   applyControls(c: Controls): void {
@@ -282,6 +287,7 @@ export class Game {
     const o = this.driver.outputs;
     this.jets.eye = helmet ? this.rig.camera.position : null;
     this.jets.update(dt, this.suit, { bootL: o.bootL, bootR: o.bootR, palmL: o.palmL, palmR: o.palmR, palmBoost: o.palmBoost }, this.ground, this.particles, this.model.vel);
+    this.water.update(dt, this.model, this.particles);
     this.particles.update(dt, this.rig.camera);
     this.sonic.update(dt, this.model.pos, this.model.vel, this.model.speed / SPEED_OF_SOUND, this.cleanFlow);
     this.gVapor.group.visible = !helmet;
@@ -345,13 +351,10 @@ export class Game {
       this.particles.burst('spark', below, 18, 7, new THREE.Vector3(0, 0.8, 0), 1);
     } else if (m.contact === 'splash') {
       this.rig.shake += Math.min(1.5, m.impactSpeed / 25);
-      const n = Math.round(10 + m.impactSpeed);
-      for (let i = 0; i < n; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const s = 2 + Math.random() * m.impactSpeed * 0.4;
-        this.particles.emit('spray', below, new THREE.Vector3(Math.cos(a) * s, 4 + Math.random() * m.impactSpeed * 0.5, Math.sin(a) * s), { scale: 1.4 });
-      }
-      this.particles.burst('mist', below, 8, 3, new THREE.Vector3(0, 0.6, 0), 1, { scale: 2 });
+      this.water.plunge(below, m.impactSpeed, m.impactVel, this.ground, this.particles);
+    } else if (m.contact === 'skip') {
+      this.rig.shake += Math.min(0.8, m.impactSpeed / 30);
+      this.water.skip(below, m.impactSpeed, m.impactVel, this.ground, this.particles);
     } else if (m.contact === 'touchdown') {
       this.particles.burst('dust', below, 10, 5, new THREE.Vector3(0, 0.2, 0), 1);
     }

@@ -25,6 +25,8 @@ import { rockOver } from './houseCliff';
  *    dither in (per pixel) over the models through a band before the
  *    models step out, so nothing pops.
  *  - Dense brush (< ~230 m): small clumps that grow in from the edge.
+ *  - Leaf cards (alpha-tested sprays of leaves) over every close crown and
+ *    the brush by the eye; each leaf shrinks away before its hand-over.
  * Cells are culled against a widened view frustum and the instance lists
  * rebuilt only when the eye has moved or turned enough to need it (or the
  * unibeam has cut something down: see {@link Felling}).
@@ -38,8 +40,15 @@ const LOD_NEAR = 330;
 const LOD_FAR = 420;
 /** The full models within this (m); the lighter builds beyond. */
 const LOD_HI = 150;
+/**
+ * Per kind: a shrub's leaf cards stop telling long before a tree's do, and
+ * with the crowns the same blobs either side the hand-over costs nothing.
+ */
+const HI_R: Record<Kind, number> = { bush: 80, oak: LOD_HI, pine: LOD_HI, palm: LOD_HI };
 /** Dense brush out to here (m). */
 const TUFT_R = 230;
+/** Brush within this (m) is the close build, in leaf cards. */
+const TUFT_HI = HI_R.bush;
 /** Rebuild the lists after this much travel (m) or turn (cos of ~7°). */
 const REBUILD_MOVE = 24;
 const REBUILD_TURN = Math.cos(THREE.MathUtils.degToRad(7));
@@ -50,7 +59,7 @@ const PLANT_BUDGET_MS = 2.5;
 
 const KINDS = ['bush', 'oak', 'pine', 'palm'] as const;
 type Kind = (typeof KINDS)[number];
-const CAP: Record<Kind | 'tuft' | 'grass', number> = { bush: 16000, oak: 5000, pine: 2500, palm: 2000, tuft: 10000, grass: 16000 };
+const CAP: Record<Kind | 'tuft' | 'tuftHi' | 'grass', number> = { bush: 16000, oak: 5000, pine: 2500, palm: 2000, tuft: 10000, tuftHi: 3000, grass: 16000 };
 const CAP_HI: Record<Kind, number> = { bush: 4000, oak: 1500, pine: 800, palm: 800 };
 const IMP_CAP = 60000;
 /** Floats per near instance: matrix (16) + tint (3). */
@@ -125,6 +134,12 @@ export function blob(r: number, sy: number, at: THREE.Vector3, seed: number, det
  */
 export function clump(r: number, sy: number, at: THREE.Vector3, seed: number, hi: boolean, leafy: number, leaf = 0.42): THREE.BufferGeometry {
   if (!hi) return blob(r, sy, at, seed, 0, leafy);
+  if (cardSink) {
+    // The lighter build's own blob (so the hand-over shows nothing), laced with cards
+    const shell = blob(r, sy, at, seed, 0, leafy);
+    shell.userData.cards = leafCards(shell, r, at, seed, leaf);
+    return shell;
+  }
   const core = blob(r * 0.86, sy, at, seed, 0, leafy * 0.6);
   const cp = core.getAttribute('position');
   const rnd = seeded(seed, 977);
@@ -177,6 +192,103 @@ export function clump(r: number, sy: number, at: THREE.Vector3, seed: number, hi
   return mergeGeometries([bare(core), leaves]);
 }
 
+/**
+ * While a model's built through {@link withCards}: its clumps keep their
+ * leaves out of the mesh and the crowns leave their (lit) cards here.
+ */
+let cardSink: THREE.BufferGeometry[] | null = null;
+
+/** Vertices per leaf card (two triangles, in a fixed corner order). */
+const CARD_CORNERS = [0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1];
+
+/**
+ * Leaf cards over a clump's surface: on it to a little proud of it (they
+ * lace its outline into leaves and cover its face), facing out at up to
+ * ~30° and turned at random. Normals are the clump's, so the cards
+ * light as one soft mass with it, never as flat sheets.
+ */
+function leafCards(shell: THREE.BufferGeometry, r: number, at: THREE.Vector3, seed: number, leaf: number): THREE.BufferGeometry {
+  const sp = shell.getAttribute('position');
+  const tris = sp.count / 3;
+  const rnd = seeded(seed, 433);
+  // (never so small the cards outnumber what they cover: small-leaved
+  // plants just show the atlas's leaves smaller)
+  const half = Math.max(0.3, leaf * 1.1);
+  const n = Math.round((10 * r * r) / (half * half));
+  const pos = new Float32Array(n * 18);
+  const nrm = new Float32Array(n * 18);
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const p = new THREE.Vector3();
+  const out = new THREE.Vector3();
+  const face = new THREE.Vector3();
+  const t1 = new THREE.Vector3();
+  const t2 = new THREE.Vector3();
+  const nn = new THREE.Vector3();
+  for (let k = 0; k < n; k++) {
+    const f = Math.floor(rnd() * tris) * 3;
+    a.fromBufferAttribute(sp, f);
+    b.fromBufferAttribute(sp, f + 1);
+    c.fromBufferAttribute(sp, f + 2);
+    let u = rnd();
+    let v = rnd();
+    if (u + v > 1) {
+      u = 1 - u;
+      v = 1 - v;
+    }
+    p.copy(a).addScaledVector(b.sub(a), u).addScaledVector(c.sub(a), v);
+    out.copy(p).sub(at).normalize();
+    p.addScaledVector(out, r * rnd() * 0.16);
+    face.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).add(out).normalize();
+    t1.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).cross(face).normalize();
+    t2.crossVectors(face, t1);
+    const s = half * (0.75 + rnd() * 0.5);
+    nn.copy(out);
+    nn.y = nn.y * 0.8 + 0.35;
+    nn.normalize();
+    for (let j = 0; j < 6; j++) {
+      const cu = CARD_CORNERS[j * 2] * 2 - 1;
+      const cv = CARD_CORNERS[j * 2 + 1] * 2 - 1;
+      pos.set([p.x + (t1.x * cu + t2.x * cv) * s, p.y + (t1.y * cu + t2.y * cv) * s, p.z + (t1.z * cu + t2.z * cv) * s], k * 18 + j * 3);
+      nrm.set([nn.x, nn.y, nn.z], k * 18 + j * 3);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  return g;
+}
+
+/**
+ * A model's close build with leaf cards instead of leaf triangles: the
+ * mesh, its crowns the lighter build's blobs, and the cards to draw over
+ * it, each uv'd into one of the four sprays of the leaf atlas. No cards
+ * (null) for a model with no clumps.
+ */
+export function withCards(build: () => THREE.BufferGeometry): { model: THREE.BufferGeometry; cards: THREE.BufferGeometry | null } {
+  const sink: THREE.BufferGeometry[] = [];
+  cardSink = sink;
+  let model: THREE.BufferGeometry;
+  try {
+    model = build();
+  } finally {
+    cardSink = null;
+  }
+  if (!sink.length) return { model, cards: null };
+  const cards = mergeGeometries(sink);
+  const count = cards.getAttribute('position').count;
+  const uv = new Float32Array(count * 2);
+  for (let i = 0; i < count; i++) {
+    const q = Math.floor(hash3(Math.floor(i / 6), 0.5, 0, 3) * 4);
+    const j = i % 6;
+    uv[i * 2] = (CARD_CORNERS[j * 2] + (q & 1)) / 2;
+    uv[i * 2 + 1] = (CARD_CORNERS[j * 2 + 1] + (q >> 1)) / 2;
+  }
+  cards.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return { model, cards };
+}
+
 /** Non-indexed, position + normal only: anything can then merge with anything. */
 export function bare(g: THREE.BufferGeometry): THREE.BufferGeometry {
   const out = g.index ? g.toNonIndexed() : g;
@@ -211,10 +323,16 @@ const WARM = new THREE.Color(1.3, 1.15, 0.62);
  * cast), a clump-to-clump breakup in tone and a warmer, yellower cast on
  * the outer twigs; normals pulled toward the crown's envelope so it
  * shades as one mass, not a pile of balls. Free at draw time, and the
- * impostors inherit it from the bake.
+ * impostors inherit it from the bake. The clumps' leaf cards (if they
+ * have them) are lit the same way and handed to {@link withCards}.
  */
 export function foliage(parts: THREE.BufferGeometry[], c: THREE.Vector3, rad: THREE.Vector3, top: THREE.Color, bottom: THREE.Color, seed: number): THREE.BufferGeometry {
-  const g = paint(mergeGeometries(parts.map(bare)), top, bottom, c.y - rad.y, c.y + rad.y);
+  const cards = parts.flatMap((p) => (p.userData.cards as THREE.BufferGeometry | undefined) ?? []);
+  if (cards.length && cardSink) cardSink.push(crownLight(paint(mergeGeometries(cards), top, bottom, c.y - rad.y, c.y + rad.y), c, rad, seed));
+  return crownLight(paint(mergeGeometries(parts.map(bare)), top, bottom, c.y - rad.y, c.y + rad.y), c, rad, seed);
+}
+
+function crownLight(g: THREE.BufferGeometry, c: THREE.Vector3, rad: THREE.Vector3, seed: number): THREE.BufferGeometry {
   const pos = g.getAttribute('position');
   const nrm = g.getAttribute('normal');
   const col = g.getAttribute('color');
@@ -601,6 +719,32 @@ const SHADE_GLSL = /* glsl */ `
   reflectedLight.indirectDiffuse += diffuseColor.rgb * uSunColor * (vegBack * 0.35 * RECIPROCAL_PI * vegBake.r);
 `;
 
+// Leaf cards: cut out of the atlas, fading by shrinking every leaf
+/** Leaf atlas size (px). */
+const LEAF_ATLAS = 512;
+/** Alpha cut-off at full size: each leaf's cone of alpha crosses it at the leaf's edge. */
+const LEAF_CUT = 0.35;
+
+const CARD_VERT_PARS = /* glsl */ `
+${NEAR_VERT_PARS}
+varying vec2 vLeafUv;
+`;
+const CARD_FRAG_PARS = /* glsl */ `
+${NEAR_FRAG_PARS}
+uniform sampler2D uLeaf;
+uniform vec2 uCardFade; // leaves shrink away between (start, end) m
+varying vec2 vLeafUv;
+`;
+const CARD_MAP_GLSL = /* glsl */ `
+  vec4 leaf = texture2D(uLeaf, vLeafUv);
+  // Mips average the leaves' alpha down: hold their size as the cards recede
+  vec2 leafPx = vLeafUv * ${LEAF_ATLAS}.0;
+  float leafLod = max(0.0, 0.5 * log2(max(dot(dFdx(leafPx), dFdx(leafPx)), dot(dFdy(leafPx), dFdy(leafPx)))));
+  float leafCut = mix(${LEAF_CUT}, 1.01, smoothstep(uCardFade.x, uCardFade.y, distance(vInstWorld, cameraPosition)));
+  if (leaf.a * (1.0 + 0.3 * leafLod) < leafCut) discard;
+  diffuseColor.rgb *= leaf.rgb * 1.25;
+`;
+
 // Felled trees: the close build, kept on one side of the cut (no sway)
 const FELL_VERT_PARS = /* glsl */ `
 attribute vec3 aCut; // cut height (model units), side kept (+1 above, −1 below), heat 0–1
@@ -679,6 +823,120 @@ varying vec3 vFwd;
 ${DITHER_GLSL}
 ${ATMOSPHERE_GLSL}
 `;
+
+// ── Leaf atlas ───────────────────────────────────────────────────────────
+
+/**
+ * Four sprays of small leaves on twigs, one per quadrant: rgb a multiplier
+ * on the crown's baked colour (each leaf its own value and a little warmer
+ * or cooler, darker toward its stalk), alpha a cone peaking down each
+ * leaf's midrib, so filtering keeps the edges crisp close up and raising
+ * the cut-off shrinks every leaf evenly (how the cards fade out).
+ */
+function leafAtlas(): THREE.DataTexture {
+  const N = LEAF_ATLAS;
+  const Q = N / 2;
+  const px = new Uint8Array(N * N * 4);
+  const rnd = seeded(41, 17);
+  const put = (x: number, y: number, a: number, r: number, g: number, b: number) => {
+    const i = (y * N + x) * 4;
+    if (a * 255 <= px[i + 3]) return;
+    px[i] = Math.min(255, r * 255);
+    px[i + 1] = Math.min(255, g * 255);
+    px[i + 2] = Math.min(255, b * 255);
+    px[i + 3] = a * 255;
+  };
+  /** A pointed oval, `len` × `wid` px, centred at (cx, cy) in quadrant (qx, qy). */
+  const shape = (qx: number, qy: number, cx: number, cy: number, ang: number, len: number, wid: number, tone: readonly number[], taper: number) => {
+    const ex = len / 2 / (1 - LEAF_CUT);
+    const ey = wid / 2 / (1 - LEAF_CUT);
+    const R = Math.ceil(ex);
+    const co = Math.cos(ang);
+    const si = Math.sin(ang);
+    // A few texels' margin round each quadrant, so the mips don't bleed sprays together
+    for (let y = Math.max(4, Math.floor(cy - R)); y <= Math.min(Q - 5, Math.ceil(cy + R)); y++) {
+      for (let x = Math.max(4, Math.floor(cx - R)); x <= Math.min(Q - 5, Math.ceil(cx + R)); x++) {
+        const dx = x + 0.5 - cx;
+        const dy = y + 0.5 - cy;
+        const u = (dx * co + dy * si) / ex;
+        const v = (-dx * si + dy * co) / ey;
+        const e = Math.hypot(u, v / Math.max(0.2, 1 - taper * u));
+        if (e >= 1) continue;
+        const k = 0.8 + 0.2 * (u * 0.5 + 0.5);
+        put(qx + x, qy + y, 1 - e, tone[0] * k, tone[1] * k, tone[2] * k);
+      }
+    }
+  };
+  const TWIG = [0.42, 0.34, 0.24];
+  const twig = (qx: number, qy: number, x0: number, y0: number, x1: number, y1: number) => {
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    shape(qx, qy, (x0 + x1) / 2, (y0 + y1) / 2, Math.atan2(y1 - y0, x1 - x0), len, 2.6, TWIG, 0.3);
+  };
+  const leafTone = (): number[] => {
+    const v = 0.62 + rnd() * 0.38;
+    const h = rnd();
+    // Mostly plain, some yellowed in the sun, some bluer in the shade
+    const t = h < 0.25 ? [1.08, 1.04, 0.72] : h < 0.45 ? [0.84, 0.95, 1.05] : [1, 1, 1];
+    return t.map((c) => c * v);
+  };
+  for (let q = 0; q < 4; q++) {
+    const qx = (q & 1) * Q;
+    const qy = (q >> 1) * Q;
+    const leafLen = () => Q * (0.095 + rnd() * 0.045);
+    const leaf = (x: number, y: number, ang: number) => {
+      const l = leafLen();
+      shape(qx, qy, x + Math.cos(ang) * l * 0.45, y + Math.sin(ang) * l * 0.45, ang, l, l * (0.42 + rnd() * 0.14), leafTone(), 0.35);
+    };
+    // The main stem up the card, twigs off it alternately, leaves along both
+    const sx = Q * (0.5 + (rnd() - 0.5) * 0.1);
+    const ex = Q * (0.5 + (rnd() - 0.5) * 0.25);
+    const stem = (t: number): [number, number] => [sx + (ex - sx) * t * t, Q * (0.08 + 0.8 * t)];
+    for (let i = 0; i < 8; i++) {
+      const [x0, y0] = stem(i / 8);
+      const [x1, y1] = stem((i + 1) / 8);
+      twig(qx, qy, x0, y0, x1, y1);
+    }
+    const sprigs: number[][] = [];
+    for (let i = 0; i < 9; i++) {
+      const t = 0.12 + i * 0.09 + rnd() * 0.04;
+      const [x0, y0] = stem(t);
+      const side = i % 2 ? 1 : -1;
+      const ang = Math.PI / 2 + side * (0.7 + rnd() * 0.5);
+      const len = Q * (0.32 - 0.18 * t) * (0.85 + rnd() * 0.3);
+      const x1 = x0 + Math.cos(ang) * len;
+      const y1 = y0 + Math.sin(ang) * len;
+      twig(qx, qy, x0, y0, x1, y1);
+      sprigs.push([x0, y0, x1, y1, ang]);
+    }
+    for (const [x0, y0, x1, y1, ang] of sprigs) {
+      const nl = 6 + Math.floor(rnd() * 3);
+      for (let l = 0; l < nl; l++) {
+        const t = 0.25 + (l / nl) * 0.8;
+        leaf(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, ang + (l % 2 ? 1 : -1) * (0.5 + rnd() * 0.5));
+      }
+      leaf(x1, y1, ang + (rnd() - 0.5) * 0.4);
+    }
+    for (let l = 0; l < 10; l++) {
+      const [x, y] = stem(0.15 + l * 0.08);
+      leaf(x, y, Math.PI / 2 + (l % 2 ? 1 : -1) * (0.6 + rnd() * 0.5));
+    }
+    // Loose leaves filling in round the spray, so a card reads as foliage, not a twig
+    for (let l = 0; l < 18; l++) {
+      const a = rnd() * Math.PI * 2;
+      const d = Q * (0.12 + rnd() * 0.26);
+      leaf(Q * 0.5 + Math.cos(a) * d, Q * 0.5 + Math.sin(a) * d, rnd() * Math.PI * 2);
+    }
+    const [tx, ty] = stem(1);
+    leaf(tx, ty - 2, Math.PI / 2 + (rnd() - 0.5) * 0.3);
+  }
+  const tex = new THREE.DataTexture(px, N, N, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = true;
+  tex.anisotropy = 4;
+  tex.needsUpdate = true;
+  return tex;
+}
 
 // ── Impostor atlas ───────────────────────────────────────────────────────
 
@@ -846,6 +1104,7 @@ export class Vegetation {
   private readonly near: Record<Kind, THREE.InstancedMesh>;
   private readonly close: Record<Kind, THREE.InstancedMesh>;
   private readonly tuft: THREE.InstancedMesh;
+  private readonly tuftHi: THREE.InstancedMesh;
   private readonly grass: THREE.InstancedMesh;
   private readonly imp: THREE.Mesh<THREE.InstancedBufferGeometry, THREE.MeshStandardMaterial>;
   private readonly impA: THREE.InstancedBufferAttribute;
@@ -874,6 +1133,9 @@ export class Vegetation {
   private lastTime = 0;
   readonly felling: Felling;
   private gardenMesh!: (geo: THREE.BufferGeometry, cap: number, range: number, twoSided: boolean) => THREE.InstancedMesh;
+  /** Leaf cards over a close build: (mesh, its cards), drawn from the mesh's own instances. */
+  private readonly cards: [THREE.InstancedMesh, THREE.InstancedMesh][] = [];
+  private cardMesh!: (owner: THREE.InstancedMesh, cards: THREE.BufferGeometry | null, fadeEnd: number) => void;
   /** Cells and instances put in the lists at the last rebuild (stats). */
   stats = { cells: 0, near: 0, imp: 0, tuft: 0, rebuilds: 0, buildMs: 0 };
 
@@ -931,13 +1193,60 @@ export class Vegetation {
       pine: make(this.geos.pine, CAP.pine, treeMat),
       palm: make(this.geos.palm, CAP.palm, palmMat),
     };
+    const hiBuild = { bush: withCards(() => MODELS.bush('hi')), oak: withCards(() => MODELS.oak('hi')), pine: withCards(() => MODELS.pine('hi')), palm: withCards(() => MODELS.palm('hi')) };
     this.close = {
-      bush: make(MODELS.bush('hi'), CAP_HI.bush, treeMat),
-      oak: make(MODELS.oak('hi'), CAP_HI.oak, treeMat),
-      pine: make(MODELS.pine('hi'), CAP_HI.pine, treeMat),
-      palm: make(MODELS.palm('hi'), CAP_HI.palm, palmMat),
+      bush: make(hiBuild.bush.model, CAP_HI.bush, treeMat),
+      oak: make(hiBuild.oak.model, CAP_HI.oak, treeMat),
+      pine: make(hiBuild.pine.model, CAP_HI.pine, treeMat),
+      palm: make(hiBuild.palm.model, CAP_HI.palm, palmMat),
     };
+
+    // Leaf cards: two-sided, lit from the crown's normals whichever side
+    // shows, and alpha-tested; only ever over the close builds (< ~150 m),
+    // so the discard costs little. They've shrunk away before the hand-over
+    // even when the eye has come a rebuild's travel nearer since the lists
+    // were drawn up, so a crown never gains its leaves with a pop.
+    const leafTex = leafAtlas();
+    const cardMats = new Map<number, THREE.Material>();
+    const cardMat = (fadeEnd: number) => {
+      let mat = cardMats.get(fadeEnd);
+      if (mat) return mat;
+      const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, metalness: 0, side: THREE.DoubleSide });
+      m.envMapIntensity = 0.7;
+      const u = { ...this.uniforms, uFade: { value: new THREE.Vector4(1e6, 1e6 + 1, 1e6, 1e6 + 1) }, uLeaf: { value: leafTex }, uCardFade: { value: new THREE.Vector2(fadeEnd - REBUILD_MOVE - 36, fadeEnd - REBUILD_MOVE - 2) } };
+      m.onBeforeCompile = (shader) => {
+        Object.assign(shader.uniforms, u);
+        shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>\n${CARD_VERT_PARS}`).replace('#include <begin_vertex>', `${NEAR_VERT_BEGIN}\n  vLeafUv = uv;`);
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', `#include <common>\n${CARD_FRAG_PARS}`)
+          .replace('#include <map_fragment>', CARD_MAP_GLSL)
+          .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('gl_FrontFacing ? 1.0 : - 1.0', '1.0'))
+          .replace('#include <aomap_fragment>', SHADE_GLSL)
+          .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vInstWorld, vegBake.r);');
+      };
+      m.customProgramCacheKey = () => `vegetation-cards-${fadeEnd}`;
+      cardMats.set(fadeEnd, m);
+      return m;
+    };
+    this.cardMesh = (owner, geo, fadeEnd) => {
+      if (!geo) return;
+      const m = new THREE.InstancedMesh(geo, cardMat(fadeEnd), 1);
+      m.instanceMatrix = owner.instanceMatrix;
+      m.instanceColor = owner.instanceColor;
+      m.count = 0;
+      m.frustumCulled = false;
+      m.castShadow = false;
+      m.receiveShadow = true;
+      m.matrixAutoUpdate = false;
+      // After the shells, so depth rejects the halves of the cards inside them
+      m.renderOrder = 1;
+      this.group.add(m);
+      this.cards.push([owner, m]);
+    };
+    for (const k of KINDS) this.cardMesh(this.close[k], hiBuild[k].cards, HI_R[k]);
     this.tuft = make(this.geos.bush, CAP.tuft, tuftMat);
+    this.tuftHi = make(hiBuild.bush.model, CAP.tuftHi, tuftMat);
+    this.cardMesh(this.tuftHi, hiBuild.bush.cards, TUFT_HI);
     this.gardenMesh = (geo, cap, range, twoSided) => {
       const key = `garden-${range}${twoSided ? '-2' : ''}`;
       let mat = this.gardenMat.get(key);
@@ -965,7 +1274,8 @@ export class Vegetation {
     };
     fellMat.customProgramCacheKey = () => 'vegetation-felled';
     this.felling = new Felling(field, fellMat);
-    for (const k of KINDS) this.felling.register(k, this.close[k].geometry);
+    // (felled trees keep the leaf-triangle build: no cards to fall with them)
+    for (const k of KINDS) this.felling.register(k, MODELS[k]('hi'));
     this.group.add(this.felling.group);
 
     // Impostors
@@ -1055,15 +1365,13 @@ export class Vegetation {
       });
       const range = model.range ?? RADIUS;
       const twoSided = !!model.twoSided;
-      const hi = model.build('hi');
-      this.felling.register(kind, hi);
+      const hi = withCards(() => model.build('hi'));
+      this.felling.register(kind, model.build('hi'));
       this.gardenKind.push(kind);
-      this.garden.push({
-        hi: this.gardenMesh(hi, list.length, range, twoSided),
-        lo: this.gardenMesh(model.build('lo'), list.length, range, twoSided),
-        src,
-        hiR: model.hiRange ?? 200,
-      });
+      const hiR = model.hiRange ?? 200;
+      const g = { hi: this.gardenMesh(hi.model, list.length, range, twoSided), lo: this.gardenMesh(model.build('lo'), list.length, range, twoSided), src, hiR };
+      this.cardMesh(g.hi, hi.cards, hiR);
+      this.garden.push(g);
     }
     this.lastEye.set(Infinity, 0, 0);
   }
@@ -1299,6 +1607,7 @@ export class Vegetation {
     const hiCount: Record<Kind, number> = { bush: 0, oak: 0, pine: 0, palm: 0 };
     let impN = 0;
     let tuftN = 0;
+    let tuftHiN = 0;
     let grassN = 0;
     let cells = 0;
     const impA = this.impA.array as Float32Array;
@@ -1358,19 +1667,19 @@ export class Vegetation {
         const dy = Math.max(c.minY - eye.y, 0, eye.y - c.maxY);
         const dMin = Math.sqrt(flat2 + dy * dy);
         const dMax = Math.hypot(Math.max(Math.abs(c.x - eye.x) + half, 0), Math.max(Math.abs(c.z - eye.z) + half, 0), Math.max(Math.abs(c.minY - eye.y), Math.abs(c.maxY - eye.y)));
-        if (dMax < LOD_HI) {
-          for (const k of KINDS) hiCount[k] += copyNear(this.close[k], c.near[k], hiCount[k], CAP_HI[k]);
-        } else if (dMin > LOD_HI) {
-          if (dMin < LOD_FAR + REBUILD_MOVE) for (const k of KINDS) nearCount[k] += copyNear(this.near[k], c.near[k], nearCount[k], CAP[k]);
-        } else {
-          // Straddling the hand-over: tree by tree
-          for (const k of KINDS) {
+        for (const k of KINDS) {
+          const hr = HI_R[k];
+          if (dMax < hr) hiCount[k] += copyNear(this.close[k], c.near[k], hiCount[k], CAP_HI[k]);
+          else if (dMin > hr) {
+            if (dMin < LOD_FAR + REBUILD_MOVE) nearCount[k] += copyNear(this.near[k], c.near[k], nearCount[k], CAP[k]);
+          } else {
+            // Straddling the hand-over: tree by tree
             const src = c.near[k];
             for (let o = 0; o < src.length; o += NEAR_STRIDE) {
               const ex = src[o + 12] - eye.x;
               const ey = src[o + 13] - eye.y;
               const ez = src[o + 14] - eye.z;
-              if (ex * ex + ey * ey + ez * ez < LOD_HI * LOD_HI) {
+              if (ex * ex + ey * ey + ez * ez < hr * hr) {
                 if (hiCount[k] < CAP_HI[k]) put(this.close[k], src, o, hiCount[k]++);
               } else if (nearCount[k] < CAP[k]) put(this.near[k], src, o, nearCount[k]++);
             }
@@ -1395,7 +1704,16 @@ export class Vegetation {
         }
         if (dMin < TUFT_R + REBUILD_MOVE) {
           const t = this.tufts(c);
-          if (t) {
+          if (t && dMin < TUFT_HI + REBUILD_MOVE) {
+            // By the eye: clump by clump
+            const src = t.brush;
+            for (let o = 0; o < src.length; o += NEAR_STRIDE) {
+              const near = (src[o + 12] - eye.x) ** 2 + (src[o + 13] - eye.y) ** 2 + (src[o + 14] - eye.z) ** 2 < TUFT_HI * TUFT_HI;
+              if (near && tuftHiN < CAP.tuftHi) put(this.tuftHi, src, o, tuftHiN++);
+              else if (!near && tuftN < CAP.tuft) put(this.tuft, src, o, tuftN++);
+            }
+            grassN += copyNear(this.grass, t.grass, grassN, CAP.grass);
+          } else if (t) {
             tuftN += copyNear(this.tuft, t.brush, tuftN, CAP.tuft);
             grassN += copyNear(this.grass, t.grass, grassN, CAP.grass);
           }
@@ -1420,6 +1738,9 @@ export class Vegetation {
     this.tuft.count = tuftN;
     upload(this.tuft.instanceMatrix, tuftN);
     upload(this.tuft.instanceColor!, tuftN);
+    this.tuftHi.count = tuftHiN;
+    upload(this.tuftHi.instanceMatrix, tuftHiN);
+    upload(this.tuftHi.instanceColor!, tuftHiN);
     this.grass.count = grassN;
     upload(this.grass.instanceMatrix, grassN);
     upload(this.grass.instanceColor!, grassN);
@@ -1440,13 +1761,14 @@ export class Vegetation {
         upload(m.instanceColor!, n);
       }
     }
+    for (const [owner, cards] of this.cards) cards.count = owner.count;
     this.imp.geometry.instanceCount = impN;
     upload(this.impA, impN);
     upload(this.impB, impN);
     upload(this.impT, impN);
     this.pending = pending;
     const nearN = KINDS.reduce((s, k) => s + nearCount[k] + hiCount[k], 0);
-    this.stats = { cells, near: nearN, imp: impN, tuft: tuftN + grassN, rebuilds: this.stats.rebuilds + 1, buildMs: +(performance.now() - t0).toFixed(2) };
+    this.stats = { cells, near: nearN, imp: impN, tuft: tuftN + tuftHiN + grassN, rebuilds: this.stats.rebuilds + 1, buildMs: +(performance.now() - t0).toFixed(2) };
   }
 
   get instanceCount(): number {

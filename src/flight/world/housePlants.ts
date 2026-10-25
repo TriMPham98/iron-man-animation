@@ -189,11 +189,12 @@ function agaveGeometry(d: Detail): THREE.BufferGeometry {
 /** Every kind the garden plants, keyed as the house lays them out. */
 export const GARDEN: Record<string, GardenModel> = {
   palm: { build: MODELS.palm, twoSided: true, hiRange: 260 },
-  oak: { build: MODELS.oak },
-  olive: { build: oliveGeometry },
+  oak: { build: MODELS.oak, hiRange: 150 },
+  olive: { build: oliveGeometry, hiRange: 120 },
   cypress: { build: cypressGeometry },
-  bush: { build: MODELS.bush, range: 1200 },
-  hedge: { build: hedgeGeometry, range: 900, hiRange: 120 },
+  // (the close builds carry leaf cards: shrubs need them only near)
+  bush: { build: MODELS.bush, range: 1200, hiRange: 80 },
+  hedge: { build: hedgeGeometry, range: 900, hiRange: 70 },
   agave: { build: agaveGeometry, twoSided: true, range: 500, hiRange: 90 },
   grass: { build: () => grassGeometry(), range: 260 },
 };

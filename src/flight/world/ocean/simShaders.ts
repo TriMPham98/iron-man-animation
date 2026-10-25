@@ -210,10 +210,14 @@ void main() {
 }
 `;
 
+/** Most foam stamps (splashes, wakes, jet wash) laid into the clipmaps in one step. */
+export const FOAM_STAMPS = 16;
+
 /**
  * World-space foam clipmap, toroidally addressed around the eye. Foam is
- * injected where the total surface Jacobian folds (crests breaking), decays,
- * and drifts downwind. R = foam, G = freshness.
+ * injected where the total surface Jacobian folds (crests breaking) and
+ * wherever something has churned the water (stamps: a swept disc or a
+ * ring), decays, and drifts downwind. R = foam, G = freshness.
  */
 export const FOAM_UPDATE_FRAG = HEAD + /* glsl */ `
 precision highp sampler2DArray;
@@ -229,6 +233,9 @@ uniform vec3 uInject;     // J threshold, gain, growth
 uniform vec2 uDrift;      // m/s
 uniform vec4 uCascL;
 uniform float uFirst;
+uniform vec4 uStampA[${FOAM_STAMPS}]; // segment a.xz, b.xz (m)
+uniform vec4 uStampB[${FOAM_STAMPS}]; // radius, ring's inner radius (m), amount, -
+uniform int uStamps;
 out vec4 oColor;
 // floor-mod (GLSL's % is undefined for negative operands)
 int wrapIdx(int i, int lo) { int d = i - lo; return lo + d - uRes * int(floor(float(d) / float(uRes))); }
@@ -257,6 +264,18 @@ void main() {
     prev = textureLod(uPrev, back, 0.0);
   }
   float inject = clamp((uInject.x - J) * uInject.y, 0.0, 1.0);
+  // White water churned up by the suit: a disc swept along its path, or a ring
+  for (int i = 0; i < ${FOAM_STAMPS}; i++) {
+    if (i >= uStamps) break;
+    vec4 a = uStampA[i];
+    vec4 b = uStampB[i];
+    vec2 ab = a.zw - a.xy;
+    float h = clamp(dot(p - a.xy, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+    float d = length(p - a.xy - ab * h);
+    float soft = max(uTexel, b.x * 0.4);
+    float k = (1.0 - smoothstep(b.x - soft, b.x, d)) * smoothstep(b.y - soft, b.y, d);
+    inject = max(inject, k * b.z);
+  }
   float f = prev.r * exp(-uDt * uDecay);
   f = max(f, inject);
   f = min(f + inject * uDt * uInject.z, 1.6);

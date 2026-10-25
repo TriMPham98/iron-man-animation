@@ -935,4 +935,93 @@ describe('FlightModel', () => {
       expect(THREE.MathUtils.radToDeg(fastest)).toBeLessThan(100);
     }
   });
+
+  describe('the sea', () => {
+    /** Open sea at y = 0 over a floor `floor` down. */
+    const sea = (floor = -60): GroundProbe => ({ ...flat(true), seabed: () => floor });
+    const flying = (vy: number, vz: number, y: number) => {
+      const m = new FlightModel(sea());
+      m.pos.set(0, y, 0);
+      m.vel.set(0, vy, vz);
+      m.grounded = false;
+      m.airT = 5;
+      m.flightness = 1;
+      m.posture = 1.42;
+      m.speedCmd = Math.hypot(vy, vz);
+      return m;
+    };
+    /** Runs, collecting contacts and the lowest the body got (m, below the surface −). */
+    const watch = (m: FlightModel, seconds: number, set: (i: ReturnType<typeof EMPTY_INPUT>, t: number) => void) => {
+      const contacts: string[] = [];
+      let deepest = Infinity;
+      let maxG = 0;
+      run(m, seconds, (i, t) => {
+        set(i, t);
+        if (m.contact !== 'none') contacts.push(m.contact);
+        deepest = Math.min(deepest, m.pos.y - m.hipHeight());
+        maxG = Math.max(maxG, Math.abs(m.gLoad));
+      });
+      return { contacts, deepest, maxG };
+    };
+
+    it('skips off it taken fast at a shallow angle, and keeps most of the speed', () => {
+      const m = flying(-8, 160, 2);
+      let skipped = false;
+      run(m, 0.6, (i) => {
+        i.aim.set(0, 0, 1);
+        if (m.contact === 'skip') skipped = true;
+      });
+      expect(skipped).toBe(true);
+      expect(m.speed).toBeGreaterThan(110);
+    });
+
+    it('goes in steeper: stops in a few metres, out of flight, and the boots climb it back out', () => {
+      const m = flying(-80, 60, 3);
+      const { contacts, deepest, maxG } = watch(m, 0.4, (i) => i.aim.set(0, -0.8, 0.6).normalize());
+      expect(contacts).toContain('splash');
+      expect(contacts).not.toContain('skip');
+      expect(m.speed).toBeLessThan(10);
+      expect(m.flightness).toBeLessThan(0.1);
+      expect(deepest).toBeGreaterThan(-8);
+      // (the water's slam isn't a pull: no g meter spike, no vapour)
+      expect(maxG).toBeLessThan(G_LIMIT);
+      run(m, 3, (i) => i.aim.set(0, 0, 1));
+      expect(m.immersion).toBe(0);
+      expect(m.pos.y - m.hipHeight()).toBeGreaterThan(0);
+    });
+
+    it('knifes deeper feet first than it goes in flat, and floats back up the same', () => {
+      const fall = new FlightModel(sea());
+      fall.pos.set(0, 150, 0);
+      fall.grounded = false;
+      fall.airT = 5;
+      const feet = watch(fall, 6.5, (i) => (i.vertical = -1));
+      expect(feet.contacts).toContain('splash');
+      expect(feet.deepest).toBeLessThan(-6);
+      run(fall, 6, () => {});
+      expect(fall.immersion).toBe(0);
+      expect(fall.wetness).toBeGreaterThan(0);
+    });
+
+    it('never sinks through the sea floor', () => {
+      const m = new FlightModel(sea(-3));
+      m.pos.set(0, 150, 0);
+      m.grounded = false;
+      m.airT = 5;
+      const { deepest } = watch(m, 9, (i) => (i.vertical = -1));
+      expect(deepest).toBeGreaterThanOrEqual(-3.001);
+    });
+
+    it('lets down into it at a hover without bouncing, and lifts back out', () => {
+      const m = new FlightModel(sea());
+      m.pos.set(0, 3, 0);
+      m.grounded = false;
+      m.airT = 5;
+      const { contacts } = watch(m, 4, (i) => (i.vertical = -0.15));
+      expect(contacts.filter((c) => c === 'splash').length).toBeLessThanOrEqual(1);
+      expect(m.immersion).toBeGreaterThan(0);
+      run(m, 4, (i) => (i.vertical = 0.5));
+      expect(m.immersion).toBe(0);
+    });
+  });
 });

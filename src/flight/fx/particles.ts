@@ -17,6 +17,7 @@ export type ParticleKind =
   | 'darkSmoke'
   | 'dust'
   | 'spray'
+  | 'droplet'
   | 'mist'
   | 'trail'
   | 'vapor'
@@ -48,6 +49,8 @@ const PRESETS: Record<ParticleKind, Preset> = {
   darkSmoke: { glow: false, life: [5, 9], size: [4, 7], grow: 5, color: [0.07, 0.065, 0.06], end: [0.2, 0.19, 0.18], alpha: 0.7, drag: 0.8, lift: 0.09, spin: 0.2, fadeIn: 0.04 },
   dust: { glow: false, life: [2, 3.5], size: [1.5, 3], grow: 3.5, color: [0.42, 0.34, 0.24], alpha: 0.45, drag: 2.2, lift: 0.01, spin: 0.3, fadeIn: 0.05 },
   spray: { glow: false, life: [0.8, 1.6], size: [0.6, 1.4], grow: 2.6, color: [0.8, 0.85, 0.88], alpha: 0.5, drag: 1.6, lift: -0.55, spin: 0.4, fadeIn: 0.02 },
+  // Thrown water: small and ballistic (no puff to hold it up), gone under the surface it falls back to
+  droplet: { glow: false, life: [1.1, 2], size: [0.07, 0.16], grow: 0.15, color: [0.86, 0.9, 0.94], alpha: 0.7, drag: 0.3, lift: -1, spin: 0, fadeIn: 0 },
   mist: { glow: false, life: [1.6, 2.8], size: [2.5, 4.5], grow: 3, color: [0.82, 0.86, 0.9], alpha: 0.22, drag: 2.5, lift: 0.0, spin: 0.15, fadeIn: 0.1 },
   trail: { glow: false, life: [3.5, 5.5], size: [0.7, 1.1], grow: 1.6, color: [0.72, 0.72, 0.72], alpha: 0.42, drag: 1.4, lift: 0.01, spin: 0.2, fadeIn: 0.02 },
   vapor: { glow: false, life: [0.25, 0.45], size: [0.4, 0.8], grow: 2.5, color: [0.95, 0.97, 1.0], alpha: 0.3, drag: 3, lift: 0, spin: 0.5, fadeIn: 0.1 },

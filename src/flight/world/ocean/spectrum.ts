@@ -204,6 +204,42 @@ export function dominantModes(h0: Float32Array, count = 96): Mode[] {
 
 export function setModes(m: Mode[]): void {
   modes = m;
+  phaseT = NaN;
+}
+
+/**
+ * Each mode's complex amplitude h(k,t) at the last time asked for: the
+ * physics, the camera and the FX ask the sea's height dozens of times a
+ * frame at one instant, so the time-only half of the sum is done once.
+ */
+let phaseT = NaN;
+let phaseRe = new Float64Array(0);
+let phaseIm = new Float64Array(0);
+let modeKx = new Float64Array(0);
+let modeKz = new Float64Array(0);
+
+function phasesAt(time: number): Mode[] {
+  if (!modes) setModes(dominantModes(buildH0()));
+  const m = modes!;
+  if (time === phaseT) return m;
+  if (phaseRe.length !== m.length) {
+    phaseRe = new Float64Array(m.length);
+    phaseIm = new Float64Array(m.length);
+    modeKx = Float64Array.from(m, (q) => q.kx);
+    modeKz = Float64Array.from(m, (q) => q.kz);
+  }
+  const t = ((time % LOOP) + LOOP) % LOOP;
+  for (let i = 0; i < m.length; i++) {
+    const q = m[i];
+    const ph = q.w * t;
+    const c = Math.cos(ph);
+    const s = Math.sin(ph);
+    // h(k,t) = a e^{-iwt} + b e^{iwt}, doubled for the -k partner
+    phaseRe[i] = 2 * (q.ar * c + q.ai * s + q.br * c - q.bi * s);
+    phaseIm[i] = 2 * (q.ai * c - q.ar * s + q.bi * c + q.br * s);
+  }
+  phaseT = time;
+  return m;
 }
 
 /**
@@ -211,19 +247,12 @@ export function setModes(m: Mode[]): void {
  * spectrum components; horizontal choppiness and the shallows are ignored).
  */
 export function seaHeightAt(x: number, z: number, time: number): number {
-  if (!modes) modes = dominantModes(buildH0());
-  const t = ((time % LOOP) + LOOP) % LOOP;
+  const n = phasesAt(time).length;
   let y = 0;
-  for (const m of modes) {
-    const ph = m.w * t;
-    const c = Math.cos(ph);
-    const s = Math.sin(ph);
-    // h(k,t) = a e^{-iwt} + b e^{iwt}
-    const hr = m.ar * c + m.ai * s + m.br * c - m.bi * s;
-    const hi = m.ai * c - m.ar * s + m.bi * c + m.br * s;
-    const kp = m.kx * x + m.kz * z;
-    // Re(h e^{ik.x}), doubled for the -k partner
-    y += 2 * (hr * Math.cos(kp) - hi * Math.sin(kp));
+  for (let i = 0; i < n; i++) {
+    const kp = modeKx[i] * x + modeKz[i] * z;
+    // Re(h e^{ik.x})
+    y += phaseRe[i] * Math.cos(kp) - phaseIm[i] * Math.sin(kp);
   }
   return y;
 }

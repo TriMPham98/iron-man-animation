@@ -22,15 +22,15 @@ import { hazeAll } from '../render/haze';
  * touch WAVE button, offered whenever the sky is clear): drones from over
  * the ridges, then the mobile SAM launchers wake up, then a frigate comes
  * in off the sea (and again every third wave after). Armour regenerates out of combat; at zero the suit drops
- * dead for a few seconds and reboots in the air, on one of {@link RESERVES}
- * reserves (a cleared wave earns one back). With none left the suit is lost:
+ * dead for a few seconds and reboots in the air, on its one reserve (a cleared
+ * wave earns it back). With that spent the suit is lost:
  * it stays down until the pilot redeploys, back to wave one on the pad.
  * With the suit out of their sight the SAMs shell the house: only for show
  * (a blast, scorch on the roof, smoke), it takes no damage.
  */
 
-/** Reboots the suit holds in reserve at the start of a run. */
-export const RESERVES = 2;
+/** The one reboot the suit holds at the start of a run. */
+export const RESERVES = 1;
 /** Seconds after the suit is lost before a redeploy is offered (it's seen to fall). */
 const REDEPLOY_AFTER = 2.5;
 /** Scorch marks the roofs keep before the oldest goes. */

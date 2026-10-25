@@ -13,6 +13,8 @@ export type SimEventKind =
   | 'heroLanding'
   | 'footstep'
   | 'splash'
+  /** Skipped off the sea at a shallow angle: value = closing speed (m/s). */
+  | 'skip'
   /** Set down on the pad: value = offset from its centre (m), text = the grade. */
   | 'padLanding'
   /** The hover computer has (value 1) or has let go of (0) the pad. */

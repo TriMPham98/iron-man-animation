@@ -12,7 +12,7 @@
  */
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
-import { ASSEMBLE_FRAG, EVOLVE_FRAG, FFT_FRAG, FOAM_TEX_FRAG, FOAM_UPDATE_FRAG, FSQ_VERT } from './simShaders';
+import { ASSEMBLE_FRAG, EVOLVE_FRAG, FFT_FRAG, FOAM_STAMPS, FOAM_TEX_FRAG, FOAM_UPDATE_FRAG, FSQ_VERT } from './simShaders';
 import { buildH0, CASCADE_L, CASCADES, dominantModes, LOG_N, LOOP, N, SEA, setModes } from './spectrum';
 
 /** Foam clipmaps: texels per side and world span of each level (m). */
@@ -70,6 +70,9 @@ export class OceanSim {
   private readonly foamSnap = [0, 0, 0, 0];
   private foamFirst = true;
   private foamTexRt: THREE.WebGLRenderTarget | null;
+  private readonly stampA = Array.from({ length: FOAM_STAMPS }, () => new THREE.Vector4());
+  private readonly stampB = Array.from({ length: FOAM_STAMPS }, () => new THREE.Vector4());
+  private stamps = 0;
 
   constructor(private readonly renderer: THREE.WebGLRenderer) {
     const h0 = buildH0();
@@ -116,6 +119,9 @@ export class OceanSim {
       uDrift: { value: new THREE.Vector2(this.wind.x, this.wind.y).multiplyScalar(0.03 * SEA.windSpeed) },
       uCascL: { value: this.cascL },
       uFirst: { value: 1 },
+      uStampA: { value: this.stampA },
+      uStampB: { value: this.stampB },
+      uStamps: { value: 0 },
     });
     this.quad = new FullScreenQuad(this.evolve);
 
@@ -152,6 +158,22 @@ export class OceanSim {
     const foamGen = raw(FOAM_TEX_FRAG, {});
     this.pass(foamGen, this.foamTexRt);
     foamGen.dispose();
+  }
+
+  /**
+   * Churn the water white for the next step: a disc of `radius` swept from
+   * (ax, az) to (bx, bz), or with `inner` set a ring. `amount` 0–1.5 (1 is
+   * fresh, dense foam). Past {@link FOAM_STAMPS} a step, the faintest goes.
+   */
+  stamp(ax: number, az: number, bx: number, bz: number, radius: number, amount: number, inner = 0): void {
+    let i = this.stamps;
+    if (i >= FOAM_STAMPS) {
+      i = 0;
+      for (let j = 1; j < FOAM_STAMPS; j++) if (this.stampB[j].z < this.stampB[i].z) i = j;
+      if (this.stampB[i].z >= amount) return;
+    } else this.stamps++;
+    this.stampA[i].set(ax, az, bx, bz);
+    this.stampB[i].set(radius, inner, amount, 0);
   }
 
   private pass(mat: THREE.Material, target: THREE.WebGLRenderTarget | null, layer = 0): void {
@@ -205,6 +227,7 @@ export class OceanSim {
     const next = 1 - this.foamCur;
     f.uDt.value = Math.min(dt, 0.1);
     f.uFirst.value = this.foamFirst ? 1 : 0;
+    f.uStamps.value = this.stamps;
     for (let l = 0; l < FOAM_LEVELS.length; l++) {
       const ts = FOAM_LEVELS[l] / FOAM_RES;
       const cx = Math.floor(eye.x / ts);
@@ -222,6 +245,7 @@ export class OceanSim {
     }
     this.foamCur = next;
     this.foamFirst = false;
+    this.stamps = 0;
 
     r.setRenderTarget(prevTarget);
     r.autoClear = prevClear;

@@ -30,6 +30,8 @@ interface Burner {
 export interface SurfaceQuery {
   surface(x: number, z: number): number;
   isWater(x: number, z: number): boolean;
+  /** Churn the water white (a disc swept a → b, radius, amount). */
+  foam?(ax: number, az: number, bx: number, bz: number, radius: number, amount: number): void;
 }
 
 export class Explosions {
@@ -87,7 +89,8 @@ export class Explosions {
     P.burst('ember', at, Math.round(8 + size * 2), size * 5, undefined, 1);
     if (water) {
       // Water column and a ring of spray
-      const s = this._v.set(at.x, 0.2, at.z);
+      const s = this._v.set(at.x, surf + 0.2, at.z);
+      this.ground.foam?.(at.x, at.z, at.x, at.z, size * 1.6, 1.3);
       for (let i = 0; i < 30 + size * 4; i++) {
         const a = Math.random() * Math.PI * 2;
         const r = Math.random();

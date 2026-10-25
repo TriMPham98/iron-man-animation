@@ -187,6 +187,37 @@ const GUIDE_TURN = 1.4;
 const GUIDE_PITCH = 1.48;
 /** Further round than this (rad), the aim is astern: the turn keeps its side. */
 const GUIDE_ASTERN = 2.7;
+/**
+ * The sea is a body of water, not a floor. The armour's far denser than
+ * water: all the way under, it floats this share of its weight.
+ */
+const BUOYANCY = 0.6;
+/**
+ * Water drag (1/m, × the share of the body under): broadside the suit's a
+ * slab (a dive into the sea at speed stops in a few metres, as off a
+ * cliff), slipped in head- or feet-first it knifes on further.
+ */
+const WATER_DRAG_BROAD = 1.6;
+const WATER_DRAG_STREAM = 0.15;
+/** Bobbing in it, the waves it makes soak up the motion (1/s, × the share under). */
+const WATER_DAMP = 2.5;
+/** A body dragged flat across the surface planes up out of it (1/m × the share under), up to a few g. */
+const PLANE_LIFT = 0.004;
+const PLANE_MAX_G = 3;
+/**
+ * Skipping, as a stone does: an entry shallower than this (rad, against the
+ * swell's own slope) and quicker than this along (m/s) bounces off. It keeps
+ * this share of its closing speed going back up, and (hit hard) of its
+ * speed along.
+ */
+const SKIP_ANGLE = 0.3;
+const SKIP_SPEED = 25;
+const SKIP_BOUNCE = 0.45;
+const SKIP_KEEP = 0.9;
+/** Closing on the water faster than this (m/s), it goes in hard: out of flight, the boots to idle. */
+const PLUNGE_HARD = 20;
+/** Under this share, the hover computer leaves the suit in the water; deeper, it climbs it out. */
+const WADE_DEPTH = 0.3;
 /** Above this, the air is too thin and the suit starts icing (m). */
 export const ICING_ALT = 9000;
 export const CEILING = 11500;
@@ -313,6 +344,13 @@ export interface GroundProbe {
   /** True if the surface there is water. */
   isWater(x: number, z: number): boolean;
   normal(x: number, z: number, out: THREE.Vector3): THREE.Vector3;
+  /** The sea floor under the water (m): the suit sinks no deeper. */
+  seabed?(x: number, z: number): number;
+  /**
+   * Churn the water white: a disc of `radius` swept from (ax, az) to
+   * (bx, bz), or a ring with `inner` set; `amount` 0–1.5.
+   */
+  foam?(ax: number, az: number, bx: number, bz: number, radius: number, amount: number, inner?: number): void;
 }
 
 /** A landing pad the hover computer can capture over: centre (x, z) and deck height y. */
@@ -322,7 +360,7 @@ export interface LandingAid {
   y: number;
 }
 
-export type ContactKind = 'none' | 'landed' | 'touchdown' | 'heroLanding' | 'splash' | 'footstep';
+export type ContactKind = 'none' | 'landed' | 'touchdown' | 'heroLanding' | 'splash' | 'skip' | 'footstep';
 
 export class FlightModel {
   readonly pos = new THREE.Vector3();
@@ -399,6 +437,14 @@ export class FlightModel {
   /** Last contact this step, and its impact speed (m/s). */
   contact: ContactKind = 'none';
   impactSpeed = 0;
+  /** Velocity it met the water at, on a splash or a skip. */
+  readonly impactVel = new THREE.Vector3();
+  /** 0–1: share of the body under the sea. */
+  immersion = 0;
+  /** 0–1: water still running off the armour since it came out (decays). */
+  wetness = 0;
+  /** The water's pull on the suit last step (m/s²): kept off the g meter. */
+  private readonly _wetAcc = new THREE.Vector3();
   /** Seconds left in the hero-landing crouch. */
   crouch = 0;
   boosting = false;
@@ -462,6 +508,8 @@ export class FlightModel {
     this.padPull = 0;
     this.autoLand = false;
     this.homing = false;
+    this.immersion = 0;
+    this.wetness = 0;
     this.gait.attach(this.pos, heading, this.ground);
   }
 
@@ -568,7 +616,8 @@ export class FlightModel {
     // (a fall is not flight, however fast it gets)
     // X drops it out of flight at once (not once the throttle has run
     // down): the body is the brakes' now, free to swing round onto the aim
-    const wantFlight = !falling && !input.brake && !landing && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.stance));
+    // (in the water it's the hover computer's job to get it out first)
+    const wantFlight = !falling && !input.brake && !landing && this.immersion < 0.5 && (this.boosting || this.speedCmd > 28 || (speed > 40 && !input.stance));
     const flightGoal = wantFlight && !this.grounded ? 1 : 0;
     // Already quick (out of a flare), the body swings straight back over
     const riseTau = THREE.MathUtils.lerp(0.55, 0.3, smooth(40, 120, speed));
@@ -792,6 +841,10 @@ export class FlightModel {
     vWant.y = input.vertical * CLIMB_SPEED;
     // Just off the deck: keep climbing clear whatever the stick says
     if (this.airT < HOP_GUARD) vWant.y = Math.max(vWant.y, 4);
+    // Gone under: the boots drive it back up to the surface (wading — the
+    // boots and shins in the water — is left to the pilot)
+    // (easing off as it comes up, so it settles at the waterline, not bob out of it)
+    if (this.immersion > WADE_DEPTH) vWant.y = Math.max(vWant.y, 5 * (this.immersion - WADE_DEPTH));
     // Height first, then what thrust is left goes to the horizontal (a real
     // VTOL computer never trades altitude for a stop)
     // (auto-land runs the boots hotter, as the boost does: it's in a hurry)
@@ -1012,6 +1065,7 @@ export class FlightModel {
 
     this.vel.addScaledVector(acc, dt);
     this.surge += ((this.vel.length() - speed) / Math.max(dt, 1e-4) - this.surge) * approach(dt, 0.15);
+    this.wade(dt);
     this.pos.addScaledVector(this.vel, dt);
     // Felt load, as a G meter reads it: the normal load factor — the
     // acceleration minus gravity along the lift axis (out of the back in
@@ -1023,6 +1077,8 @@ export class FlightModel {
     // (the suit's dampers soak up the top of a swing's carve: at its
     // hardest it reads as the wing's limit pull, not the full SWING_G)
     felt.addScaledVector(this._swingAcc, -(1 - G_LIMIT / SWING_G));
+    // (nor is the water's slam a pull: the meter and the vapour are the air's)
+    felt.sub(this._wetAcc);
     const liftAxis = this._t.set(0, 1, 0).applyAxisAngle(this._n.set(1, 0, 0), lean).applyQuaternion(this.q);
     // (mid-swing the body isn't square to the carve — flared upright, it
     // read as a −8 g push — so the meter reads the pull's size, as felt)
@@ -1361,31 +1417,107 @@ export class FlightModel {
     return smooth(PAD_CAPTURE_R, PAD_CAPTURE_R * 0.6, d) * smooth(PAD_CAPTURE_H, PAD_CAPTURE_H * 0.7, h) * smooth(14, 8, hv) * (1 - fl);
   }
 
+  /**
+   * The sea, as water: skip off it at a shallow angle, plunge in steeper;
+   * in it, it floats a little, drags hard (far harder broadside than
+   * knifing in), and planes up out of it skimming fast.
+   */
+  private wade(dt: number): void {
+    const g = this.ground;
+    const x = this.pos.x;
+    const z = this.pos.z;
+    this._wetAcc.set(0, 0, 0);
+    if (!g.isWater(x, z)) {
+      this.immersion = 0;
+      this.wetness *= 1 - approach(dt, 2.5);
+      return;
+    }
+    const sea = g.surface(x, z);
+    // Where it'll be at the end of the step: the boots (or the belly, prone)
+    // to the head (or the back)
+    const y = this.pos.y + this.vel.y * dt;
+    const bottom = y - this.hipHeight();
+    const top = y + THREE.MathUtils.lerp(0.9, 0.32, Math.sin(this.posture));
+    const under = clamp((sea - bottom) / (top - bottom), 0, 1);
+    if (under <= 0) {
+      this.immersion = 0;
+      this.wetness *= 1 - approach(dt, 2.5);
+      return;
+    }
+    const vh = Math.hypot(this.vel.x, this.vel.z);
+    if (this.immersion <= 0) {
+      // Meeting the water: how fast it closes on the surface, the swell's
+      // face rising under the travel included (a crest taken fast and low
+      // is hit, not brushed)
+      const ahead = vh > 1e-3 ? g.surface(x - this.vel.x * dt, z - this.vel.z * dt) : sea;
+      const rise = (sea - ahead) / dt;
+      const into = rise - this.vel.y;
+      if (into > 1.5) {
+        this.impactSpeed = into;
+        this.impactVel.copy(this.vel);
+        if (vh > SKIP_SPEED && Math.atan2(into, vh) < SKIP_ANGLE) {
+          // Skips: it never goes in
+          this.contact = 'skip';
+          // (the harder it hits, the more it costs: a graze along a crest
+          // the bounce left it skimming on hardly slows it)
+          const keep = 1 - (1 - SKIP_KEEP) * Math.min(1, into / 10);
+          this.vel.y = rise + into * SKIP_BOUNCE;
+          this.vel.x *= keep;
+          this.vel.z *= keep;
+          this.pos.y = Math.max(this.pos.y, sea + this.hipHeight());
+          return;
+        }
+        this.contact = 'splash';
+        if (into > PLUNGE_HARD) {
+          // In hard: the flight's over until it's out
+          this.flightness = 0;
+          this.speedCmd = 0;
+          this.boostCarry = 0;
+          this.swingOn = false;
+        }
+      }
+    }
+    this.immersion = under;
+    this.wetness = Math.max(this.wetness, under);
+    this._wetAcc.copy(this.vel);
+    // Buoyancy, and planing across the top
+    this.vel.y += GRAVITY * BUOYANCY * under * dt;
+    if (under < 0.6) this.vel.y += Math.min(PLANE_LIFT * under * vh * vh, PLANE_MAX_G * GRAVITY) * (1 - under / 0.6) * dt;
+    // Drag, by how end-on the body meets the water (implicit: at a few
+    // hundred g an explicit step would overshoot)
+    const v = this.vel.length();
+    if (v > 1e-3) {
+      const along = Math.abs(this.thrustAxis(this._v).dot(this.vel)) / v;
+      const k = THREE.MathUtils.lerp(WATER_DRAG_BROAD, WATER_DRAG_STREAM, along * along) * under;
+      this.vel.multiplyScalar(1 / (1 + k * v * dt));
+    }
+    this.vel.y *= Math.exp(-WATER_DAMP * under * dt);
+    this._wetAcc.subVectors(this.vel, this._wetAcc).divideScalar(dt);
+  }
+
   private collide(input: FlightInput): void {
     const x = this.pos.x;
     const z = this.pos.z;
-    const surf = this.ground.surface(x, z);
-    const water = this.ground.isWater(x, z);
     const hip = this.hipHeight();
+    if (this.ground.isWater(x, z)) {
+      // (the water itself is wade()'s; only the sea floor stops it)
+      const floor = this.ground.seabed?.(x, z) ?? -Infinity;
+      if (this.pos.y - hip < floor) {
+        this.pos.y = floor + hip;
+        this.vel.y = Math.max(this.vel.y, 0);
+      }
+      this.grounded = false;
+      return;
+    }
+    const surf = this.ground.surface(x, z);
     const gap = this.pos.y - hip - surf;
     if (gap > 0.02) {
       if (this.grounded && gap > 0.25) this.grounded = false;
       return;
     }
-    const n = water ? this._n.set(0, 1, 0) : this.ground.normal(x, z, this._n);
+    const n = this.ground.normal(x, z, this._n);
     const into = -this.vel.dot(n);
     this.pos.y = surf + hip;
-    if (water) {
-      // The sea: a hard slap at speed, a splash and a skip back up
-      if (into > 1.5) {
-        this.contact = 'splash';
-        this.impactSpeed = into;
-        this.vel.addScaledVector(n, into * 1.25);
-        this.vel.multiplyScalar(into > 25 ? 0.7 : 0.9);
-      }
-      this.grounded = false;
-      return;
-    }
     const tangential = this._v.copy(this.vel).addScaledVector(n, -this.vel.dot(n)).length();
     const gentle = into < 7 && tangential < 9 && this.posture < 0.6;
     // Idle must be the exact complement of step()'s "moving" test: a throttle

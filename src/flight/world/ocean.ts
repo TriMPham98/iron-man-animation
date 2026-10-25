@@ -182,6 +182,11 @@ export class Ocean {
     }
   }
 
+  /** Churn the water white (see {@link OceanSim.stamp}): splashes, wakes, jet wash. */
+  foam(ax: number, az: number, bx: number, bz: number, radius: number, amount: number, inner = 0): void {
+    this.sim?.stamp(ax, az, bx, bz, radius, amount, inner);
+  }
+
   /** Patches drawn and simulation passes run last frame (diagnostics). */
   stats(): { nodes: number; simPasses: number } {
     return { nodes: this.cdlod.count, simPasses: this.sim?.passes ?? 0 };

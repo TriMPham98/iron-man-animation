@@ -149,6 +149,8 @@ export interface GroundQuery {
   isWater(x: number, z: number): boolean;
   /** True on a hard deck (the pad, the house, bare rock): nothing loose there to blow up. */
   isDeck?(x: number, z: number): boolean;
+  /** Churn the water white (a disc swept a → b, radius, amount). */
+  foam?(ax: number, az: number, bx: number, bz: number, radius: number, amount: number): void;
 }
 
 export class Jets {
@@ -308,6 +310,8 @@ export class Jets {
         particles.emit(water ? 'spray' : 'dust', hit, v, deck ? { scale: 0.3 + 0.3 * near, life: 0.35 } : { scale: 0.7 + near });
       }
       if (water && Math.random() < 0.5 * near) particles.emit('mist', hit, this._v.set(0, 1.5, 0), { scale: 1 + near });
+      // The downwash whips the water white under it
+      if (water && near * k > 0.15) ground.foam?.(hit.x, hit.z, hit.x, hit.z, 0.8 + 2.6 * near * k, 0.25 + 0.7 * near * k);
     });
   }
 
