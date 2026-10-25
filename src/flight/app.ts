@@ -5,6 +5,7 @@ import { GameAudio } from './audio/gameAudio';
 import { SFX, Soundscape } from './audio/soundscape';
 import { CONTEXT_ATTRIBUTES, canReverseDepth, useReversedDepth } from './render/depth';
 import { FlightPost, type LensState } from './render/post';
+import './render/shaderGuards';
 import { viewportSize, wideZoom } from './render/viewport';
 import { Game } from './sim/game';
 import { DEFAULT_CAMERA } from './sim/cameraRig';
