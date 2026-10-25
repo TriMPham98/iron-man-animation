@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { BARK, MODELS, V, bare, clump, foliage, grassGeometry, limb, paint, seeded, type Detail, type GardenModel } from './vegetation';
+import { BARK, SHRUB_HI, SPECIES, TREE_HI, V, bare, clump, foliage, limb, paint, seeded, type Detail, type Species } from './vegetation';
 
 /**
  * Planting round the house, built the way the coast cover is (leaf
@@ -9,6 +9,8 @@ import { BARK, MODELS, V, bare, clump, foliage, grassGeometry, limb, paint, seed
  * what a garden adds — Italian cypress columns lining the drive, silvery
  * olives in the entry court, clipped hedges along the beds and terrace
  * planters, agave rosettes, and dry grass where the lawn gives out.
+ * They're species like the coast's (see {@link Species}): the vegetation
+ * draws them through its own tiers, impostors and all.
  */
 
 /**
@@ -186,15 +188,15 @@ function agaveGeometry(d: Detail): THREE.BufferGeometry {
   return g;
 }
 
-/** Every kind the garden plants, keyed as the house lays them out. */
-export const GARDEN: Record<string, GardenModel> = {
-  palm: { build: MODELS.palm, twoSided: true, hiRange: 260 },
-  oak: { build: MODELS.oak, hiRange: 150 },
-  olive: { build: oliveGeometry, hiRange: 120 },
-  cypress: { build: cypressGeometry },
-  // (the close builds carry leaf cards: shrubs need them only near)
-  bush: { build: MODELS.bush, range: 1200, hiRange: 80 },
-  hedge: { build: hedgeGeometry, range: 900, hiRange: 70 },
-  agave: { build: agaveGeometry, twoSided: true, range: 500, hiRange: 90 },
-  grass: { build: () => grassGeometry(), range: 260 },
+/**
+ * Every species the garden plants, keyed as the house lays them out (its
+ * dry grass is the cover's own, drawn with the brush by the eye). The
+ * coast's kinds are its very entries, so the two never drift apart.
+ */
+export const GARDEN: Record<string, Species> = {
+  ...SPECIES,
+  olive: { build: oliveGeometry, hiRange: TREE_HI },
+  cypress: { build: cypressGeometry, hiRange: TREE_HI },
+  hedge: { build: hedgeGeometry, hiRange: SHRUB_HI },
+  agave: { build: agaveGeometry, twoSided: true, hiRange: SHRUB_HI },
 };

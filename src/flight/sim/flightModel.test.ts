@@ -320,6 +320,41 @@ describe('FlightModel', () => {
     expect(tStop - t10).toBeLessThan(1.6);
   });
 
+  it('flares off a boost and pivots round onto an aim astern: no twist away from it first, no tumble', () => {
+    const m = new FlightModel(flat());
+    m.pos.set(0, 1000, 0);
+    m.vel.set(0, 0, 300);
+    m.grounded = false;
+    m.flightness = 1;
+    m.posture = 1.42;
+    m.speedCmd = 270;
+    m.airT = 5;
+    const body = new THREE.Quaternion();
+    const head = new THREE.Vector3();
+    let prevH = 0;
+    let turned = 0;
+    let away = 0;
+    let side = 0;
+    run(m, 6, (i, t) => {
+      i.boost = true;
+      i.brake = true;
+      // The look swung round to the left, all but dead astern, over ⅓ s
+      const yaw = Math.PI * 0.99 * Math.min(1, t / 0.3);
+      i.aim.set(Math.sin(yaw), 0, Math.cos(yaw));
+      const h = m.heading;
+      turned += Math.atan2(Math.sin(h - prevH), Math.cos(h - prevH));
+      prevH = h;
+      away = Math.min(away, turned);
+      // The head leans back against the travel (−z) as the body pivots under
+      // it, not out to the side
+      head.set(0, 1, 0).applyQuaternion(m.bodyQuaternion(body));
+      if (t > 0.5) side = Math.max(side, Math.abs(head.x));
+    });
+    expect(away).toBeGreaterThan(-0.05);
+    expect(side).toBeLessThan(0.22);
+    expect(Math.abs(turned - Math.PI * 0.99)).toBeLessThan(0.05);
+  });
+
   it('cracks the flaps as speed brakes on S well over the setting', () => {
     const fly = (s: number) => {
       const m = new FlightModel(flat());

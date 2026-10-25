@@ -720,7 +720,10 @@ export class FlightModel {
     // mid-swing the carve throws it round the same way
     const vectored = Math.max(this.swing, 1 - smooth(50, 100, speed));
     bankTurn = THREE.MathUtils.lerp(bankTurn, clamp(-yawErr * 2.4, -1.25, 1.25), vectored);
-    const bankGoal = clamp(bankTurn * fl - this.swingTurn * 1.2, -bankMax, bankMax);
+    // (flared, the lift's spilled: there's no wing to bank, and a bank rolled
+    // in round the long axis as it swung upright was a yaw the wrong way — the
+    // suit twisted off away from the aim, then wound back round on a tilt)
+    const bankGoal = clamp(bankTurn * fl * (1 - this.liftSpill) - this.swingTurn * 1.2, -bankMax, bankMax);
     // Turn limits: quick in a hover; in flight the g limit caps the rate at
     // speed, and until the back has rolled round into the turn it only pulls
     // a couple of g — roll, then pull

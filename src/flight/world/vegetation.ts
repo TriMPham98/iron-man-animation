@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ATMOSPHERE_GLSL } from './atmosphere';
-import { FELL, Felling } from './felling';
+import { Felling } from './felling';
 import { HOME, coastZ, type Heightfield } from './heightfield';
 import { rockOver } from './houseCliff';
 
@@ -27,6 +27,10 @@ import { rockOver } from './houseCliff';
  *  - Dense brush (< ~230 m): small clumps that grow in from the edge.
  *  - Leaf cards (alpha-tested sprays of leaves) over every close crown and
  *    the brush by the eye; each leaf shrinks away before its hand-over.
+ * The house's garden goes through the same tiers: its plants are dropped
+ * into the cells they stand in, so every species, wild or planted, is
+ * drawn, culled, cut down and handed over by the one path (see
+ * {@link Species}).
  * Cells are culled against a widened view frustum and the instance lists
  * rebuilt only when the eye has moved or turned enough to need it (or the
  * unibeam has cut something down: see {@link Felling}).
@@ -38,17 +42,17 @@ const RADIUS = 2000;
 /** 3D models hand over to impostors across this band (m). */
 const LOD_NEAR = 330;
 const LOD_FAR = 420;
-/** The full models within this (m); the lighter builds beyond. */
-const LOD_HI = 150;
 /**
- * Per kind: a shrub's leaf cards stop telling long before a tree's do, and
- * with the crowns the same blobs either side the hand-over costs nothing.
+ * The full models within this (m); the lighter builds beyond. A shrub's
+ * leaf cards stop telling long before a tree's do, and with the crowns the
+ * same blobs either side the hand-over costs nothing.
  */
-const HI_R: Record<Kind, number> = { bush: 80, oak: LOD_HI, pine: LOD_HI, palm: LOD_HI };
+export const TREE_HI = 150;
+export const SHRUB_HI = 80;
 /** Dense brush out to here (m). */
 const TUFT_R = 230;
 /** Brush within this (m) is the close build, in leaf cards. */
-const TUFT_HI = HI_R.bush;
+const TUFT_HI = SHRUB_HI;
 /** Rebuild the lists after this much travel (m) or turn (cos of ~7°). */
 const REBUILD_MOVE = 24;
 const REBUILD_TURN = Math.cos(THREE.MathUtils.degToRad(7));
@@ -61,6 +65,7 @@ const KINDS = ['bush', 'oak', 'pine', 'palm'] as const;
 type Kind = (typeof KINDS)[number];
 const CAP: Record<Kind | 'tuft' | 'tuftHi' | 'grass', number> = { bush: 16000, oak: 5000, pine: 2500, palm: 2000, tuft: 10000, tuftHi: 3000, grass: 16000 };
 const CAP_HI: Record<Kind, number> = { bush: 4000, oak: 1500, pine: 800, palm: 800 };
+const isKind = (k: string): k is Kind => (KINDS as readonly string[]).includes(k);
 const IMP_CAP = 60000;
 /** Floats per near instance: matrix (16) + tint (3). */
 const NEAR_STRIDE = 19;
@@ -673,7 +678,29 @@ function palmGeometry(d: Detail): THREE.BufferGeometry {
   return mergeGeometries([trunkP, skirt, crown]);
 }
 
-export const MODELS: Record<Kind, (d: Detail) => THREE.BufferGeometry> = { bush: bushGeometry, oak: oakGeometry, pine: pineGeometry, palm: palmGeometry };
+/**
+ * A species, however it's planted (the coast's cover or the house's
+ * garden): its two builds and where the close one takes over. Every
+ * species is drawn through the same tiers — the close build with leaf
+ * cards, the lighter build, then an impostor out to {@link RADIUS} — so
+ * whatever changes how trees are drawn reaches all of them.
+ */
+export interface Species {
+  build: (d: Detail) => THREE.BufferGeometry;
+  /** Single-sheet leaves (drawn both sides). */
+  twoSided?: boolean;
+  /** The close build within this (m): {@link TREE_HI} or {@link SHRUB_HI}. */
+  hiRange: number;
+}
+
+/** The coast's own species (the garden plants these too). */
+export const SPECIES: Record<Kind, Species> = {
+  bush: { build: bushGeometry, hiRange: SHRUB_HI },
+  oak: { build: oakGeometry, hiRange: TREE_HI },
+  pine: { build: pineGeometry, hiRange: TREE_HI },
+  // Palm fans are single sheets
+  palm: { build: palmGeometry, twoSided: true, hiRange: TREE_HI },
+};
 
 // ── Shaders ──────────────────────────────────────────────────────────────
 
@@ -767,14 +794,14 @@ const FELL_COLOR_GLSL = /* glsl */ `
   if (!gl_FrontFacing && vCut.x < 1.2) diffuseColor.rgb = vec3(0.02, 0.016, 0.012);
 `;
 
-const IMP_VERT_PARS = /* glsl */ `
+const impVertPars = (kinds: number) => /* glsl */ `
 attribute vec4 iA; // x y z, height scale
 attribute vec2 iB; // width scale, kind
 attribute vec3 iT; // tint
 uniform float uTime;
 uniform vec3 uEye;
 uniform vec4 uFade; // dither band (start, end), outer shrink (start, end)
-uniform vec4 uKinds[4]; // half-width, height, base offset, atlas column
+uniform vec4 uKinds[${kinds}]; // half-width, height, base offset, atlas column
 varying vec3 vInstWorld;
 varying float vLod;
 varying vec2 vAtlas;
@@ -783,7 +810,7 @@ varying vec3 vRight;
 varying vec3 vUpW;
 varying vec3 vFwd;
 `;
-const IMP_VERT_BEGIN = /* glsl */ `
+const impVertBegin = (kinds: number) => /* glsl */ `
   vec4 K = uKinds[int(iB.y + 0.5)];
   vec3 origin = iA.xyz;
   vInstWorld = origin;
@@ -806,7 +833,7 @@ const IMP_VERT_BEGIN = /* glsl */ `
   float sway = sin(uTime * 1.3 + origin.x * 0.05 + origin.z * 0.07) * 0.04 * gust * (position.y + 0.5) * h;
   vec3 transformed = origin + right * (position.x * 2.0 * w + sway) + up * (K.z * iA.w + (position.y + 0.5) * h);
   vLod = smoothstep(uFade.x, uFade.y, d);
-  vAtlas = vec2((uv.x + K.w) * 0.25, uv.y);
+  vAtlas = vec2((uv.x + K.w) / ${kinds}.0, uv.y);
 `;
 const IMP_FRAG_PARS = /* glsl */ `
 uniform sampler2D uBake;
@@ -1033,7 +1060,8 @@ interface CellData {
   z: number;
   minY: number;
   maxY: number;
-  near: Record<Kind, Float32Array>;
+  /** Per species (the garden's included), its plants' matrices and tints. */
+  near: Record<string, Float32Array>;
   imp: Float32Array;
   /** Brush clumps: worked out only once the eye comes near (undefined until then). */
   tuft: { brush: Float32Array; grass: Float32Array } | null | undefined;
@@ -1061,14 +1089,6 @@ export interface GardenPlant {
   tint?: readonly number[];
 }
 
-/** A garden kind: its two builds, single-sheet leaves, and how far it's drawn (m). */
-export interface GardenModel {
-  build: (d: Detail) => THREE.BufferGeometry;
-  twoSided?: boolean;
-  range?: number;
-  hiRange?: number;
-}
-
 /** Tints (multiplying the models' own colours). */
 export const TINT = {
   chaparral: [1, 1, 1],
@@ -1088,7 +1108,7 @@ function segDist2(px: number, pz: number, ax: number, az: number, bx: number, bz
 
 /** Takes plants (by "x,z") out of a cell: its models and its impostors. */
 function strip(c: CellData, gone: Set<string>): void {
-  for (const k of KINDS) {
+  for (const k of Object.keys(c.near)) {
     const src = c.near[k];
     const keep: number[] = [];
     for (let o = 0; o < src.length; o += NEAR_STRIDE) if (!gone.has(`${src[o + 12]},${src[o + 14]}`)) for (let e = 0; e < NEAR_STRIDE; e++) keep.push(src[o + e]);
@@ -1101,8 +1121,13 @@ function strip(c: CellData, gone: Set<string>): void {
 
 export class Vegetation {
   readonly group = new THREE.Group();
-  private readonly near: Record<Kind, THREE.InstancedMesh>;
-  private readonly close: Record<Kind, THREE.InstancedMesh>;
+  /** Every species drawn, wild and planted (the impostor atlas's column order). */
+  private readonly kinds: string[];
+  private readonly species: Record<string, Species>;
+  private readonly near: Record<string, THREE.InstancedMesh> = {};
+  private readonly close: Record<string, THREE.InstancedMesh> = {};
+  private readonly cap: Record<string, number> = {};
+  private readonly capHi: Record<string, number> = {};
   private readonly tuft: THREE.InstancedMesh;
   private readonly tuftHi: THREE.InstancedMesh;
   private readonly grass: THREE.InstancedMesh;
@@ -1120,19 +1145,16 @@ export class Vegetation {
   private readonly frustum = new THREE.Frustum();
   private readonly _vp = new THREE.Matrix4();
   private readonly _dir = new THREE.Vector3();
-  private readonly geos: Record<Kind, THREE.BufferGeometry>;
-  /** Hand-laid planting (the house's garden): both builds of each kind, swapped per plant by distance. */
-  private readonly garden: { hi: THREE.InstancedMesh; lo: THREE.InstancedMesh; src: Float32Array; hiR: number }[] = [];
-  private readonly gardenMat = new Map<string, THREE.Material>();
-  /** Garden kind per entry of {@link garden}. */
-  private readonly gardenKind: string[] = [];
+  /** The garden's plants by the cell they stand in, merged into it when it's planted. */
+  private readonly gardenCells = new Map<string, { near: Record<string, number[]>; imp: number[]; grass: number[]; minY: number; maxY: number }>();
+  /** Garden plants ("x,z") stand on the house's decks: felled, they fall no lower than this. */
+  private readonly gardenFloor = new Map<string, number>();
   /** What the unibeam has taken, per cell ("x,z" of each plant), so a cell planted again stays cut. */
   private readonly cuts = new Map<string, Set<string>>();
   /** Something was cut: rebuild the lists next frame. */
   private dirty = false;
   private lastTime = 0;
   readonly felling: Felling;
-  private gardenMesh!: (geo: THREE.BufferGeometry, cap: number, range: number, twoSided: boolean) => THREE.InstancedMesh;
   /** Leaf cards over a close build: (mesh, its cards), drawn from the mesh's own instances. */
   private readonly cards: [THREE.InstancedMesh, THREE.InstancedMesh][] = [];
   private cardMesh!: (owner: THREE.InstancedMesh, cards: THREE.BufferGeometry | null, fadeEnd: number) => void;
@@ -1143,6 +1165,7 @@ export class Vegetation {
     private readonly field: Heightfield,
     atmosphere: Record<string, THREE.IUniform>,
     renderer?: THREE.WebGLRenderer,
+    garden?: { species: Record<string, Species>; plants: GardenPlant[] },
   ) {
     this.uniforms = {
       ...atmosphere,
@@ -1151,7 +1174,15 @@ export class Vegetation {
       uTime: { value: 0 },
       uEye: { value: new THREE.Vector3() },
     };
-    this.geos = { bush: MODELS.bush('lo'), oak: MODELS.oak('lo'), pine: MODELS.pine('lo'), palm: MODELS.palm('lo') };
+    this.species = { ...SPECIES, ...garden?.species };
+    this.kinds = Object.keys(this.species);
+    // The garden's own kinds hold just what it plants; the coast's get its count on top
+    const planted = (k: string) => garden?.plants.filter((p) => p.kind === k).length ?? 0;
+    for (const k of this.kinds) {
+      this.cap[k] = (isKind(k) ? CAP[k] : 0) + planted(k);
+      this.capHi[k] = (isKind(k) ? CAP_HI[k] : 0) + planted(k);
+    }
+    const lo = Object.fromEntries(this.kinds.map((k) => [k, this.species[k].build('lo')]));
 
     const nearMat = (fade: THREE.Vector4, key: string, side: THREE.Side = THREE.FrontSide) => {
       const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, side });
@@ -1172,8 +1203,7 @@ export class Vegetation {
     // shrink away in its last few metres: no discard in the models' shader
     // (alpha-tested draws lose hidden-surface removal on tiled GPUs)
     const treeMat = nearMat(new THREE.Vector4(1e6, 1e6 + 1, LOD_FAR - 14, LOD_FAR), 'near');
-    // Palm fans are single sheets
-    const palmMat = nearMat(new THREE.Vector4(1e6, 1e6 + 1, LOD_FAR - 14, LOD_FAR), 'near-palm', THREE.DoubleSide);
+    const sheetMat = nearMat(new THREE.Vector4(1e6, 1e6 + 1, LOD_FAR - 14, LOD_FAR), 'near-sheet', THREE.DoubleSide);
     const tuftMat = nearMat(new THREE.Vector4(1e6, 1e6 + 1, TUFT_R * 0.75, TUFT_R), 'tuft');
     const make = (geo: THREE.BufferGeometry, cap: number, mat: THREE.Material) => {
       const m = new THREE.InstancedMesh(geo, mat, cap);
@@ -1187,19 +1217,12 @@ export class Vegetation {
       this.group.add(m);
       return m;
     };
-    this.near = {
-      bush: make(this.geos.bush, CAP.bush, treeMat),
-      oak: make(this.geos.oak, CAP.oak, treeMat),
-      pine: make(this.geos.pine, CAP.pine, treeMat),
-      palm: make(this.geos.palm, CAP.palm, palmMat),
-    };
-    const hiBuild = { bush: withCards(() => MODELS.bush('hi')), oak: withCards(() => MODELS.oak('hi')), pine: withCards(() => MODELS.pine('hi')), palm: withCards(() => MODELS.palm('hi')) };
-    this.close = {
-      bush: make(hiBuild.bush.model, CAP_HI.bush, treeMat),
-      oak: make(hiBuild.oak.model, CAP_HI.oak, treeMat),
-      pine: make(hiBuild.pine.model, CAP_HI.pine, treeMat),
-      palm: make(hiBuild.palm.model, CAP_HI.palm, palmMat),
-    };
+    const hiBuild = Object.fromEntries(this.kinds.map((k) => [k, withCards(() => this.species[k].build('hi'))]));
+    for (const k of this.kinds) {
+      const mat = this.species[k].twoSided ? sheetMat : treeMat;
+      this.near[k] = make(lo[k], this.cap[k], mat);
+      this.close[k] = make(hiBuild[k].model, this.capHi[k], mat);
+    }
 
     // Leaf cards: two-sided, lit from the crown's normals whichever side
     // shows, and alpha-tested; only ever over the close builds (< ~150 m),
@@ -1243,19 +1266,10 @@ export class Vegetation {
       this.group.add(m);
       this.cards.push([owner, m]);
     };
-    for (const k of KINDS) this.cardMesh(this.close[k], hiBuild[k].cards, HI_R[k]);
-    this.tuft = make(this.geos.bush, CAP.tuft, tuftMat);
+    for (const k of this.kinds) this.cardMesh(this.close[k], hiBuild[k].cards, this.species[k].hiRange);
+    this.tuft = make(lo.bush, CAP.tuft, tuftMat);
     this.tuftHi = make(hiBuild.bush.model, CAP.tuftHi, tuftMat);
     this.cardMesh(this.tuftHi, hiBuild.bush.cards, TUFT_HI);
-    this.gardenMesh = (geo, cap, range, twoSided) => {
-      const key = `garden-${range}${twoSided ? '-2' : ''}`;
-      let mat = this.gardenMat.get(key);
-      if (!mat) {
-        mat = nearMat(new THREE.Vector4(1e6, 1e6 + 1, range * 0.85, range), key, twoSided ? THREE.DoubleSide : THREE.FrontSide);
-        this.gardenMat.set(key, mat);
-      }
-      return make(geo, cap, mat);
-    };
     this.grass = make(grassGeometry(), CAP.grass, tuftMat);
 
     // Felled trees: both sides drawn (the cut's inside shows), clipped at the cut
@@ -1275,7 +1289,7 @@ export class Vegetation {
     fellMat.customProgramCacheKey = () => 'vegetation-felled';
     this.felling = new Felling(field, fellMat);
     // (felled trees keep the leaf-triangle build: no cards to fall with them)
-    for (const k of KINDS) this.felling.register(k, MODELS[k]('hi'));
+    for (const k of this.kinds) this.felling.register(k, this.species[k].build('hi'));
     this.group.add(this.felling.group);
 
     // Impostors
@@ -1292,11 +1306,11 @@ export class Vegetation {
     geo.setAttribute('iB', this.impB);
     geo.setAttribute('iT', this.impT);
     geo.instanceCount = 0;
-    const atlas = renderer ? bakeAtlas(renderer, KINDS.map((k) => this.geos[k])) : null;
+    const atlas = renderer ? bakeAtlas(renderer, this.kinds.map((k) => lo[k])) : null;
     const impU = {
       ...this.uniforms,
       uFade: { value: new THREE.Vector4(LOD_NEAR, LOD_FAR, RADIUS * 0.85, RADIUS) },
-      uKinds: { value: atlas?.kinds ?? KINDS.map((_, i) => new THREE.Vector4(2, 6, 0, i)) },
+      uKinds: { value: atlas?.kinds ?? this.kinds.map((_, i) => new THREE.Vector4(2, 6, 0, i)) },
       uAtlasC: { value: atlas?.color ?? null },
       uAtlasN: { value: atlas?.normal ?? null },
     };
@@ -1305,8 +1319,8 @@ export class Vegetation {
     impMat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, impU);
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', `#include <common>\n${IMP_VERT_PARS}`)
-        .replace('#include <begin_vertex>', IMP_VERT_BEGIN)
+        .replace('#include <common>', `#include <common>\n${impVertPars(this.kinds.length)}`)
+        .replace('#include <begin_vertex>', impVertBegin(this.kinds.length))
         // World-space positions already: no instance / model transform
         .replace('#include <project_vertex>', 'vec4 mvPosition = viewMatrix * vec4(transformed, 1.0);\ngl_Position = projectionMatrix * mvPosition;');
       shader.fragmentShader = shader.fragmentShader
@@ -1333,7 +1347,7 @@ export class Vegetation {
         .replace('#include <aomap_fragment>', SHADE_GLSL)
         .replace('#include <fog_fragment>', 'gl_FragColor.rgb = applyHaze(gl_FragColor.rgb, cameraPosition, vInstWorld, vegBake.r);');
     };
-    impMat.customProgramCacheKey = () => 'vegetation-impostor';
+    impMat.customProgramCacheKey = () => `vegetation-impostor-${this.kinds.length}`;
     this.imp = new THREE.Mesh(geo, impMat);
     this.imp.frustumCulled = false;
     // Always ≥ 330 m out: the suit's shadow box never reaches them
@@ -1342,38 +1356,36 @@ export class Vegetation {
     this.imp.visible = !!atlas;
     this.group.add(this.imp);
     this.group.name = 'vegetation';
+    if (garden) this.sow(garden.plants);
   }
 
   /**
-   * Plants a hand-laid garden: each kind drawn with its close build within
-   * `hiR` of the eye and its lighter one out to `range`, lit, swayed and
-   * hazed exactly like the cover around it.
+   * Drops the house's garden into the cells it stands in, so it's culled,
+   * handed over (close build, lighter build, impostor) and cut down exactly
+   * like the cover around it; its dry grass joins the cells' own.
    */
-  addGarden(models: Record<string, GardenModel>, plants: GardenPlant[]): void {
-    for (const [kind, model] of Object.entries(models)) {
-      const list = plants.filter((p) => p.kind === kind);
-      if (!list.length) continue;
-      const src = new Float32Array(list.length * NEAR_STRIDE);
-      list.forEach((p, i) => {
-        _q.setFromAxisAngle(UP, p.yaw ?? hash3(p.x, 0, p.z, 7) * Math.PI * 2);
-        const k = p.scale;
-        _m.compose(_p.set(p.x, p.y, p.z), _q, _s.set(k * (p.squash ?? 1), k, k * (p.squash ?? 1)));
-        src.set(_m.elements, i * NEAR_STRIDE);
-        const t = p.tint ?? TINT.chaparral;
-        const v = 0.88 + hash3(p.x, 1, p.z, 3) * 0.24;
-        src.set([t[0] * v, t[1] * v, t[2] * v], i * NEAR_STRIDE + 16);
-      });
-      const range = model.range ?? RADIUS;
-      const twoSided = !!model.twoSided;
-      const hi = withCards(() => model.build('hi'));
-      this.felling.register(kind, model.build('hi'));
-      this.gardenKind.push(kind);
-      const hiR = model.hiRange ?? 200;
-      const g = { hi: this.gardenMesh(hi.model, list.length, range, twoSided), lo: this.gardenMesh(model.build('lo'), list.length, range, twoSided), src, hiR };
-      this.cardMesh(g.hi, hi.cards, hiR);
-      this.garden.push(g);
+  private sow(plants: GardenPlant[]): void {
+    for (const p of plants) {
+      const ki = this.kinds.indexOf(p.kind);
+      if (ki < 0 && p.kind !== 'grass') continue;
+      const key = `${Math.floor(p.x / CELL)},${Math.floor(p.z / CELL)}`;
+      let g = this.gardenCells.get(key);
+      if (!g) this.gardenCells.set(key, (g = { near: {}, imp: [], grass: [], minY: Infinity, maxY: -Infinity }));
+      _q.setFromAxisAngle(UP, p.yaw ?? hash3(p.x, 0, p.z, 7) * Math.PI * 2);
+      const k = p.scale;
+      const w = k * (p.squash ?? 1);
+      _m.compose(_p.set(p.x, p.y, p.z), _q, _s.set(w, k, w));
+      const t = p.tint ?? TINT.chaparral;
+      const v = 0.88 + hash3(p.x, 1, p.z, 3) * 0.24;
+      const out = ki < 0 ? g.grass : (g.near[p.kind] ??= []);
+      for (let e = 0; e < 16; e++) out.push(_m.elements[e]);
+      out.push(t[0] * v, t[1] * v, t[2] * v);
+      g.minY = Math.min(g.minY, p.y);
+      if (ki < 0) continue;
+      g.imp.push(p.x, p.y, p.z, k, w, ki, t[0] * v, t[1] * v, t[2] * v);
+      g.maxY = Math.max(g.maxY, p.y + 14 * k);
+      this.gardenFloor.set(`${p.x},${p.z}`, p.y - 0.3);
     }
-    this.lastEye.set(Infinity, 0, 0);
   }
 
   /** Everything planted in one cell, computed once and cached. */
@@ -1451,12 +1463,20 @@ export class Vegetation {
       } else if (r > 0.985 && high < 0.5) plant('oak', x, z, h, 0.7 + rnd() * 0.75, TINT.chaparral, false);
       else if (r > 0.97 && high > 0.5) plant('pine', x, z, h, 0.7 + rnd() * 0.75, TINT.chaparral, false);
     }
+    const near: Record<string, Float32Array> = {};
+    const planted = this.gardenCells.get(key);
+    for (const k of this.kinds) near[k] = new Float32Array([...(isKind(k) ? lists[k] : []), ...(planted?.near[k] ?? [])]);
+    if (planted) {
+      imp.push(...planted.imp);
+      minY = Math.min(minY, planted.minY);
+      maxY = Math.max(maxY, planted.maxY);
+    }
     const data: CellData = {
       x: (cx + 0.5) * CELL,
       z: (cz + 0.5) * CELL,
       minY: Number.isFinite(minY) ? minY : 0,
       maxY: Number.isFinite(maxY) ? maxY : 0,
-      near: { bush: new Float32Array(lists.bush), oak: new Float32Array(lists.oak), pine: new Float32Array(lists.pine), palm: new Float32Array(lists.palm) },
+      near,
       imp: new Float32Array(imp),
       tuft: undefined,
       cx,
@@ -1501,6 +1521,7 @@ export class Vegetation {
       for (let e = 0; e < 16; e++) out.push(_m.elements[e]);
       out.push(tint[0] * v, tint[1] * v, tint[2] * v);
     }
+    grass.push(...(this.gardenCells.get(`${c.cx},${c.cz}`)?.grass ?? []));
     c.tuft = brush.length + grass.length ? { brush: new Float32Array(brush), grass: new Float32Array(grass) } : null;
     return c.tuft;
   }
@@ -1518,12 +1539,13 @@ export class Vegetation {
     const pad = radius + 8;
     const near = (x: number, z: number, r: number) => segDist2(x, z, from.x, from.z, ex, ez) < r * r;
     const tint = new THREE.Color();
-    const take = (kind: string, src: Float32Array, o: number, floor?: number): boolean => {
+    const take = (kind: string, src: Float32Array, o: number): boolean => {
       if (!near(src[o + 12], src[o + 14], pad * Math.max(1, Math.hypot(src[o + 4], src[o + 5], src[o + 6])))) return false;
       _m.fromArray(src, o);
       const y = this.felling.strike(kind, _m, from, dir, reach, radius);
       if (y < 0) return false;
-      this.felling.fell(kind, _m, tint.fromArray(src, o + 16), y, from, floor);
+      // (the garden, laid on the house's decks, falls no lower than it stood)
+      this.felling.fell(kind, _m, tint.fromArray(src, o + 16), y, from, this.gardenFloor.get(`${src[o + 12]},${src[o + 14]}`));
       return true;
     };
     const x0 = Math.floor((Math.min(from.x, ex) - pad) / CELL);
@@ -1536,7 +1558,7 @@ export class Vegetation {
         const c = this.cache.get(key);
         if (!c || !near(c.x, c.z, CELL * Math.SQRT1_2 + pad)) continue;
         let gone: Set<string> | null = null;
-        for (const k of KINDS) {
+        for (const k of this.kinds) {
           const src = c.near[k];
           for (let o = 0; o < src.length; o += NEAR_STRIDE) {
             if (!take(k, src, o)) continue;
@@ -1552,20 +1574,6 @@ export class Vegetation {
         this.dirty = true;
       }
     }
-    // The garden (laid on the house's decks: it falls no lower than it stood)
-    this.garden.forEach((g, i) => {
-      const kind = this.gardenKind[i];
-      if (!FELL[kind]) return;
-      let cut = false;
-      const keep: number[] = [];
-      for (let o = 0; o < g.src.length; o += NEAR_STRIDE) {
-        if (take(kind, g.src, o, g.src[o + 13] - 0.3)) cut = true;
-        else for (let e = 0; e < NEAR_STRIDE; e++) keep.push(g.src[o + e]);
-      }
-      if (!cut) return;
-      g.src = new Float32Array(keep);
-      this.dirty = true;
-    });
   }
 
   update(camera: THREE.PerspectiveCamera | THREE.Camera, time: number): void {
@@ -1603,8 +1611,8 @@ export class Vegetation {
     const cx = Math.floor(eye.x / CELL);
     const cz = Math.floor(eye.z / CELL);
     const reach = Math.ceil(RADIUS / CELL);
-    const nearCount: Record<Kind, number> = { bush: 0, oak: 0, pine: 0, palm: 0 };
-    const hiCount: Record<Kind, number> = { bush: 0, oak: 0, pine: 0, palm: 0 };
+    const nearCount: Record<string, number> = Object.fromEntries(this.kinds.map((k) => [k, 0]));
+    const hiCount: Record<string, number> = { ...nearCount };
     let impN = 0;
     let tuftN = 0;
     let tuftHiN = 0;
@@ -1667,11 +1675,12 @@ export class Vegetation {
         const dy = Math.max(c.minY - eye.y, 0, eye.y - c.maxY);
         const dMin = Math.sqrt(flat2 + dy * dy);
         const dMax = Math.hypot(Math.max(Math.abs(c.x - eye.x) + half, 0), Math.max(Math.abs(c.z - eye.z) + half, 0), Math.max(Math.abs(c.minY - eye.y), Math.abs(c.maxY - eye.y)));
-        for (const k of KINDS) {
-          const hr = HI_R[k];
-          if (dMax < hr) hiCount[k] += copyNear(this.close[k], c.near[k], hiCount[k], CAP_HI[k]);
+        for (const k of this.kinds) {
+          if (!c.near[k].length) continue;
+          const hr = this.species[k].hiRange;
+          if (dMax < hr) hiCount[k] += copyNear(this.close[k], c.near[k], hiCount[k], this.capHi[k]);
           else if (dMin > hr) {
-            if (dMin < LOD_FAR + REBUILD_MOVE) nearCount[k] += copyNear(this.near[k], c.near[k], nearCount[k], CAP[k]);
+            if (dMin < LOD_FAR + REBUILD_MOVE) nearCount[k] += copyNear(this.near[k], c.near[k], nearCount[k], this.cap[k]);
           } else {
             // Straddling the hand-over: tree by tree
             const src = c.near[k];
@@ -1680,8 +1689,8 @@ export class Vegetation {
               const ey = src[o + 13] - eye.y;
               const ez = src[o + 14] - eye.z;
               if (ex * ex + ey * ey + ez * ez < hr * hr) {
-                if (hiCount[k] < CAP_HI[k]) put(this.close[k], src, o, hiCount[k]++);
-              } else if (nearCount[k] < CAP[k]) put(this.near[k], src, o, nearCount[k]++);
+                if (hiCount[k] < this.capHi[k]) put(this.close[k], src, o, hiCount[k]++);
+              } else if (nearCount[k] < this.cap[k]) put(this.near[k], src, o, nearCount[k]++);
             }
           }
         }
@@ -1725,7 +1734,7 @@ export class Vegetation {
       attr.addUpdateRange(0, n * attr.itemSize);
       attr.needsUpdate = true;
     };
-    for (const k of KINDS) {
+    for (const k of this.kinds) {
       for (const [m, n] of [
         [this.near[k], nearCount[k]],
         [this.close[k], hiCount[k]],
@@ -1744,30 +1753,13 @@ export class Vegetation {
     this.grass.count = grassN;
     upload(this.grass.instanceMatrix, grassN);
     upload(this.grass.instanceColor!, grassN);
-    for (const g of this.garden) {
-      let hi = 0;
-      let lo = 0;
-      for (let o = 0; o < g.src.length; o += NEAR_STRIDE) {
-        const near = Math.hypot(g.src[o + 12] - eye.x, g.src[o + 13] - eye.y, g.src[o + 14] - eye.z) < g.hiR;
-        if (near) put(g.hi, g.src, o, hi++);
-        else put(g.lo, g.src, o, lo++);
-      }
-      for (const [m, n] of [
-        [g.hi, hi],
-        [g.lo, lo],
-      ] as const) {
-        m.count = n;
-        upload(m.instanceMatrix, n);
-        upload(m.instanceColor!, n);
-      }
-    }
     for (const [owner, cards] of this.cards) cards.count = owner.count;
     this.imp.geometry.instanceCount = impN;
     upload(this.impA, impN);
     upload(this.impB, impN);
     upload(this.impT, impN);
     this.pending = pending;
-    const nearN = KINDS.reduce((s, k) => s + nearCount[k] + hiCount[k], 0);
+    const nearN = this.kinds.reduce((s, k) => s + nearCount[k] + hiCount[k], 0);
     this.stats = { cells, near: nearN, imp: impN, tuft: tuftN + tuftHiN + grassN, rebuilds: this.stats.rebuilds + 1, buildMs: +(performance.now() - t0).toFixed(2) };
   }
 
