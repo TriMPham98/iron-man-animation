@@ -11,7 +11,9 @@ import {
   followPose,
   HOVER_TEST_AT,
   CUT_AT,
+  CUT_TO,
   cycleAt,
+  launchMode,
   launchPlan,
   LENS_CEILING,
   roofAt,
@@ -23,7 +25,7 @@ import {
 const HOVER_HEAD = 0.05 + 1.72 + HOVER_HEIGHT;
 /** Build length (s), and clicks across the cycle: build start, mid build, the check, the hover, the landing, the doff. */
 const BUILD = 96;
-const CLICKS = [0, 40, BUILD + 8, BUILD + HOVER_TEST_AT, BUILD + HOVER_HOLD[0] + 1, BUILD + HOVER_HOLD[1] + 0.5, BUILD + 34.9, BUILD + 35 + 50];
+const CLICKS = [0, 40, BUILD + 8, BUILD + HOVER_HOLD[0] - WAIT_MAX + 0.5, BUILD + HOVER_TEST_AT, BUILD + HOVER_HOLD[0] + 1, BUILD + HOVER_HOLD[1] + 0.5, BUILD + 34.9, BUILD + 35 + 50];
 
 describe('launch profile', () => {
   it('reaches the settled hover by waiting or by a cut, and holds it there', () => {
@@ -106,5 +108,24 @@ describe('launch profile', () => {
 
   it('frames the follow inside the shaft', () => {
     expect(Math.hypot(FOLLOW_REL.x, FOLLOW_REL.z)).toBeLessThan(ROOF_IRIS_R - 0.2);
+  });
+
+  it('never runs the cycle fast: waits on the check near the hover, cuts from further out', () => {
+    expect(launchMode(BUILD - 1, BUILD)).toBe('cut');
+    expect(launchMode(BUILD + HOVER_HOLD[0] - WAIT_MAX - 0.5, BUILD)).toBe('cut');
+    expect(launchMode(BUILD + HOVER_HOLD[0] - 1, BUILD)).toBe('wait');
+    expect(launchMode(BUILD + HOVER_HOLD[0] + 0.5, BUILD)).toBe('now');
+    expect(launchMode(BUILD + HOVER_HOLD[1] + 0.5, BUILD)).toBe('cut');
+    // A click mid wait cuts from where the check has got to
+    const skipped = CLICKS.filter((c) => launchMode(c, BUILD) === 'wait').map((c) => launchPlan(c + 2, BUILD, true));
+    expect(skipped.length).toBeGreaterThan(0);
+    for (const p of [...CLICKS.map((c) => launchPlan(c, BUILD)), ...skipped]) {
+      // One check second a second, from the click or from the cut
+      expect(checkAt(p, p.t0 + 1) - checkAt(p, p.t0)).toBeCloseTo(Math.min(1, HOVER_HOLD[1] - p.check0), 6);
+      if (p.mode === 'cut') {
+        expect(p.check0).toBe(CUT_TO);
+        expect(p.masts).toBeGreaterThan(CUT_AT);
+      } else expect(p.check0).toBeCloseTo(p.from - BUILD, 6);
+    }
   });
 });
