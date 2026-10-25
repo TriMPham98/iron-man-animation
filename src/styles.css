@@ -4912,9 +4912,9 @@ body.flight-handoff > :not(#app):not(#flight-layer):not(#flight-handoff):not(scr
   transition: opacity 0.6s ease !important;
 }
 
-/* The natural end of the suit-up: once the flight check reads nominal */
+/* What FLY will do from here (main.ts sets it); always up once the suit hovers */
 #fly-link::before {
-  content: 'FLIGHT SYSTEMS READY · TAKE HER OUT';
+  content: attr(data-hint);
   position: absolute;
   right: 0;
   bottom: calc(100% + 10px);
@@ -4932,6 +4932,9 @@ body.fly-offered #fly-link {
   border-color: #7ee8ff;
   animation: fly-offer 2.4s ease-in-out infinite;
 }
+/* (anywhere else it says, on a hover, what it will do first) */
+#fly-link:hover::before,
+#fly-link:focus-visible::before,
 body.fly-offered #fly-link::before {
   opacity: 1;
   transform: none;

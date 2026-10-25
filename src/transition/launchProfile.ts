@@ -1,25 +1,30 @@
 import * as THREE from 'three';
-import { FLIGHT_CHECK_STEPS, HOVER_HOLD } from '../animation/flightCheck';
+import { FLIGHT_CHECK_START, FLIGHT_CHECK_STEPS, HOVER_HOLD } from '../animation/flightCheck';
 import { ROOF_IRIS_R, ROOF_IRIS_SEC, SHAFT_H } from '../workshop/roofIris';
 
 /**
  * The launch out of the workshop, as pure functions of the seconds since
- * the FLY click: the flight check runs on (or back) into its settled hover,
- * the mast heads run clear of the roof iris, the iris opens on the shaft,
- * daylight comes down it and the suit climbs out — the lens low under it,
+ * the FLY click, from anywhere in the cycle: first the cycle is run (fast,
+ * eased in and out) to the settled hover — the build on to its end and the
+ * check through its lift-off, or the doff and the landing back — then the
+ * mast heads run clear of the roof iris, the iris opens on the shaft,
+ * daylight comes down it and the suit climbs out: the lens low under it,
  * then up after it into the shaft, where the flight sim takes the picture.
  */
 
-/** Check-clock speed while it heads for the hover (either way). */
-export const SEEK_RATE = 2;
-/** Mast heads running clear (s). */
-export const MASTS_SEC = 0.5;
 /** Climb: metres up from the hover to the swap, its time, and the speed it leaves at. */
 export const CLIMB_M = 4.7;
 export const CLIMB_SEC = 1.9;
 export const CLIMB_EXIT_V = 3.5;
-/** The earliest check time (s) the launch runs from: the hover test. */
-export const LAUNCH_FROM = (FLIGHT_CHECK_STEPS.find((s) => /HOVER/.test(s.status)) ?? FLIGHT_CHECK_STEPS[0]).at;
+/** Mast heads running clear (s). */
+export const MASTS_SEC = 0.5;
+/** The hover test's first step (check s): from here on the suit is already on its way up. */
+export const HOVER_TEST_AT = (FLIGHT_CHECK_STEPS.find((s) => /HOVER/.test(s.status)) ?? FLIGHT_CHECK_STEPS[0]).at;
+/**
+ * The cell is stowed through the check from just after the build to the doff
+ * prep (the grippers come up as it reads nominal): the roof only moves then.
+ */
+const CELL_CLEAR: readonly [number, number] = [0.3, FLIGHT_CHECK_STEPS[FLIGHT_CHECK_STEPS.length - 1].at];
 /** Lens under the climbing suit, in the suit's yaw frame (from its head). */
 export const FOLLOW_REL = new THREE.Vector3(0.62, -1.7, 0.66);
 /** …looking at this far over the head. */
@@ -41,10 +46,18 @@ const smooth = (x: number) => {
 };
 const ramp = (t: number, a: number, len: number) => THREE.MathUtils.clamp((t - a) / len, 0, 1);
 
+/** Where in the cycle the click came: the build, the check before the hover, the hover, or after it. */
+export type LaunchFrom = 'build' | 'check' | 'hover' | 'after';
+
 export interface LaunchPlan {
-  /** Check clock at the click. */
+  /** Cycle clock at the click, the build's length, and the cycle time of the settled hover it runs to. */
   from: number;
-  /** When the check is in the settled hover (s from the click). */
+  assembly: number;
+  target: number;
+  kind: LaunchFrom;
+  /** Cycle span the run jumps (the check's standing steps, run from the build). */
+  skip: readonly [number, number] | null;
+  /** When the cycle is in the settled hover (s from the click). */
   ready: number;
   /** Mast heads start clearing; the iris starts and is fully open. */
   masts: number;
@@ -55,22 +68,74 @@ export interface LaunchPlan {
   swap: number;
 }
 
-/** The beats for a click at check time `from` (s). */
-export function launchPlan(from: number): LaunchPlan {
-  const [h0, h1] = HOVER_HOLD;
-  const ready = from < h0 ? (h0 - from) / SEEK_RATE : from > h1 ? (from - h1) / SEEK_RATE : 0;
-  const masts = Math.max(0.35, ready - 1.4);
-  const irisFrom = masts + MASTS_SEC * 0.8;
-  const irisOpen = irisFrom + ROOF_IRIS_SEC;
-  const climb = Math.max(ready + 0.15, irisOpen - 0.55);
-  return { from, ready, masts, irisFrom, irisOpen, climb, swap: climb + CLIMB_SEC };
+/** Where in the cycle cycle-time `t` is, for the launch. */
+export function launchFrom(t: number, assembly: number): LaunchFrom {
+  const check = t - assembly;
+  if (check < 0) return 'build';
+  if (check < HOVER_TEST_AT) return 'check';
+  return check <= HOVER_HOLD[1] ? 'hover' : 'after';
 }
 
-/** Check clock at `t` s from the click: on (or back) into the hover, then on through it. */
-export function checkAt(p: LaunchPlan, t: number): number {
+/**
+ * Seconds to run the cycle `dist` s: a couple of check seconds at about
+ * twice speed, a whole build or doff in a few seconds.
+ */
+export function seekSeconds(dist: number): number {
+  return dist <= 1e-3 ? 0 : THREE.MathUtils.clamp(0.3 + 0.55 * Math.sqrt(dist), 0.6, 4.2);
+}
+
+/** The beats for a click at cycle time `from` (s), the build `assembly` s long. */
+export function launchPlan(from: number, assembly: number): LaunchPlan {
   const [h0, h1] = HOVER_HOLD;
-  if (t < p.ready) return p.from + Math.sign(THREE.MathUtils.clamp(p.from, h0, h1) - p.from) * SEEK_RATE * t;
-  return Math.min(h1, THREE.MathUtils.clamp(p.from, h0, h1) + (t - p.ready));
+  const check = from - assembly;
+  const target = assembly + THREE.MathUtils.clamp(check, h0, h1);
+  const kind = launchFrom(from, assembly);
+  // From the build, the check's own steps (all done from a stand) are passed
+  // over: finished, the suit goes straight into the hover test
+  const skip: readonly [number, number] | null = kind === 'build' ? [assembly + FLIGHT_CHECK_START, assembly + HOVER_TEST_AT] : null;
+  const ready = seekSeconds(Math.abs(target - from) - (skip ? skip[1] - skip[0] : 0));
+  const p = { from, assembly, target, kind, skip, ready, masts: 0, irisFrom: 0, irisOpen: 0, climb: 0, swap: 0 };
+  // The roof waits for the cell to be stowed (the run passes into the check)
+  let clear = 0;
+  for (let t = 0; t < ready; t += 1 / 120) {
+    const c = cycleAt(p, t) - assembly;
+    if (c >= CELL_CLEAR[0] && c <= CELL_CLEAR[1]) break;
+    clear = t;
+  }
+  p.masts = Math.max(0.35, clear + 0.15, ready - 1.4);
+  p.irisFrom = p.masts + MASTS_SEC * 0.8;
+  p.irisOpen = p.irisFrom + ROOF_IRIS_SEC;
+  p.climb = Math.max(ready + 0.15, p.irisOpen - 0.55);
+  p.swap = p.climb + CLIMB_SEC;
+  return p;
+}
+
+/** What the FLY button will do from cycle time `t` (shown over it). */
+export function flyHint(t: number, assembly: number): string {
+  switch (launchFrom(t, assembly)) {
+    case 'build':
+      return 'FINISHES THE SUIT-UP · THEN TAKES HER OUT';
+    case 'check':
+      return 'SKIPS TO THE HOVER TEST · THEN TAKES HER OUT';
+    case 'hover':
+      return 'FLIGHT SYSTEMS READY · TAKE HER OUT';
+    case 'after':
+      return 'PUTS HER BACK TOGETHER · THEN TAKES HER OUT';
+  }
+}
+
+/** Cycle clock at `t` s from the click, while it runs to the hover (eased in and out). */
+export function cycleAt(p: Pick<LaunchPlan, 'from' | 'target' | 'ready' | 'skip'>, t: number): number {
+  if (p.ready <= 0) return p.target;
+  const gap = p.skip ? p.skip[1] - p.skip[0] : 0;
+  const c = THREE.MathUtils.lerp(p.from, p.target - gap, smooth(t / p.ready));
+  return p.skip && c > p.skip[0] ? c + gap : c;
+}
+
+/** Check clock at `t` s from the click: the run to the hover, then on through it. */
+export function checkAt(p: LaunchPlan, t: number): number {
+  if (t < p.ready) return cycleAt(p, t) - p.assembly;
+  return Math.min(HOVER_HOLD[1], p.target - p.assembly + (t - p.ready));
 }
 
 /** Metres climbed over the hover at `t`: eased off the hover, leaving at {@link CLIMB_EXIT_V}. */

@@ -144,6 +144,8 @@ export class SuitParticles {
   private readonly steam: THREE.Points;
 
   private readonly _v = new THREE.Vector3();
+  /** Nothing new is emitted (the cycle being run fast: a whole check's smoke at once). */
+  muted = false;
 
   constructor() {
     this.group.name = 'suit-particles';
@@ -213,6 +215,7 @@ export class SuitParticles {
    * steam vents over ~0.25 s.
    */
   burst(kind: BurstKind, at: THREE.Vector3, count: number, dir?: THREE.Vector3, opts?: { jet?: boolean }): void {
+    if (this.muted) return;
     const jet = kind === 'steam' && !!dir && !!opts?.jet;
     const n = kind === 'sparks' ? Math.round(count * 1.6) : Math.round(count * (jet ? 2.2 : 1.3));
     const span = kind === 'sparks' ? 0.06 : jet ? 0.32 : 0.25;
@@ -259,6 +262,7 @@ export class SuitParticles {
    * of flight it reads as a continuous trail that hangs, spreads and fades.
    */
   trail(at: THREE.Vector3, drift: THREE.Vector3): void {
+    if (this.muted) return;
     const k = this.vNext;
     this.vNext = (this.vNext + 1) % this.vN;
     this.vJet[k] = 2;

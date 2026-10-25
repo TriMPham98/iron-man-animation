@@ -335,6 +335,11 @@ export class Suit {
     this.particles.clear();
   }
 
+  /** Hold back new sparks and smoke (the cycle run fast to somewhere). */
+  muteFx(muted: boolean): void {
+    this.particles.muted = muted;
+  }
+
   /** Burst at a world point (robot tools — rivet strikes). */
   emitWorld(kind: 'sparks' | 'steam', world: THREE.Vector3, count: number, dirWorld?: THREE.Vector3): void {
     this._v.copy(world).applyMatrix4(this.modelInv);

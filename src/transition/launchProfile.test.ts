@@ -9,7 +9,8 @@ import {
   climbAt,
   FOLLOW_REL,
   followPose,
-  LAUNCH_FROM,
+  HOVER_TEST_AT,
+  cycleAt,
   launchPlan,
   LENS_CEILING,
   roofAt,
@@ -18,13 +19,16 @@ import {
 
 /** Head (world y) in the hover, before the climb. */
 const HOVER_HEAD = 0.05 + 1.72 + HOVER_HEIGHT;
-const CLICKS = [LAUNCH_FROM, LAUNCH_FROM + 1.5, HOVER_HOLD[0] + 1, HOVER_HOLD[1] + 0.5, 34.9];
+/** Build length (s), and clicks across the cycle: build start, mid build, the check, the hover, the landing, the doff. */
+const BUILD = 96;
+const CLICKS = [0, 40, BUILD + 8, BUILD + HOVER_TEST_AT, BUILD + HOVER_HOLD[0] + 1, BUILD + HOVER_HOLD[1] + 0.5, BUILD + 34.9, BUILD + 35 + 50];
 
 describe('launch profile', () => {
-  it('runs the check into the settled hover and holds it there', () => {
+  it('runs the cycle into the settled hover and holds it there', () => {
     for (const from of CLICKS) {
-      const p = launchPlan(from);
-      expect(checkAt(p, 0)).toBeCloseTo(from, 6);
+      const p = launchPlan(from, BUILD);
+      expect(cycleAt(p, 0)).toBeCloseTo(from, 6);
+      expect(p.ready).toBeLessThanOrEqual(4.2);
       const at = checkAt(p, p.ready);
       expect(at).toBeGreaterThanOrEqual(HOVER_HOLD[0] - 1e-6);
       expect(at).toBeLessThanOrEqual(HOVER_HOLD[1] + 1e-6);
@@ -38,7 +42,7 @@ describe('launch profile', () => {
   });
 
   it('leaves the climb smoothly at the exit speed', () => {
-    const p = launchPlan(HOVER_HOLD[0] + 1);
+    const p = launchPlan(BUILD + HOVER_HOLD[0] + 1, BUILD);
     const v = (t: number) => (climbAt(p, t + 1e-3) - climbAt(p, t - 1e-3)) / 2e-3;
     expect(v(p.climb + 0.001)).toBeLessThan(0.05);
     expect(v(p.swap - 0.002)).toBeCloseTo(CLIMB_EXIT_V, 1);
@@ -48,7 +52,7 @@ describe('launch profile', () => {
 
   it('has the iris open before the suit gets to it', () => {
     for (const from of CLICKS) {
-      const p = launchPlan(from);
+      const p = launchPlan(from, BUILD);
       for (let t = p.climb; t < p.swap; t += 0.02) {
         // Boots under the ceiling until the blades have gone (head − 1.72 m)
         if (HOVER_HEAD + climbAt(p, t) + 0.2 > ROOM_HEIGHT) expect(roofAt(p, t).iris).toBe(1);
@@ -60,7 +64,7 @@ describe('launch profile', () => {
     const head = new THREE.Vector3();
     const out = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 0 };
     for (const from of CLICKS) {
-      const p = launchPlan(from);
+      const p = launchPlan(from, BUILD);
       for (const yaw of [0, 1.1, Math.PI, -2.4]) {
         const start = { pos: new THREE.Vector3(Math.sin(yaw + 2.5) * 3.4, 1.6, Math.cos(yaw + 2.5) * 3.4), look: new THREE.Vector3(0, 1.5, 0), fov: 35 };
         let last: THREE.Vector3 | null = null;
@@ -77,6 +81,17 @@ describe('launch profile', () => {
             expect(out.pos.distanceTo(want)).toBeLessThan(1e-3);
           }
         }
+      }
+    }
+  });
+
+  it('waits for the cell to be stowed before the roof moves', () => {
+    for (const from of CLICKS) {
+      const p = launchPlan(from, BUILD);
+      for (let t = p.masts; t < p.ready; t += 0.01) {
+        const c = checkAt(p, t);
+        expect(c).toBeGreaterThan(0.2);
+        expect(c).toBeLessThan(33);
       }
     }
   });

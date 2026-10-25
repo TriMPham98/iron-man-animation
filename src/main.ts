@@ -37,7 +37,7 @@ import { simplifierReady } from './utils/simplify';
 import { HERO_END_CAM } from './animation/sequenceClock';
 import { FLIGHT_CHECK_STEPS } from './animation/flightCheck';
 import { createFlightHandoff, type FlightHandoff } from './transition/flightHandoff';
-import { LAUNCH_FROM } from './transition/launchProfile';
+import { flyHint } from './transition/launchProfile';
 
 /** Releases every geometry, material and texture under `root`. */
 function disposeTree(root: THREE.Object3D): void {
@@ -312,6 +312,7 @@ async function boot(): Promise<void> {
     }
   });
 
+  const flyButton = document.getElementById('fly-link');
   /** The fly prompt is up (from the hover test until the doff starts). */
   let flyOffered = false;
   const FLY_OFFER_AT = (FLIGHT_CHECK_STEPS.find((s) => /HOVER/.test(s.status)) ?? FLIGHT_CHECK_STEPS[FLIGHT_CHECK_STEPS.length - 1]).at;
@@ -382,6 +383,9 @@ async function boot(): Promise<void> {
         flyOffered = offer;
         document.body.classList.toggle('fly-offered', offer);
       }
+      // Anywhere else it still flies: it says what it will do first
+      const hint = flyHint(c.t, c.phases.assembly);
+      if (flyButton && flyButton.dataset.hint !== hint) flyButton.dataset.hint = hint;
     }
     contact.update();
     post.render(delta);
@@ -476,11 +480,15 @@ async function boot(): Promise<void> {
       (!ui.hasInitiated() && introCam.done()) ||
       // Held on a frame (Space): nothing moving to stutter
       (ui.hasInitiated() && !session.getCycle().playing),
-    // From the hover test on, the suit flies itself out through the roof
-    launchFrom: () => {
-      const t = session.flightCheckTime();
-      return t !== null && t >= LAUNCH_FROM ? t : null;
+    // From anywhere in the cycle the suit flies itself out through the roof
+    // (reduced motion: no check or doff to run through, a plain dissolve)
+    cycle: () => {
+      if (reducedMotion) return null;
+      const c = session.getCycle();
+      return { t: c.t, assembly: c.phases.assembly };
     },
+    seekCycle: (t) => session.seekCycle(t),
+    muteFx: (m) => suit.muteFx(m),
     poseLaunch: (check, climb, burn, fx) => session.poseLaunch(check, climb, burn, fx),
     setRoof: (s) => workshop.setRoof(s),
     cue: (file, o) =>
