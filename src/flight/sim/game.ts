@@ -157,7 +157,11 @@ export class Game {
       const off = (homing ? Math.atan2(m.vel.x, m.vel.z) : m.heading) - Math.atan2(f.x, f.z);
       this.rig.turn(Math.atan2(Math.sin(off), Math.cos(off)) * (1 - Math.exp(-this.frameDt / (homing ? 0.5 : 0.8))), 0);
     }
-    this.rig.zoom = THREE.MathUtils.clamp(this.rig.zoom + c.zoom * 0.08, 0.6, 2.2);
+    // Chase and shoulder only. One mouse notch moves the lens a little under
+    // half of what it used to (0.6 close … 2.2 pulled back).
+    if (this.rig.mode === 'chase' || this.rig.mode === 'shoulder') {
+      this.rig.zoom = THREE.MathUtils.clamp(this.rig.zoom + c.zoom * 0.035, 0.6, 2.2);
+    }
     const i = this.input;
     i.aim.copy(this.rig.aim(this._aim));
     i.lateral = c.lateral;

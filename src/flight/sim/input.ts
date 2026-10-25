@@ -99,7 +99,10 @@ export class Input {
     target.addEventListener(
       'wheel',
       (e) => {
-        this.wheel += Math.sign(e.deltaY);
+        // A mouse notch is about 100px. A trackpad streams many small pixel
+        // events; counting each one as a full notch slammed the lens in or out.
+        const notch = e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * 20 : e.deltaY / 100;
+        this.wheel += notch;
         e.preventDefault();
       },
       { passive: false },
