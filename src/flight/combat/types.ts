@@ -41,3 +41,12 @@ export interface Decoy {
   /** A seeker flew into it: snuffed out by the blast. */
   eaten?: boolean;
 }
+
+/**
+ * The house, as a launcher sees it when it can't see the suit: spots on its
+ * roofs to lay on, and what a round that comes down there does.
+ */
+export interface HouseTarget {
+  readonly marks: readonly THREE.Vector3[];
+  struck(at: THREE.Vector3): void;
+}

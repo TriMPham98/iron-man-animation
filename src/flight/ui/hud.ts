@@ -1290,6 +1290,7 @@ export class Hud {
     }
     for (const h of c.hostiles) if (h.alive) plot(h.pos, h.kind === 'drone' ? RED : AMBER, 4 * s, h.kind !== 'drone');
     for (const ms of c.missiles.threats()) plot(ms.pos, WHITE, 3 * s);
+    for (const ms of c.missiles.strikes()) plot(ms.pos, AMBER, 2.5 * s);
     g.fillStyle = WHITE;
     g.beginPath();
     g.moveTo(x, y - 6 * s);
@@ -1331,6 +1332,26 @@ export class Hud {
         g.moveTo(-5 * s, -7 * s);
         g.lineTo(4 * s, 0);
         g.lineTo(-5 * s, 7 * s);
+        g.stroke();
+        g.restore();
+      }
+    }
+    // The house being shelled: a callout and an amber caret toward each launcher doing it
+    if (c.houseUnderFire) {
+      if (blink) this.text(g, 'HOUSE UNDER FIRE', cx, cy - 88 * s, 13 * s, AMBER, 'center', JARVIS);
+      for (const p of c.shellers()) {
+        const rel = this._v.copy(p).applyMatrix4(cam.matrixWorldInverse);
+        const ang = Math.atan2(-rel.y, rel.x);
+        const R = 82 * s;
+        g.save();
+        g.translate(cx + Math.cos(ang) * R, cy + Math.sin(ang) * R);
+        g.rotate(ang);
+        g.strokeStyle = AMBER;
+        g.lineWidth = 1.6;
+        g.beginPath();
+        g.moveTo(-4 * s, -6 * s);
+        g.lineTo(4 * s, 0);
+        g.lineTo(-4 * s, 6 * s);
         g.stroke();
         g.restore();
       }

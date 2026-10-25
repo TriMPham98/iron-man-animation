@@ -142,6 +142,17 @@ export function structureTop(field: Heightfield, x: number, z: number): number {
   return HOME_HEIGHT + Math.max(top, rock);
 }
 
+/** Spots across the roofs a launcher shelling the house lays on (frame x/z). */
+const STRIKE_MARKS: P2[] = [[40, 12], [58, 20], [80, 12], [96, 18], [60, 48], [28, 30], [74, 36], [88, 30]];
+
+/** The strike marks in the world, on the roof under each. */
+export function strikeMarks(field: Heightfield): THREE.Vector3[] {
+  return STRIKE_MARKS.map(([u, v]) => {
+    const w = toWorld(u, v);
+    return new THREE.Vector3(w.x, structureTop(field, w.x, w.y), w.y);
+  }).filter((p) => p.y > HOME_HEIGHT + 1);
+}
+
 // ── Build ──
 
 interface Batches {

@@ -6,13 +6,14 @@ import type { FlightModel } from '../sim/flightModel';
 import type { Controls } from '../sim/input';
 import type { Suit } from '../../suit/Suit';
 import { HOME, type Heightfield } from '../world/heightfield';
+import { strikeMarks, structureTop } from '../world/house';
 import { Drone, Guns } from './drones';
 import { Explosions, type SurfaceQuery } from './explosions';
 import { Frigate, type ShipPart } from './frigate';
 import { Missiles } from './missiles';
 import { PlayerWeapons } from './playerWeapons';
 import { SamSite, samSites } from './sams';
-import type { Hostile, PlayerTarget } from './types';
+import type { Hostile, HouseTarget, PlayerTarget } from './types';
 import { hazeAll } from '../render/haze';
 
 /**
@@ -24,12 +25,43 @@ import { hazeAll } from '../render/haze';
  * dead for a few seconds and reboots in the air, on one of {@link RESERVES}
  * reserves (a cleared wave earns one back). With none left the suit is lost:
  * it stays down until the pilot redeploys, back to wave one on the pad.
+ * With the suit out of their sight the SAMs shell the house: only for show
+ * (a blast, scorch on the roof, smoke), it takes no damage.
  */
 
 /** Reboots the suit holds in reserve at the start of a run. */
 export const RESERVES = 2;
 /** Seconds after the suit is lost before a redeploy is offered (it's seen to fall). */
 const REDEPLOY_AFTER = 2.5;
+/** Scorch marks the roofs keep before the oldest goes. */
+const MAX_SCORCH = 24;
+
+let scorchMat: THREE.MeshStandardMaterial | null = null;
+const SCORCH_GEO = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+/** A ragged soot splash: alpha falls off from the middle, broken up round the rim. */
+function scorchMaterial(): THREE.MeshStandardMaterial {
+  if (scorchMat) return scorchMat;
+  const n = 64;
+  const data = new Uint8Array(n * n * 4);
+  const lobes = Array.from({ length: 7 }, () => [Math.random() * Math.PI * 2, 0.08 + Math.random() * 0.12] as const);
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const x = (i + 0.5) / n - 0.5;
+      const y = (j + 0.5) / n - 0.5;
+      const a = Math.atan2(y, x);
+      const rim = 0.34 + lobes.reduce((r, [p, k]) => r + k * Math.max(0, Math.cos(a * 3 + p)) ** 4, 0) * 0.5;
+      const r = Math.hypot(x, y) / rim;
+      const alpha = Math.max(0, Math.min(1, 1.15 - r * r)) * (0.75 + 0.25 * Math.random());
+      data.set([14, 12, 10, Math.round(alpha * 235)], (j * n + i) * 4);
+    }
+  }
+  const map = new THREE.DataTexture(data, n, n);
+  map.magFilter = THREE.LinearFilter;
+  map.minFilter = THREE.LinearFilter;
+  map.needsUpdate = true;
+  scorchMat = new THREE.MeshStandardMaterial({ map, transparent: true, depthWrite: false, roughness: 1, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2 });
+  return scorchMat;
+}
 
 const WAVES: ReadonlyArray<{ drones: number; sams: number; frigate?: boolean; line: string }> = [
   { drones: 3, sams: 0, line: 'Sir, three bogeys coming over the ridge. Drone signatures.' },
@@ -68,6 +100,10 @@ export class Combat {
   private waveT = 0;
   private readonly samSpots: THREE.Vector3[];
   private readonly player: PlayerTarget;
+  readonly house: HouseTarget;
+  private readonly scorch: THREE.Mesh[] = [];
+  /** Seconds since JARVIS last called out the shelling. */
+  private shellCallT = 99;
 
   constructor(
     private readonly field: Heightfield,
@@ -85,6 +121,7 @@ export class Combat {
     this.group.add(this.streaks.mesh, this.explosions.group, this.missiles.group, this.weapons.group);
     this.group.name = 'combat';
     this.samSpots = samSites(field, HOME, 6, 3);
+    this.house = { marks: strikeMarks(field), struck: (at) => this.houseStruck(at) };
     const self = this;
     this.player = {
       pos: model.pos,
@@ -155,6 +192,8 @@ export class Combat {
     this.lost = false;
     this.lostT = 0;
     this.waveT = 0;
+    for (const m of this.scorch) this.group.remove(m);
+    this.scorch.length = 0;
     this.events.emit('redeploy', { at: this.model.pos });
   }
 
@@ -204,7 +243,7 @@ export class Combat {
     for (let i = 0; i < w.sams + extra; i++) {
       const spot = this.samSpots.find((p) => !this.sams.some((s) => s.alive && s.pos.distanceTo(p) < 20));
       if (!spot) break;
-      const s = new SamSite(spot);
+      const s = new SamSite(spot, HOME);
       this.sams.push(s);
       this.hostiles.push(s);
       hazeAll(s.mesh, this.hazeUniforms);
@@ -216,6 +255,7 @@ export class Combat {
 
   update(dt: number, t: number, c: Controls, aim: THREE.Vector3, eye: THREE.Vector3): void {
     this.sinceHit += dt;
+    this.shellCallT += dt;
     this.damageFlash = Math.max(0, this.damageFlash - dt * 1.6);
     if (this.lost) this.lostT += dt;
     else if (this.down > 0) {
@@ -251,7 +291,7 @@ export class Combat {
       }
       if (d.flybyDone && d.pos.distanceTo(this.model.pos) > 400) d.flybyDone = false;
     }
-    for (const s of this.sams) s.update(dt, t, this.player, this.field, this.missiles, this.events, this.explosions, this.particles);
+    for (const s of this.sams) s.update(dt, t, this.player, this.house, this.field, this.missiles, this.events, this.explosions, this.particles);
     for (const f of this.ships) {
       f.update(dt, t, this.player, this.field, this.guns.rounds, this.missiles, this.particles, this.explosions, this.events);
       f.collide(this.model.pos, this.model.vel);
@@ -320,6 +360,36 @@ export class Combat {
   /** Enemy seekers on the suit right now. */
   get incoming(): number {
     return this.missiles.threats().length;
+  }
+
+  /** Where the launchers shelling the house are. */
+  *shellers(): Generator<THREE.Vector3> {
+    for (const s of this.sams) if (s.shelling) yield s.pos;
+  }
+
+  /** The house is being shelled: a launcher is laid on it or a round is on its way. */
+  get houseUnderFire(): boolean {
+    return this.sams.some((s) => s.shelling) || this.missiles.strikes().length > 0;
+  }
+
+  /** A round came down on (or short of) the house: fire and smoke, and soot where it hit the roof. */
+  private houseStruck(at: THREE.Vector3): void {
+    this.explosions.burn(at, 30, 4);
+    const top = structureTop(this.field, at.x, at.z);
+    if (top > -Infinity && at.y < top + 3) {
+      const m = new THREE.Mesh(SCORCH_GEO, scorchMaterial());
+      m.position.set(at.x, top + 0.04, at.z);
+      m.rotation.y = Math.random() * Math.PI * 2;
+      m.scale.setScalar(5 + Math.random() * 3);
+      hazeAll(m, this.hazeUniforms);
+      this.group.add(m);
+      this.scorch.push(m);
+      if (this.scorch.length > MAX_SCORCH) this.group.remove(this.scorch.shift()!);
+    }
+    if (this.shellCallT > 30) {
+      this.shellCallT = 0;
+      this.events.emit('jarvis', { text: 'They’re shelling the house, sir. Show them the suit and they’ll turn back on you.' });
+    }
   }
 
   /** Where the radars holding the suit right now are (SAM trucks, the frigate's gun directors). */

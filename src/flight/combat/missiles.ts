@@ -29,6 +29,8 @@ interface Missile {
   coast: number;
   target: Hostile | PlayerTarget | Decoy | null;
   aimPoint: THREE.Vector3 | null;
+  /** Called where it goes off (a strike on the house). */
+  onImpact: ((at: THREE.Vector3) => void) | null;
   damage: number;
   blast: number;
   mesh: THREE.Object3D;
@@ -132,6 +134,7 @@ export class Missiles {
   private readonly _v = new THREE.Vector3();
   private readonly _d = new THREE.Vector3();
   private readonly _los = new THREE.Vector3();
+  private readonly _aim = new THREE.Vector3();
   private readonly _q = new THREE.Quaternion();
   private readonly _q2 = new THREE.Vector3();
   private readonly FWD = new THREE.Vector3(0, 0, 1);
@@ -151,6 +154,7 @@ export class Missiles {
     vel: THREE.Vector3;
     target: Hostile | PlayerTarget | null;
     aimPoint?: THREE.Vector3;
+    onImpact?: (at: THREE.Vector3) => void;
     heavy?: boolean;
     coast?: number;
     /** Airframe radius and length (m): the tube it left. */
@@ -177,11 +181,13 @@ export class Missiles {
       speed: Math.max(base, opts.vel.length() + (heavy ? 220 : 160)),
       accel: player ? 260 : 120,
       turn: player ? 34 : 22,
-      life: player ? 9 : 12,
+      // (a strike on the house flies the long way round, over the hills)
+      life: player ? 9 : opts.onImpact ? 22 : 12,
       age: 0,
       coast: opts.coast ?? (player ? 0.22 : 0.4),
       target: opts.target,
       aimPoint: opts.aimPoint?.clone() ?? null,
+      onImpact: opts.onImpact ?? null,
       damage: player ? (heavy ? 260 : 120) : 26,
       blast: player ? (heavy ? 7 : 4.5) : 4,
       mesh,
@@ -208,6 +214,11 @@ export class Missiles {
   /** Enemy seekers currently chasing the player (for the warning). */
   threats(): Missile[] {
     return this.live.filter((m) => m.team === 'enemy' && isPlayer(m.target));
+  }
+
+  /** Enemy rounds on their way to the house. */
+  strikes(): Missile[] {
+    return this.live.filter((m) => m.team === 'enemy' && m.onImpact !== null);
   }
 
   /** Every round in the air gone, without a bang (a fresh run). */
@@ -237,7 +248,12 @@ export class Missiles {
         tp = tgt.pos;
         tv = 'vel' in tgt ? (tgt as Hostile).vel : null;
       }
-      if (!tp && m.aimPoint) tp = m.aimPoint;
+      if (!tp && m.aimPoint) {
+        tp = m.aimPoint;
+        // A strike lobbed at the house flies at a point high over it, which
+        // sinks as it closes: an arc over the hills that dives onto the roof
+        if (m.onImpact) tp = this._aim.copy(tp).setY(tp.y + 0.45 * Math.max(0, Math.hypot(tp.x - m.pos.x, tp.z - m.pos.z) - 150));
+      }
       if (tp && m.age > m.coast) {
         const los = this._los.copy(tp).sub(m.pos);
         const dist = los.length();
@@ -317,6 +333,7 @@ export class Missiles {
       m.life -= dt;
       if (boom || m.life <= 0) {
         if (boom || m.team === 'player') this.explosions.blast(m.pos, m.blast, { vel: m.vel.clone().multiplyScalar(0.05) });
+        if (boom) m.onImpact?.(m.pos);
         // Splash damage to anything else nearby
         if (m.team === 'player') {
           for (const h of hostiles) {
@@ -326,7 +343,8 @@ export class Missiles {
           }
         } else if (player.alive) {
           const d = player.pos.distanceTo(m.pos);
-          if (!boom && d < 10) player.hit(m.damage * (1 - d / 10), m.pos, 'missile');
+          // (a strike on the house catches a suit standing by it)
+          if ((!boom || m.onImpact) && d < 10) player.hit(m.damage * (1 - d / 10), m.pos, 'missile');
         }
         this.group.remove(m.mesh, m.glow);
         m.glow.material.dispose();

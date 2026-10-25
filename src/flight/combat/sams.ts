@@ -5,7 +5,7 @@ import type { Heightfield } from '../world/heightfield';
 import type { Explosions } from './explosions';
 import type { Missiles } from './missiles';
 import { beam, box, frustum, merge, paint, panelOn, type V3 } from './modelKit';
-import type { DamageKind, Hostile, PlayerTarget } from './types';
+import type { DamageKind, Hostile, HouseTarget, PlayerTarget } from './types';
 
 /**
  * Surface-to-air launchers on six-wheeled trucks that shoot and scoot. A
@@ -16,6 +16,9 @@ import type { DamageKind, Hostile, PlayerTarget } from './types';
  * — it folds everything back down and drives off cross-country to another
  * hilltop, picking its way round the steep ground. Flares and the hills are
  * your friends; catching one on the move, folded and blind, is better.
+ * They hold a ring round the house close enough to reach it, and when the
+ * suit is out of sight they shell the house instead — show yourself and
+ * they swing back onto you.
  */
 
 const mats = {
@@ -43,6 +46,12 @@ const DEPLOY_TIME = 3.2;
 const WHEEL_R = 0.55;
 /** Axle positions along the chassis (m, +Z forward). */
 const AXLES = [2.6, -0.9, -2.5];
+/** The ring round the house the trucks hold (m from it). */
+export const RING_MIN = 1200;
+export const RING_MAX = 3500;
+/** How far it tracks the suit, and lays on the house. */
+const RANGE = 4200;
+const HOUSE_RANGE = 3600;
 
 interface SamGeometry {
   body: THREE.BufferGeometry;
@@ -223,6 +232,12 @@ export class SamSite implements Hostile {
   private rolled = 0;
   private stuck = 0;
   private readonly lastGoalDist = { d: Infinity, t: 0 };
+  /** Seconds laid on the house, and the spot on it this salvo is for. */
+  private onHouse = 0;
+  private mark: THREE.Vector3 | null = null;
+  private salvoAtHouse = false;
+  /** Seconds since it was last laid on the house. */
+  private shellT = 0;
   private readonly body = new THREE.Group();
   private readonly turret = new THREE.Group();
   private readonly pod = new THREE.Group();
@@ -241,7 +256,10 @@ export class SamSite implements Hostile {
   private readonly _n = new THREE.Vector3();
   private readonly _m = new THREE.Matrix4();
 
-  constructor(at: THREE.Vector3) {
+  constructor(
+    at: THREE.Vector3,
+    private readonly home: THREE.Vector2,
+  ) {
     const g = samGeometry();
     this.body.add(new THREE.Mesh(g.body, mats.paint), new THREE.Mesh(g.glass, mats.glass));
     for (const z of AXLES) {
@@ -283,6 +301,11 @@ export class SamSite implements Hostile {
     this.pose(null);
   }
 
+  /** Laid on the house now, or was a moment ago (the HUD's HOUSE UNDER FIRE). */
+  get shelling(): boolean {
+    return this.alive && this.shellT > 0;
+  }
+
   damage(amount: number, at: THREE.Vector3, kind: DamageKind): boolean {
     if (!this.alive) return false;
     void at;
@@ -301,7 +324,7 @@ export class SamSite implements Hostile {
     this.modeT = 0;
   }
 
-  update(dt: number, t: number, player: PlayerTarget, field: Heightfield, missiles: Missiles, events: EventBus, explosions: Explosions, particles: Particles): void {
+  update(dt: number, t: number, player: PlayerTarget, house: HouseTarget | null, field: Heightfield, missiles: Missiles, events: EventBus, explosions: Explosions, particles: Particles): void {
     if (!this.alive) return;
     this.modeT += dt;
     const before = this._n.copy(this.pos);
@@ -336,18 +359,35 @@ export class SamSite implements Hostile {
     // Velocity from where it went this frame (a repulsor's shove can't move a truck)
     this.vel.copy(this.pos).sub(before).divideScalar(Math.max(dt, 1e-4));
 
-    const to = this._v.copy(player.pos).sub(this.pos);
-    const dist = to.length();
     const ready = this.mode === 'ready';
-    const visible = ready && player.alive && dist < 4200 && field.raycast(this.pos.clone().add(new THREE.Vector3(0, 3, 0)), to.clone().normalize(), dist - 5) < 0;
-    // Slew the launcher onto the suit (in the truck's own frame)
-    if (visible) {
+    const eye = this.pos.clone().add(new THREE.Vector3(0, 3, 0));
+    const sees = (p: THREE.Vector3, range: number) => {
+      const to = this._v.copy(p).sub(eye);
+      const d = to.length();
+      return d < range && field.raycast(eye, to.normalize(), d - 5) < 0;
+    };
+    const visible = ready && player.alive && sees(player.pos, RANGE);
+    // No suit to shoot at: lay on the house (a spot on it picked per salvo).
+    // It knows where the house is, so it needn't see it: the round is lobbed
+    // over the hills onto it
+    let onHouse = false;
+    if (ready && !visible && house && house.marks.length && this.salvo === 0) {
+      this.mark ??= house.marks[Math.floor(Math.random() * house.marks.length)];
+      onHouse = this.mark.distanceTo(this.pos) < HOUSE_RANGE;
+    }
+    this.onHouse = onHouse ? this.onHouse + dt : 0;
+    this.shellT = onHouse ? 4 : Math.max(0, this.shellT - dt);
+    const to = this._v.copy(visible ? player.pos : (this.mark ?? player.pos)).sub(this.pos);
+    // Slew the launcher onto the suit or the house (in the truck's own frame)
+    if (visible || onHouse) {
       const local = to.clone().applyQuaternion(this.mesh.quaternion.clone().invert());
       const yaw = Math.atan2(local.x, local.z);
       const pitch = Math.atan2(local.y, Math.hypot(local.x, local.z));
       this.turret.rotation.y += Math.atan2(Math.sin(yaw - this.turret.rotation.y), Math.cos(yaw - this.turret.rotation.y)) * Math.min(1, dt * 1.6);
-      this.pod.rotation.x += (-Math.max(0.15, pitch) - this.pod.rotation.x) * Math.min(1, dt * 1.6);
-      this.track += dt;
+      // (lobbed high at the house, so the round clears the hills)
+      this.pod.rotation.x += (-Math.max(visible ? 0.15 : 0.7, pitch) - this.pod.rotation.x) * Math.min(1, dt * 1.6);
+      if (visible) this.track += dt;
+      else this.track = Math.max(0, this.track - dt * 2);
     } else {
       this.track = Math.max(0, this.track - dt * 2);
       if (!ready) {
@@ -364,6 +404,13 @@ export class SamSite implements Hostile {
       this.salvo = 2;
       this.salvoT = 0;
       this.reload = 13 + Math.random() * 8;
+      this.salvoAtHouse = false;
+    } else if (ready && this.onHouse > 3 && this.reload <= 0 && this.salvo === 0) {
+      // The house gets one round at a time, and less often
+      this.salvo = 1;
+      this.salvoT = 0;
+      this.reload = 20 + Math.random() * 6;
+      this.salvoAtHouse = true;
     }
     if (this.salvo > 0 && ready) {
       this.salvoT -= dt;
@@ -372,14 +419,19 @@ export class SamSite implements Hostile {
         this.salvoT = 0.9;
         const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(this.pod.getWorldQuaternion(new THREE.Quaternion()));
         const from = this.pod.localToWorld(new THREE.Vector3(0, TUBES_Y, TUBES_FRONT + 0.3));
-        missiles.launch({ team: 'enemy', from, vel: fwd.clone().multiplyScalar(60), target: player, coast: 0.15 });
+        if (this.salvoAtHouse && house && this.mark) {
+          missiles.launch({ team: 'enemy', from, vel: fwd.clone().multiplyScalar(60), target: null, aimPoint: this.mark, onImpact: (at) => house.struck(at), coast: 0.6 });
+          if (this.salvo === 0) this.mark = null;
+        } else {
+          missiles.launch({ team: 'enemy', from, vel: fwd.clone().multiplyScalar(60), target: player, coast: 0.15 });
+        }
         explosions.muzzle(from, fwd, 1.6);
         events.emit('enemyMissile', { at: from, value: 1 });
       }
     }
   }
 
-  /** A new hilltop 400–1000 m off: the highest of a handful of drivable spots. */
+  /** A new hilltop 400–1000 m off, still on the ring round the house: the highest of a handful of drivable spots. */
   private pickGoal(field: Heightfield): void {
     let best: THREE.Vector3 | null = null;
     let bestH = -Infinity;
@@ -389,6 +441,8 @@ export class SamSite implements Hostile {
       const x = this.ground.x + Math.cos(a) * r;
       const z = this.ground.z + Math.sin(a) * r;
       const h = field.heightAt(x, z);
+      const fromHome = Math.hypot(x - this.home.x, z - this.home.y);
+      if (fromHome < RING_MIN || fromHome > RING_MAX) continue;
       if (h < 40 || this.grade(field, x, z) > MAX_GRADE * 0.6) continue;
       if (h > bestH) {
         bestH = h;
@@ -497,7 +551,7 @@ export function samSites(field: Heightfield, home: THREE.Vector2, count: number,
   let guard = 0;
   while (out.length < count && guard++ < 4000) {
     const a = rand() * Math.PI * 2;
-    const r = 2500 + rand() * 6500;
+    const r = RING_MIN + rand() * (RING_MAX - RING_MIN);
     const x = home.x + Math.cos(a) * r;
     const z = home.y + Math.sin(a) * r;
     const h = field.heightAt(x, z);
@@ -506,7 +560,7 @@ export function samSites(field: Heightfield, home: THREE.Vector2, count: number,
     const around = [0, 1, 2, 3, 4, 5].map((k) => field.heightAt(x + Math.cos(k) * 60, z + Math.sin(k) * 60));
     if (Math.max(...around) > h + 2) continue;
     if (Math.abs(h - field.heightAt(x + 6, z)) > 2.5 || Math.abs(h - field.heightAt(x, z + 6)) > 2.5) continue;
-    if (out.some((p) => Math.hypot(p.x - x, p.z - z) < 1500)) continue;
+    if (out.some((p) => Math.hypot(p.x - x, p.z - z) < 650)) continue;
     out.push(new THREE.Vector3(x, h, z));
   }
   return out;
