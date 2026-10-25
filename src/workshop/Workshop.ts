@@ -30,6 +30,7 @@ import { SuitScanView } from './suitScanView';
 import { createWorkshopDetail, type WorkshopDetail } from './workshopDetail';
 import { CradleStands, STAND_RETRACT_SEC } from './cradleStands';
 import { APERTURE_SEC, APERTURE_UNDERSIDE } from './ringAperture';
+import { MAST_PARK_R } from './roofIris';
 import { DOFF_ARM_STOW_SEC, doffArmStowAt, doffFloorDownAt, doffStandSinkAt } from '../animation/doffSequence';
 import { createRobotMaterials, RobotArm, toolQuaternion, type ArmJoints } from './robotArm';
 
@@ -118,6 +119,10 @@ export class Workshop {
   private readonly scanView: SuitScanView;
   private readonly detail: WorkshopDetail;
   private readonly arms = new Map<RobotId, RobotArm>();
+  /** Mast sleeves under the ceiling (they run clear of the roof iris with the mast heads). */
+  private readonly sleeves: Array<{ mesh: THREE.Mesh; home: THREE.Vector3 }> = [];
+  /** Hidden what was parked over the ceiling, once the roof iris began to open. */
+  private roofCleared = false;
   private readonly programs = new Map<RobotId, Segment[]>();
   private readonly homes = new Map<RobotId, ToolPose>();
   private readonly passes = new Map<string, ToolPass>();
@@ -192,6 +197,7 @@ export class Workshop {
         const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.5, 24), this.mats.dark);
         sleeve.position.set(st.base[0], ROOM_HEIGHT - 0.25, st.base[2]);
         this.group.add(sleeve);
+        this.sleeves.push({ mesh: sleeve, home: sleeve.position.clone() });
       }
     }
 
@@ -787,6 +793,29 @@ export class Workshop {
     const job = this.jobs.get(taskId);
     if (this.doffT !== null && job && this.doffT > job.lift) return 0;
     return this.stands.shift(taskId);
+  }
+
+  /** The roof iris and launch shaft (the flight handoff's way out). */
+  setRoof(s: { masts: number; iris: number; daylight: number }): void {
+    this.env.setRoof(s);
+    const k = THREE.MathUtils.smoothstep(s.masts, 0, 1);
+    for (const { mesh, home } of this.sleeves) {
+      const r = Math.hypot(home.x, home.z);
+      // (up into the ceiling as they go: they'd hang in the lens's way up)
+      mesh.position.copy(home).multiplyScalar(THREE.MathUtils.lerp(1, MAST_PARK_R / r, k)).setY(home.y + 0.52 * k);
+    }
+    // Whatever is parked up in the ceiling (mast arms, parts hangers) would
+    // hang in the open shaft
+    if (s.iris > 0 && !this.roofCleared) {
+      this.roofCleared = true;
+      const box = new THREE.Box3();
+      this.group.updateMatrixWorld(true);
+      this.group.traverse((o) => {
+        if (!(o as THREE.Mesh).isMesh || !o.visible) return;
+        for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p === this.env.group) return;
+        if (box.setFromObject(o).min.y > ROOM_HEIGHT - 0.02) o.visible = false;
+      });
+    }
   }
 
   /** Background animation (screens, racks, holo table, scan feed). */

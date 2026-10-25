@@ -195,6 +195,11 @@ const HOVER = IGNITE + 2.2;
 const DESCEND = IGNITE + 7.7;
 const TOUCHDOWN = IGNITE + 9.1;
 const CUTOFF = IGNITE + 9.4;
+/**
+ * The settled hover (flight-check s): after the climb has levelled out and
+ * before the descent. The flight handoff climbs out of here.
+ */
+export const HOVER_HOLD: readonly [number, number] = [HOVER + 1.3, DESCEND - 0.1];
 /** Seconds the boot thrusters burn (lift-off spool → cut-off). */
 export const THRUSTER_BURN_SEC = CUTOFF - LIFTOFF + 0.3;
 

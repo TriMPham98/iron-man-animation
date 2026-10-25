@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { FlightApp } from '../flight/app';
 import { createFrameStats } from './frameStats';
+import { burnAt, checkAt, CLIMB_SEC, climbAt, FOLLOW_FOV, followPose, launchPlan, roofAt, workshopLens, type LaunchPlan } from './launchProfile';
 
 /**
  * Workshop → flight, in one page and without a load: the flight sim is
@@ -24,6 +25,14 @@ import { createFrameStats } from './frameStats';
  *  5. LIFT     a calm arc round to the shoulder view as the boot jets light
  *              and the suit lifts into a hover off the pad.
  *  6. HANDOVER the controls card slides in; a click takes the stick.
+ *
+ * From the hover test on, the suit flies itself out instead (LAUNCH, see
+ * launchProfile.ts): the check runs into its settled hover, the roof iris
+ * opens on the launch shaft and daylight comes down it, the suit climbs
+ * out with the lens low under it and then up after it, and the flight sim
+ * takes the picture inside the shaft — the same framing on its suit, just
+ * up out of the landing pad's hub iris, which shuts under it as the lens
+ * swings round to the shoulder.
  */
 export interface WorkshopHandle {
   camera: THREE.PerspectiveCamera;
@@ -40,6 +49,14 @@ export interface WorkshopHandle {
   retire(): void;
   /** Is now a moment where a long synchronous step would go unseen? */
   isQuiet(): boolean;
+  /** Flight-check clock (s) when the suit can fly itself out from here, else null. */
+  launchFrom(): number | null;
+  /** The launch frame: check clock, climb over the hover (m), boot burn floor, effects clock. */
+  poseLaunch(check: number, climb: number, burn: number, fx: number): void;
+  /** Mast heads clear (0–1), roof iris (0–1), daylight down the shaft (0–1). */
+  setRoof(s: { masts: number; iris: number; daylight: number }): void;
+  /** A one-shot from the workshop's library. */
+  cue(file: string, o: { offset?: number; duration: number; volume: number; fadeIn?: number; fadeOut?: number }): void;
 }
 
 /** Steps that block the main thread for long and only run in quiet windows. */
@@ -165,6 +182,13 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
     return s <= 0 ? 0 : DRIFT * (s - 0.7 * (1 - Math.exp(-s / 0.7)));
   };
 
+  /** Launch: the plan, and the flight-side beats (s from the swap). */
+  let plan: LaunchPlan | null = null;
+  const L = { fade: 0.75, flareLead: 0.7, flareOff: 0.35, hudOff: 0.8, arcFrom: 0.45, arcLen: 3.3, irisFrom: 0.9, irisLen: 1.3, card: 4.3 };
+  /** Boots this far over the deck as the flight sim takes the picture (m). */
+  const EXIT_BOOTS = 0.85;
+  let cues: Array<{ at: number; run: () => void }> = [];
+
   let active = false;
   let t = 0;
   let last = 0;
@@ -262,6 +286,59 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
     if (ft >= B.arcFrom + B.arcLen) fa.cameraOverride = null;
   };
 
+  // Launch: the follow framing under this suit, then the arc to the rig
+  const followPos = new THREE.Vector3();
+  const followLook = new THREE.Vector3();
+  const launchCamera = (fa: FlightApp) => (cam: THREE.PerspectiveCamera) => {
+    const ft = t - plan!.swap;
+    followPose(fa.game.head, yawOf(fa.suit.group), followPos, followLook);
+    rigPos.copy(cam.position);
+    cam.getWorldDirection(rigFwd);
+    pivot.copy(fa.game.head).y -= 0.55;
+    const w = smooth((ft - L.arcFrom) / L.arcLen);
+    rigLook.copy(rigPos).addScaledVector(rigFwd, rigPos.distanceTo(pivot));
+    sphA.setFromVector3(a.copy(followPos).sub(pivot));
+    sphB.setFromVector3(b.copy(rigPos).sub(pivot));
+    const dTheta = Math.atan2(Math.sin(sphB.theta - sphA.theta), Math.cos(sphB.theta - sphA.theta));
+    const rigFov = cam.fov;
+    cam.position
+      .setFromSpherical(new THREE.Spherical(THREE.MathUtils.lerp(sphA.radius, sphB.radius, w), THREE.MathUtils.lerp(sphA.phi, sphB.phi, w), sphA.theta + dTheta * w))
+      .add(pivot);
+    lookNow.lerpVectors(followLook, rigLook, w);
+    cam.up.copy(UP);
+    cam.lookAt(lookNow);
+    cam.fov = THREE.MathUtils.lerp(FOLLOW_FOV, rigFov, w);
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+    if (ft >= L.arcFrom + L.arcLen) fa.cameraOverride = null;
+  };
+
+  // Launch: held coming up out of the hub at the climb's exit speed until the
+  // picture is the sim's, then the hover computer catches it
+  const launchPilot = (fa: FlightApp) => {
+    const v = (climbAt(plan!, plan!.swap + 0.01) - climbAt(plan!, plan!.swap)) / 0.01;
+    return (_dt: number, c: { vertical: number }) => {
+      const m = fa.game.model;
+      const ft = t - plan!.swap;
+      // (the pad centre, without pulling the coast's modules into this one)
+      const pad = fa.hud.pad!;
+      const y0 = pad.y + m.hipHeight();
+      if (ft < 0) {
+        m.pos.set(pad.x, y0 + EXIT_BOOTS, pad.z);
+        m.vel.set(0, v, 0);
+        m.grounded = false;
+        m.flightness = 0;
+        return;
+      }
+      if (!lifted) {
+        lifted = true;
+        stats.mark('liftoff');
+      }
+      const target = y0 + 3.4;
+      c.vertical = THREE.MathUtils.clamp((target - m.pos.y) * 0.6 - m.vel.y * 0.5, -0.6, 1);
+    };
+  };
+
   // Lift-off and a hover held off the pad until the pilot takes over
   const flightPilot = (fa: FlightApp) => {
     let y0 = Number.NaN;
@@ -289,8 +366,9 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
     fa.applyVolume();
     void fa.audio.unlock().then(() => fa.sounds.start());
     fa.holdResolution = true;
-    fa.cameraOverride = flightCamera(fa);
-    fa.handoffPilot = flightPilot(fa);
+    fa.cameraOverride = plan ? launchCamera(fa) : flightCamera(fa);
+    fa.handoffPilot = plan ? launchPilot(fa) : flightPilot(fa);
+    if (plan) fa.world.pad.setIris(1);
     fa.onFrame = null;
     fa.start();
   };
@@ -316,12 +394,99 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
     }, 1500);
   };
 
+  const lensOut = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 35 };
+  const lensFrom = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 35 };
+  const headNow = new THREE.Vector3();
+
+  /** The launch, one frame (t already advanced). */
+  const launchTick = (w: WorkshopHandle) => {
+    const p = plan!;
+    while (cues.length && t >= cues[0].at) cues.shift()!.run();
+    if (!retired) {
+      w.poseLaunch(checkAt(p, t), climbAt(p, t), burnAt(p, t), p.from + t);
+      w.setRoof(roofAt(p, t));
+      w.headPoint(headNow);
+      const cam = w.camera;
+      workshopLens(p, t, headNow, yawW, lensFrom, lensOut);
+      cam.position.copy(lensOut.pos);
+      cam.fov = lensOut.fov;
+      cam.updateProjectionMatrix();
+      cam.up.copy(UP);
+      cam.lookAt(lensOut.look);
+      w.setVolume(1 - sine((t - p.swap + 0.5) / 1.3));
+    }
+    if (t >= 0.3) overlay.classList.add('is-hud');
+    if (t >= p.swap - L.flareLead) {
+      if (!overlay.classList.contains('is-flare')) stats.mark('flare');
+      overlay.classList.add('is-flare', 'is-launch');
+      urgent = true;
+    }
+    if (app && !flightStarted && t >= p.swap - 0.3) {
+      stats.mark('flight-start');
+      startFlight(app);
+    }
+    if (app && flightStarted && !swapped && t >= p.swap) {
+      swapped = true;
+      stats.mark('swap');
+      layer.classList.add('is-live');
+    }
+    if (!swapped || !app) return;
+    const ft = t - p.swap;
+    app.volumeScale = sine((ft + 0.3) / 2.2);
+    app.applyVolume();
+    if (ft >= L.flareOff) overlay.classList.add('is-open');
+    if (ft >= L.hudOff) {
+      overlay.classList.add('is-done');
+      app.hudGoal = 1;
+    }
+    // The hub iris shuts under the suit
+    const shut = THREE.MathUtils.clamp((ft - L.irisFrom) / L.irisLen, 0, 1);
+    app.world.pad.setIris(1 - shut);
+    if (!said && ft >= 1.1) {
+      said = true;
+      app.game.events.emit('jarvis', { text: 'Flight systems online. Good evening, sir.' });
+    }
+    if (!retired && ft >= L.fade * 0.6) {
+      retired = true;
+      stats.mark('retire');
+      w.setVolume(0);
+      idle().then(() => {
+        const t0 = performance.now();
+        w.retire();
+        buildLog.retireMs = Math.round(performance.now() - t0);
+        console.info(`[handoff] workshop retired in ${buildLog.retireMs} ms`);
+        stats.mark('flight');
+      });
+    }
+    if (!carded && ft >= L.card) {
+      finishCard(app);
+      overlay.remove();
+      cancelAnimationFrame(raf);
+    }
+  };
+
   const tick = (now: number) => {
     raf = requestAnimationFrame(tick);
     if (!ws) return;
     const w = ws;
     const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
     last = now;
+    if (plan) {
+      // Hold under the flare until the flight sim is ready
+      if (!held && t + dt >= plan.swap - 0.3 && !app) {
+        held = true;
+        urgent = true;
+        overlay.classList.add('is-hold', 'is-flare');
+        stats.mark('hold');
+      }
+      if (held && app) {
+        held = false;
+        overlay.classList.remove('is-hold');
+      }
+      if (!held) t += dt;
+      launchTick(w);
+      return;
+    }
     // Hold under the flare until the flight sim is ready
     if (!held && t + dt >= B.start && !app) {
       held = true;
@@ -407,6 +572,25 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
     });
     ws.freeze();
     const cam = ws.camera;
+    const from = rm ? null : ws.launchFrom();
+    if (from !== null) {
+      plan = launchPlan(from);
+      lensFrom.pos.copy(cam.position);
+      ws.headPoint(rootW);
+      lensFrom.look.copy(cam.position).addScaledVector(cam.getWorldDirection(tmp), cam.position.distanceTo(rootW));
+      lensFrom.fov = cam.fov;
+      const p = plan;
+      const w = ws;
+      // The library's own: mast heads, the iris unlatching and drawing back, the boots
+      cues = [
+        { at: p.masts, run: () => w.cue('metal-sliding.mp3', { duration: 0.7, volume: 0.45, fadeOut: 0.3 }) },
+        { at: p.irisFrom, run: () => w.cue('unclamp.mp3', { duration: 0.9, volume: 0.6, fadeOut: 0.3 }) },
+        { at: p.irisFrom + 0.2, run: () => w.cue('metal-sliding.mp3', { duration: 1.4, volume: 0.6, fadeOut: 0.5 }) },
+        { at: p.irisOpen - 0.3, run: () => w.cue('steam-release.mp3', { duration: 1.6, volume: 0.4, fadeOut: 0.8 }) },
+        { at: p.climb - 0.35, run: () => w.cue('thruster-ignite.mp3', { duration: 1.2, volume: 0.8, fadeOut: 0.4 }) },
+        { at: p.climb - 0.05, run: () => w.cue('thruster-burn.mp3', { duration: CLIMB_SEC + 1.2, volume: 0.9, fadeIn: 0.15, fadeOut: 0.9 }) },
+      ];
+    }
     camFrom.copy(cam.position);
     ws.headPoint(rootW);
     lookFrom.copy(cam.position).addScaledVector(cam.getWorldDirection(tmp), cam.position.distanceTo(rootW));

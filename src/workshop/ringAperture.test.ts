@@ -8,6 +8,7 @@ import {
   APERTURE_UNDERSIDE,
   apertureBladeSpan,
   aperturePlatePoints,
+  IrisShape,
 } from './ringAperture';
 import { PLATFORM_RADIUS } from './workshopEnvironment';
 
@@ -75,6 +76,39 @@ describe('ring aperture', () => {
   it('stays under the deck', () => {
     expect(APERTURE_UNDERSIDE).toBeLessThan(0);
     expect(APERTURE_UNDERSIDE).toBeGreaterThan(-0.025);
+  });
+});
+
+describe('disc iris (roof, landing pad)', () => {
+  const iris = new IrisShape(0, 1.2, 16);
+
+  it('shuts into a full disc', () => {
+    for (let k = 0; k < 360; k++) {
+      const a = ((k + 0.25) / 360) * Math.PI * 2;
+      for (const r of [0.03, 0.4, 0.8, 1.2]) {
+        const p: [number, number] = [r * Math.cos(a), r * Math.sin(a)];
+        const covered = Array.from({ length: iris.segments }, (_, i) => iris.platePoints(i, 0)).some((poly) => inside(p, poly));
+        expect(covered).toBe(true);
+      }
+    }
+  });
+
+  it('parks every blade clear of the opening', () => {
+    for (let i = 0; i < iris.segments; i++) {
+      for (const [x, z] of iris.platePoints(i, 1)) expect(Math.hypot(x, z)).toBeGreaterThan(iris.outer + 0.02);
+    }
+  });
+
+  it('laps neighbours one clear above the other', () => {
+    for (const u of [0, 0.2, 0.5, 0.8]) {
+      for (let k = 0; k < 1500; k++) {
+        const a = ((k * 7.31) % 360) * (Math.PI / 180);
+        const r = 0.05 + ((k * 0.618) % 1) * 2.5;
+        const spans = Array.from({ length: iris.segments }, (_, i) => iris.bladeSpan(i, u, r * Math.cos(a), r * Math.sin(a))).filter((s) => s);
+        expect(spans.length).toBeLessThanOrEqual(2);
+        if (spans.length === 2) expect(Math.max(spans[0]!.bottom - spans[1]!.top, spans[1]!.bottom - spans[0]!.top)).toBeGreaterThan(0.0005);
+      }
+    }
   });
 });
 

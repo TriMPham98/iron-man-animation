@@ -184,6 +184,14 @@ export interface AssemblySession {
   getClockStart: () => number;
   setClockStart: (t: number) => void;
   refreshHintCopy: () => void;
+  /** Flight-check clock (s) while the showcase turn runs, else null. */
+  flightCheckTime: () => number | null;
+  /**
+   * The flight handoff's launch, with the session off the clock: the check
+   * posed at `t` (the doff prep with it), the suit `climb` m higher and the
+   * boots burning at least `burn`; `fx` is the effects clock (flicker).
+   */
+  poseLaunch: (t: number, climb: number, burn: number, fx: number) => void;
 }
 
 /**
@@ -1335,5 +1343,16 @@ export function createAssemblySession(
       clockStart = t;
     },
     refreshHintCopy,
+    flightCheckTime: () => (assemblyComplete && completeSpinActive ? completeSpinT : null),
+    poseLaunch: (t, climb, burn, fx) => {
+      if (orbitScanArmed) stopOrbitDiagnostic();
+      const f = evaluateFlightCheck(t);
+      f.pose.lift = (f.pose.lift ?? 0) + climb;
+      f.thrusters = Math.max(f.thrusters, burn);
+      f.thrusterL = Math.max(f.thrusterL, burn);
+      f.thrusterR = Math.max(f.thrusterR, burn);
+      suit.setFlightCheck(f, fx);
+      workshop?.prepareDoff(Math.max(0, (t - DOFF_PREP_FROM) / (SHOWCASE_TURN_SEC - DOFF_PREP_FROM)));
+    },
   };
 }

@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { FlightModel } from '../sim/flightModel';
 import { RENDER_ORDER } from '../render/transparency';
 import { PAD, PAD_R, PAD_Y } from './house';
+import { APERTURE_UNDERSIDE, IrisShape, RingAperture } from '../../workshop/ringAperture';
 
 /**
  * The landing pad on the lawn beside the house: a graphite plinth with a
@@ -28,6 +29,11 @@ export function gradeLanding(offset: number): PadGrade {
   return offset <= BULLSEYE_R ? 'bullseye' : offset <= CENTRED_R ? 'centred' : 'onPad';
 }
 
+/** The hub iris: out to the deck's innermost seam. */
+export const PAD_IRIS_R = 1.05;
+const PAD_IRIS = new IrisShape(0, PAD_IRIS_R, 12);
+/** Depth the shaft under the iris is drawn to (m). */
+const SHAFT_DEPTH = 9;
 /** Deck (textured top) radius; the lip slopes down from there. */
 const DECK_R = PAD_R - 0.4;
 const CAPTURE_R0 = 5.6;
@@ -183,6 +189,13 @@ export class LandingPad {
   private readonly waveMat = glow(WHITE, true);
   private readonly beaconMat: THREE.MeshBasicMaterial;
   private readonly beacon: THREE.Mesh;
+  private readonly bull: THREE.Mesh;
+  private readonly iris: RingAperture;
+  /** The blades' leading edges: lit while the iris moves, so the spiral reads (no offset: they draw back under the deck). */
+  private readonly sealMat = new THREE.MeshBasicMaterial({ color: BLUE.clone(), toneMapped: false });
+  private readonly shaft: THREE.Mesh;
+  /** Hub iris opening (0 shut → 1 open). */
+  private irisOpen = 0;
   private time = 0;
   /** 0–1, eased: the suit is in the air and coming in. */
   private approach = 0;
@@ -216,7 +229,7 @@ export class LandingPad {
     // (a touch of glow from the deck's own panels: its markings read at dusk)
     const paint = deckTexture();
     const deck = new THREE.Mesh(
-      new THREE.CircleGeometry(DECK_R, 128).rotateX(-Math.PI / 2),
+      new THREE.RingGeometry(PAD_IRIS_R, DECK_R, 128, 2).rotateX(-Math.PI / 2),
       new THREE.MeshStandardMaterial({ map: paint, emissiveMap: paint, emissive: new THREE.Color(0.9, 1.05, 1.2), roughness: 0.62, metalness: 0.15 }),
     );
     plinth.receiveShadow = deck.receiveShadow = true;
@@ -227,11 +240,25 @@ export class LandingPad {
     const strip = new THREE.Mesh(new THREE.TorusGeometry(PAD_R - 0.02, 0.035, 6, 192).rotateX(Math.PI / 2).translate(0, -0.05, 0), this.rim);
     // Capture ring, and the centre: CENTRED ring, BULLSEYE ring and its dot
     const capture = new THREE.Mesh(flatRing(CAPTURE_R0, CAPTURE_R1), this.capture);
-    const centre = new THREE.Mesh(
-      mergeGeometries([flatRing(CENTRED_R - 0.08, CENTRED_R, 96), flatRing(BULLSEYE_R - 0.06, BULLSEYE_R, 64), new THREE.CircleGeometry(0.1, 24).rotateX(-Math.PI / 2).translate(0, 0.006, 0)]),
+    const centre = new THREE.Mesh(flatRing(CENTRED_R - 0.08, CENTRED_R, 96), this.centre);
+    // (the bullseye rides the shut iris: it goes out while the iris opens)
+    this.bull = new THREE.Mesh(
+      mergeGeometries([flatRing(BULLSEYE_R - 0.06, BULLSEYE_R, 64), new THREE.CircleGeometry(0.1, 24).rotateX(-Math.PI / 2).translate(0, 0.006, 0)]),
       this.centre,
     );
-    g.add(strip, capture, centre);
+    g.add(strip, capture, centre, this.bull);
+
+    // The hub iris and the shaft under it
+    this.iris = new RingAperture(
+      new THREE.MeshStandardMaterial({ color: 0x30333a, roughness: 0.6, metalness: 0.3 }),
+      this.sealMat,
+      PAD_IRIS,
+    );
+    for (const m of this.iris.group.children) m.castShadow = m.receiveShadow = true;
+    this.shaft = new THREE.Mesh(new THREE.CircleGeometry(PAD_IRIS_R + 0.01, 64).rotateX(-Math.PI / 2), shaftMaterial(this.group.position));
+    this.shaft.position.y = APERTURE_UNDERSIDE - 0.01;
+    this.shaft.visible = false;
+    g.add(this.iris.group, this.shaft);
 
     // Tick ring: one long tick every quarter
     this.ticks = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.12, 1).rotateX(-Math.PI / 2), glow(BLUE), TICKS);
@@ -296,6 +323,17 @@ export class LandingPad {
     this.beacon = new THREE.Mesh(col, this.beaconMat);
     this.beacon.renderOrder = RENDER_ORDER.wash;
     g.add(this.beacon);
+    this.setIris(0);
+  }
+
+  /** Open the hub iris over the shaft (0 shut → 1 open). */
+  setIris(u: number): void {
+    this.irisOpen = THREE.MathUtils.clamp(u, 0, 1);
+    this.iris.set(this.irisOpen);
+    this.sealMat.color.copy(BLUE).multiplyScalar(0.12 + 1.1 * Math.min(1, this.irisOpen * 6, (1 - this.irisOpen) * 6));
+    this.shaft.visible = this.irisOpen > 0;
+    // The coil and the bullseye are set in the blades
+    this.bull.visible = this.coil.visible = this.irisOpen === 0;
   }
 
   /** A graded set-down on the deck: the shock ring, the flash, the coil. */
@@ -398,4 +436,59 @@ export class LandingPad {
     this.beaconMat.color.copy(BLUE).multiplyScalar(0.35 * bv * (0.85 + 0.15 * Math.sin(t * 2.4)));
     this.beacon.visible = bv > 0.01;
   }
+}
+
+/**
+ * The shaft under the hub iris, drawn on a disc just beneath the blades:
+ * each pixel casts the view ray on into a cylinder of the iris's radius and
+ * shades the wall (panels, ribs, lit rings) or the floor where it lands,
+ * falling away into the dark.
+ */
+function shaftMaterial(centre: THREE.Vector3): THREE.MeshBasicMaterial {
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uShaftC = { value: centre };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vShaftW;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvShaftW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vShaftW;\nuniform vec3 uShaftC;')
+      .replace(
+        '#include <map_fragment>',
+        /* glsl */ `
+        {
+          const float R = ${PAD_IRIS_R.toFixed(3)};
+          const float D = ${SHAFT_DEPTH.toFixed(1)};
+          vec3 d = normalize(vShaftW - cameraPosition);
+          vec2 p = vShaftW.xz - uShaftC.xz;
+          float a = max(dot(d.xz, d.xz), 1e-6);
+          float b = dot(p, d.xz);
+          float c = dot(p, p) - R * R;
+          float t = (-b + sqrt(max(b * b - a * c, 0.0))) / a;
+          float depth = -t * d.y;
+          vec3 col;
+          if (depth > D || d.y > -1e-4) {
+            // Floor: a dark grate, a dim ring of amber drain lights
+            vec2 f = p + d.xz * (D / max(-d.y, 1e-4));
+            float rr = length(f);
+            col = vec3(0.002, 0.0025, 0.003) + vec3(0.5, 0.25, 0.06) * smoothstep(0.05, 0.0, abs(rr - R * 0.8)) * 0.6;
+          } else {
+            vec2 h = p + d.xz * t;
+            float ang = atan(h.y, h.x) / 6.2831853 + 0.5;
+            float bay = fract(ang * 12.0);
+            float rib = smoothstep(0.43, 0.47, abs(bay - 0.5));
+            float seam = smoothstep(0.47, 0.49, abs(fract(depth / 0.45) - 0.5));
+            col = mix(vec3(0.075, 0.083, 0.095), vec3(0.13, 0.14, 0.15), rib) * (1.0 - 0.6 * seam);
+            // Light off the sky above (dim beside the sunlit deck), gone a few metres down
+            col *= 0.32 * exp(-depth * 0.6);
+            // Lit rings every 0.85 m, cyan
+            float ring = smoothstep(0.465, 0.49, abs(fract(depth / 0.85 - 0.4) - 0.5));
+            col += vec3(0.5, 1.6, 2.2) * ring * 0.3 * exp(-depth * 0.22);
+          }
+          diffuseColor.rgb = col;
+        }`,
+      );
+  };
+  mat.customProgramCacheKey = () => 'pad-shaft';
+  return mat;
 }

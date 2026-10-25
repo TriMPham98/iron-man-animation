@@ -37,6 +37,7 @@ import { simplifierReady } from './utils/simplify';
 import { HERO_END_CAM } from './animation/sequenceClock';
 import { FLIGHT_CHECK_STEPS } from './animation/flightCheck';
 import { createFlightHandoff, type FlightHandoff } from './transition/flightHandoff';
+import { LAUNCH_FROM } from './transition/launchProfile';
 
 /** Releases every geometry, material and texture under `root`. */
 function disposeTree(root: THREE.Object3D): void {
@@ -441,6 +442,7 @@ async function boot(): Promise<void> {
   };
   suit.group.updateMatrixWorld(true);
   const headRest = suit.boneWorldPoint('head', [0, 1.72, 0.04], new THREE.Vector3());
+  let launchCues = 0;
   handoff.attach({
     camera,
     suitRoot: suit.group,
@@ -474,6 +476,15 @@ async function boot(): Promise<void> {
       (!ui.hasInitiated() && introCam.done()) ||
       // Held on a frame (Space): nothing moving to stutter
       (ui.hasInitiated() && !session.getCycle().playing),
+    // From the hover test on, the suit flies itself out through the roof
+    launchFrom: () => {
+      const t = session.flightCheckTime();
+      return t !== null && t >= LAUNCH_FROM ? t : null;
+    },
+    poseLaunch: (check, climb, burn, fx) => session.poseLaunch(check, climb, burn, fx),
+    setRoof: (s) => workshop.setRoof(s),
+    cue: (file, o) =>
+      audioTimeline.engine.play({ id: `launch-${++launchCues}`, file, offset: o.offset ?? 0, duration: o.duration, volume: o.volume, fadeIn: o.fadeIn ?? 0.02, fadeOut: o.fadeOut ?? 0.3 }),
   });
   handoff.setHeroFraming(
     new THREE.Vector3(HERO_END_CAM.x, HERO_END_CAM.y, HERO_END_CAM.z),

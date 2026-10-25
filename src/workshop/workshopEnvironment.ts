@@ -3,6 +3,7 @@ import { weather } from './robotMaterials';
 import { ROBOTS } from './fittingProgram';
 import { aperturePit, BEZEL_H } from './aperturePit';
 import { APERTURE_INNER, APERTURE_OUTER, RingAperture } from './ringAperture';
+import { MAST_PARK_R, ROOF_IRIS_R, roofIris } from './roofIris';
 
 /**
  * Tony's Malibu workshop, built procedurally: a raised suit-up platform with
@@ -38,6 +39,11 @@ export interface WorkshopEnvironment {
   setAperture: (open: number) => void;
   /** Slide the centre boot hatch's doors apart (0 shut → 1 open). */
   setHatchDoors: (open: number) => void;
+  /**
+   * The way out (flight handoff): the mast heads run clear of the roof iris
+   * (0 home → 1 parked), the iris opens (0 → 1), daylight comes down the shaft.
+   */
+  setRoof: (s: { masts: number; iris: number; daylight: number }) => void;
   /** Screens, rack LEDs, holo table. */
   update: (dt: number) => void;
   /** Was the wall TV (the live scan feed's only viewer) drawn since the last call? */
@@ -750,7 +756,19 @@ export function createWorkshopEnvironment(
     group.add(tray);
   }
 
-  const ceiling = new THREE.Mesh(keep(new THREE.CircleGeometry(ROOM_RADIUS * 1.05, 8)), darkSteel);
+  // (cut round for the roof iris over the platform)
+  const ceilShape = new THREE.Shape();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const r = ROOM_RADIUS * 1.05;
+    if (i === 0) ceilShape.moveTo(r * Math.cos(a), r * Math.sin(a));
+    else ceilShape.lineTo(r * Math.cos(a), r * Math.sin(a));
+  }
+  ceilShape.closePath();
+  const hole = new THREE.Path();
+  hole.absarc(0, 0, ROOF_IRIS_R, 0, Math.PI * 2, true);
+  ceilShape.holes.push(hole);
+  const ceiling = new THREE.Mesh(keep(new THREE.ShapeGeometry(ceilShape, 48)), darkSteel);
   ceiling.rotation.x = Math.PI / 2;
   ceiling.position.y = ROOM_HEIGHT;
   group.add(ceiling);
@@ -811,11 +829,18 @@ export function createWorkshopEnvironment(
 
   // Overhead mast hardpoints for the ceiling arms
   const plateGeo2 = keep(new THREE.BoxGeometry(0.5, 0.06, 0.5));
+  // (inside the roof iris: they run out along the ceiling before it opens)
+  const mastHeads: Array<{ mesh: THREE.Mesh; home: THREE.Vector3; park: THREE.Vector3 }> = [];
   for (const r of ROBOTS.filter((s) => s.mount === 'ceiling')) {
     const p = new THREE.Mesh(plateGeo2, steel);
     p.position.set(r.base[0], ROOM_HEIGHT - 0.03, r.base[2]);
+    p.userData.dynamic = true;
     group.add(p);
+    const out = new THREE.Vector3(r.base[0], 0, r.base[2]).normalize();
+    mastHeads.push({ mesh: p, home: p.position.clone(), park: out.multiplyScalar(MAST_PARK_R).setY(ROOM_HEIGHT - 0.03) });
   }
+  const roof = roofIris(ROOM_HEIGHT, { trim: steel, seal: amber, strip: stripMat }, keep);
+  group.add(roof.group);
 
   // ── Workbenches + animated JARVIS monitors ────────────────────────
   const benchGeo = keep(new THREE.BoxGeometry(2.2, 0.9, 0.8));
@@ -1079,6 +1104,8 @@ export function createWorkshopEnvironment(
   beam.renderOrder = 4;
   group.add(beam);
 
+  const BEAM = coneMat.uniforms.uColor.value.clone();
+  const DAY_BEAM = new THREE.Color(0xffe2b8);
   let clock = 0;
   return {
     group,
@@ -1089,6 +1116,13 @@ export function createWorkshopEnvironment(
       ringPit.below.visible = open > 0;
     },
     setHatchDoors,
+    setRoof: ({ masts, iris, daylight }) => {
+      const k = THREE.MathUtils.smoothstep(masts, 0, 1);
+      for (const h of mastHeads) h.mesh.position.lerpVectors(h.home, h.park, k);
+      roof.setOpen(iris);
+      roof.setDaylight(daylight);
+      coneMat.uniforms.uColor.value.copy(BEAM).lerp(DAY_BEAM, daylight).multiplyScalar(1 + 5 * daylight);
+    },
     update: (dt) => {
       clock += dt;
       for (const m of animated) m.uniforms.uTime.value += dt;

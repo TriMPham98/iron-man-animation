@@ -4981,6 +4981,13 @@ body.fly-offered #fly-link::before {
 #flight-handoff.is-hold .ho-flare {
   opacity: 1;
 }
+/* Launch: the daylight is the shaft's own; the flare only covers the swap */
+#flight-handoff.is-launch.is-flare:not(.is-open):not(.is-hold) .ho-flare {
+  opacity: 0.82;
+  transition:
+    opacity 0.6s cubic-bezier(0.5, 0, 0.75, 0.4),
+    transform 0.9s cubic-bezier(0.2, 0.6, 0.3, 1);
+}
 /* Still syncing (flown before the sim had finished building): the light
    holds full and the frozen frame behind it all but disappears */
 #flight-handoff::before {

@@ -25,7 +25,7 @@ function canvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContex
  * under the throat and status lights, fading to black with depth so the
  * pit reads deep without any lights of its own.
  */
-function wallTextures(): { map: THREE.CanvasTexture; emissive: THREE.CanvasTexture } {
+export function wallTextures(): { map: THREE.CanvasTexture; emissive: THREE.CanvasTexture } {
   const W = 128;
   const H = 1024;
   const [c, g] = canvas(W, H);
