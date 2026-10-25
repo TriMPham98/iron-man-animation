@@ -10,10 +10,12 @@ import {
   FOLLOW_REL,
   followPose,
   HOVER_TEST_AT,
+  CUT_AT,
   cycleAt,
   launchPlan,
   LENS_CEILING,
   roofAt,
+  WAIT_MAX,
   workshopLens,
 } from './launchProfile';
 
@@ -24,11 +26,13 @@ const BUILD = 96;
 const CLICKS = [0, 40, BUILD + 8, BUILD + HOVER_TEST_AT, BUILD + HOVER_HOLD[0] + 1, BUILD + HOVER_HOLD[1] + 0.5, BUILD + 34.9, BUILD + 35 + 50];
 
 describe('launch profile', () => {
-  it('runs the cycle into the settled hover and holds it there', () => {
+  it('reaches the settled hover by waiting or by a cut, and holds it there', () => {
     for (const from of CLICKS) {
       const p = launchPlan(from, BUILD);
       expect(cycleAt(p, 0)).toBeCloseTo(from, 6);
-      expect(p.ready).toBeLessThanOrEqual(4.2);
+      if (p.mode === 'now') expect(p.ready).toBe(0);
+      else if (p.mode === 'wait') expect(p.ready).toBeLessThanOrEqual(WAIT_MAX);
+      else expect(p.cut).toBe(CUT_AT);
       const at = checkAt(p, p.ready);
       expect(at).toBeGreaterThanOrEqual(HOVER_HOLD[0] - 1e-6);
       expect(at).toBeLessThanOrEqual(HOVER_HOLD[1] + 1e-6);
@@ -68,13 +72,17 @@ describe('launch profile', () => {
       for (const yaw of [0, 1.1, Math.PI, -2.4]) {
         const start = { pos: new THREE.Vector3(Math.sin(yaw + 2.5) * 3.4, 1.6, Math.cos(yaw + 2.5) * 3.4), look: new THREE.Vector3(0, 1.5, 0), fov: 35 };
         let last: THREE.Vector3 | null = null;
+        let lastT = -1;
         for (let t = 0; t <= p.swap + 0.5; t += 1 / 60) {
           head.set(0, HOVER_HEAD + climbAt(p, t), 0);
           workshopLens(p, t, head, yaw, start, out);
           const r = Math.hypot(out.pos.x, out.pos.z);
           if (out.pos.y > LENS_CEILING) expect(r).toBeLessThan(ROOF_IRIS_R - 0.1);
-          if (last) expect(out.pos.distanceTo(last)).toBeLessThan(0.25);
+          // The cut is a dip to black: the lens may jump once, onto the suit
+          const jumped = p.cut !== null && lastT < p.cut && t >= p.cut;
+          if (last && !jumped) expect(out.pos.distanceTo(last)).toBeLessThan(0.25);
           last = out.pos.clone();
+          lastT = t;
           if (Math.abs(t - p.swap) < 1 / 120) {
             const want = new THREE.Vector3();
             followPose(head, yaw, want, new THREE.Vector3());

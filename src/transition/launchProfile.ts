@@ -1,15 +1,18 @@
 import * as THREE from 'three';
-import { FLIGHT_CHECK_START, FLIGHT_CHECK_STEPS, HOVER_HOLD } from '../animation/flightCheck';
+import { FLIGHT_CHECK_STEPS, HOVER_HOLD } from '../animation/flightCheck';
 import { ROOF_IRIS_R, ROOF_IRIS_SEC, SHAFT_H } from '../workshop/roofIris';
 
 /**
  * The launch out of the workshop, as pure functions of the seconds since
- * the FLY click, from anywhere in the cycle: first the cycle is run (fast,
- * eased in and out) to the settled hover — the build on to its end and the
- * check through its lift-off, or the doff and the landing back — then the
- * mast heads run clear of the roof iris, the iris opens on the shaft,
- * daylight comes down it and the suit climbs out: the lens low under it,
- * then up after it into the shaft, where the flight sim takes the picture.
+ * the FLY click, from anywhere in the cycle. The cycle is never run fast:
+ * a few seconds short of the settled hover the launch is armed and the
+ * check plays on at its own pace to the hover, the roof readying over it;
+ * further out (the build, the early check, the doff) the picture dips to
+ * black and cuts to the suit on the pad as the boots light for the hover
+ * test. From the hover the mast heads run clear of the roof iris, the iris
+ * opens on the shaft, daylight comes down it and the suit climbs out: the
+ * lens low under it, then up after it into the shaft, where the flight sim
+ * takes the picture.
  */
 
 /** Climb: metres up from the hover to the swap, its time, and the speed it leaves at. */
@@ -20,11 +23,12 @@ export const CLIMB_EXIT_V = 3.5;
 export const MASTS_SEC = 0.5;
 /** The hover test's first step (check s): from here on the suit is already on its way up. */
 export const HOVER_TEST_AT = (FLIGHT_CHECK_STEPS.find((s) => /HOVER/.test(s.status)) ?? FLIGHT_CHECK_STEPS[0]).at;
-/**
- * The cell is stowed through the check from just after the build to the doff
- * prep (the grippers come up as it reads nominal): the roof only moves then.
- */
-const CELL_CLEAR: readonly [number, number] = [0.3, FLIGHT_CHECK_STEPS[FLIGHT_CHECK_STEPS.length - 1].at];
+/** Longest the launch waits on the check playing out to the hover (s); further and it cuts. */
+export const WAIT_MAX = 9;
+/** The dip to black before a cut (s from the click): the cut is on its darkest frame. */
+export const CUT_AT = 0.45;
+/** Check clock the cut lands on: palms set to the deck, just before the boots light. */
+export const CUT_TO = HOVER_TEST_AT + 0.8;
 /** Lens under the climbing suit, in the suit's yaw frame (from its head). */
 export const FOLLOW_REL = new THREE.Vector3(0.62, -1.7, 0.66);
 /** …looking at this far over the head. */
@@ -36,6 +40,8 @@ const LOW_DIST = 4.3;
 const LOW_Y = 0.95;
 const LOW_LOOK_Y = 2.9;
 export const LOW_FOV = 52;
+/** First frame after a cut, round from the low framing (suit yaw frame): wider, lower, on the suit standing. */
+const CUT_SHOT = { az: 0.35, dist: 5.1, y: 0.7, lookY: 2.0, fov: LOW_FOV + 6 };
 /** Truss and pendant lamps hang from here down: the lens only goes higher inside this radius. */
 export const LENS_CEILING = 3.8;
 export const LENS_SHAFT_R = ROOF_IRIS_R - 0.12;
@@ -48,16 +54,21 @@ const ramp = (t: number, a: number, len: number) => THREE.MathUtils.clamp((t - a
 
 /** Where in the cycle the click came: the build, the check before the hover, the hover, or after it. */
 export type LaunchFrom = 'build' | 'check' | 'hover' | 'after';
+/** How the launch gets to the hover: already in it, the check played out to it, or a cut. */
+export type LaunchMode = 'now' | 'wait' | 'cut';
 
 export interface LaunchPlan {
-  /** Cycle clock at the click, the build's length, and the cycle time of the settled hover it runs to. */
+  /** Cycle clock at the click, and the build's length. */
   from: number;
   assembly: number;
-  target: number;
   kind: LaunchFrom;
-  /** Cycle span the run jumps (the check's standing steps, run from the build). */
-  skip: readonly [number, number] | null;
-  /** When the cycle is in the settled hover (s from the click). */
+  mode: LaunchMode;
+  /** The cut (s from the click), or null. */
+  cut: number | null;
+  /** Check clock when the launch takes the suit (at the click, or on the cut), and when (s from the click). */
+  check0: number;
+  t0: number;
+  /** When the check is in the settled hover (s from the click). */
   ready: number;
   /** Mast heads start clearing; the iris starts and is fully open. */
   masts: number;
@@ -76,66 +87,58 @@ export function launchFrom(t: number, assembly: number): LaunchFrom {
   return check <= HOVER_HOLD[1] ? 'hover' : 'after';
 }
 
-/**
- * Seconds to run the cycle `dist` s: a couple of check seconds at about
- * twice speed, a whole build or doff in a few seconds.
- */
-export function seekSeconds(dist: number): number {
-  return dist <= 1e-3 ? 0 : THREE.MathUtils.clamp(0.3 + 0.55 * Math.sqrt(dist), 0.6, 4.2);
+/** How a click at cycle time `t` gets to the hover. */
+export function launchMode(t: number, assembly: number): LaunchMode {
+  const check = t - assembly;
+  if (check >= HOVER_HOLD[0] && check <= HOVER_HOLD[1]) return 'now';
+  return check >= HOVER_HOLD[0] - WAIT_MAX && check < HOVER_HOLD[0] ? 'wait' : 'cut';
 }
 
-/** The beats for a click at cycle time `from` (s), the build `assembly` s long. */
-export function launchPlan(from: number, assembly: number): LaunchPlan {
-  const [h0, h1] = HOVER_HOLD;
-  const check = from - assembly;
-  const target = assembly + THREE.MathUtils.clamp(check, h0, h1);
+/**
+ * The beats for a click at cycle time `from` (s), the build `assembly` s
+ * long; `cut` forces a cut (the launch skipped on, mid wait).
+ */
+export function launchPlan(from: number, assembly: number, cut = false): LaunchPlan {
   const kind = launchFrom(from, assembly);
-  // From the build, the check's own steps (all done from a stand) are passed
-  // over: finished, the suit goes straight into the hover test
-  const skip: readonly [number, number] | null = kind === 'build' ? [assembly + FLIGHT_CHECK_START, assembly + HOVER_TEST_AT] : null;
-  const ready = seekSeconds(Math.abs(target - from) - (skip ? skip[1] - skip[0] : 0));
-  const p = { from, assembly, target, kind, skip, ready, masts: 0, irisFrom: 0, irisOpen: 0, climb: 0, swap: 0 };
-  // The roof waits for the cell to be stowed (the run passes into the check)
-  let clear = 0;
-  for (let t = 0; t < ready; t += 1 / 120) {
-    const c = cycleAt(p, t) - assembly;
-    if (c >= CELL_CLEAR[0] && c <= CELL_CLEAR[1]) break;
-    clear = t;
-  }
-  p.masts = Math.max(0.35, clear + 0.15, ready - 1.4);
-  p.irisFrom = p.masts + MASTS_SEC * 0.8;
-  p.irisOpen = p.irisFrom + ROOF_IRIS_SEC;
-  p.climb = Math.max(ready + 0.15, p.irisOpen - 0.55);
-  p.swap = p.climb + CLIMB_SEC;
-  return p;
+  const mode = cut ? 'cut' : launchMode(from, assembly);
+  const t0 = mode === 'cut' ? CUT_AT : 0;
+  const check0 = mode === 'cut' ? CUT_TO : from - assembly;
+  const ready = t0 + Math.max(0, HOVER_HOLD[0] - check0);
+  // The iris all but open as the hover settles; armed, the mast heads clear
+  // at once (the launch is on its way), else just ahead of the iris
+  const irisFrom = Math.max(t0 + 0.75, ready - ROOF_IRIS_SEC + 0.2);
+  const masts = mode === 'cut' ? Math.max(t0 + 0.35, irisFrom - MASTS_SEC * 0.8 - 0.5) : 0.35;
+  const irisOpen = irisFrom + ROOF_IRIS_SEC;
+  const climb = Math.max(ready + 0.15, irisOpen - 0.55);
+  return { from, assembly, kind, mode, cut: mode === 'cut' ? CUT_AT : null, check0, t0, ready, masts, irisFrom, irisOpen, climb, swap: climb + CLIMB_SEC };
 }
 
 /** What the FLY button will do from cycle time `t` (shown over it). */
 export function flyHint(t: number, assembly: number): string {
+  switch (launchMode(t, assembly)) {
+    case 'now':
+      return 'FLIGHT SYSTEMS READY · TAKE HER OUT';
+    case 'wait':
+      return 'ARMS THE LAUNCH · LIFTS OFF FROM THE HOVER';
+  }
   switch (launchFrom(t, assembly)) {
     case 'build':
-      return 'FINISHES THE SUIT-UP · THEN TAKES HER OUT';
-    case 'check':
-      return 'SKIPS TO THE HOVER TEST · THEN TAKES HER OUT';
-    case 'hover':
-      return 'FLIGHT SYSTEMS READY · TAKE HER OUT';
+      return 'CUTS TO THE FINISHED SUIT · THEN TAKES HER OUT';
     case 'after':
-      return 'PUTS HER BACK TOGETHER · THEN TAKES HER OUT';
+      return 'CUTS BACK TO THE HOVER · THEN TAKES HER OUT';
+    default:
+      return 'CUTS TO THE HOVER TEST · THEN TAKES HER OUT';
   }
 }
 
-/** Cycle clock at `t` s from the click, while it runs to the hover (eased in and out). */
-export function cycleAt(p: Pick<LaunchPlan, 'from' | 'target' | 'ready' | 'skip'>, t: number): number {
-  if (p.ready <= 0) return p.target;
-  const gap = p.skip ? p.skip[1] - p.skip[0] : 0;
-  const c = THREE.MathUtils.lerp(p.from, p.target - gap, smooth(t / p.ready));
-  return p.skip && c > p.skip[0] ? c + gap : c;
+/** Cycle clock at `t` s from the click, before a cut (it plays on as the picture dips). */
+export function cycleAt(p: Pick<LaunchPlan, 'from'>, t: number): number {
+  return p.from + t;
 }
 
-/** Check clock at `t` s from the click: the run to the hover, then on through it. */
+/** Check clock at `t` s from the click, once the launch has the suit: on at its own pace, held at the hover's end. */
 export function checkAt(p: LaunchPlan, t: number): number {
-  if (t < p.ready) return cycleAt(p, t) - p.assembly;
-  return Math.min(HOVER_HOLD[1], p.target - p.assembly + (t - p.ready));
+  return Math.min(HOVER_HOLD[1], p.check0 + Math.max(0, t - p.t0));
 }
 
 /** Metres climbed over the hover at `t`: eased off the hover, leaving at {@link CLIMB_EXIT_V}. */
@@ -169,8 +172,8 @@ export function followPose(head: THREE.Vector3, yaw: number, pos: THREE.Vector3,
 const UP = new THREE.Vector3(0, 1, 0);
 
 /**
- * The workshop lens at `t`, from where it was at the click (`from*`): eased
- * to the low framing under the hover, then (with the climb) in toward the
+ * The workshop lens at `t`, from where it was at the click (`from*`), or
+ * from the first shot after a cut: eased to the low framing under the hover, then (with the climb) in toward the
  * axis and up after the suit into the shaft. The platform axis is world
  * (0, y, 0).
  */
@@ -182,17 +185,28 @@ export function workshopLens(
   from: { pos: THREE.Vector3; look: THREE.Vector3; fov: number },
   out: { pos: THREE.Vector3; look: THREE.Vector3; fov: number },
 ): void {
-  // Low framing, round the suit (not through it) from the click pose
+  // Low framing, round the suit (not through it) from the click pose — or,
+  // on a cut, from a wider shot of the suit on the pad (the click pose held
+  // as the picture dips)
   const lowPos = _a.set(Math.sin(yaw + LOW_AZ) * LOW_DIST, LOW_Y, Math.cos(yaw + LOW_AZ) * LOW_DIST);
   const lowLook = _b.set(0, LOW_LOOK_Y, 0);
-  const e = smooth(t / Math.max(1.7, p.climb - 0.2));
+  const t0 = p.cut ?? 0;
+  let src = from;
+  if (p.cut !== null && t >= p.cut) {
+    const az = yaw + LOW_AZ + CUT_SHOT.az;
+    src = _cut;
+    src.pos.set(Math.sin(az) * CUT_SHOT.dist, CUT_SHOT.y, Math.cos(az) * CUT_SHOT.dist);
+    src.look.set(0, CUT_SHOT.lookY, 0);
+    src.fov = CUT_SHOT.fov;
+  }
+  const e = t < t0 ? 0 : smooth((t - t0) / Math.max(1.7, p.climb - t0 - 0.2));
   const pivot = _c.set(0, 1.4, 0);
-  const sa = _sa.setFromVector3(_d.copy(from.pos).sub(pivot));
+  const sa = _sa.setFromVector3(_d.copy(src.pos).sub(pivot));
   const sb = _sb.setFromVector3(_d.copy(lowPos).sub(pivot));
   const dth = Math.atan2(Math.sin(sb.theta - sa.theta), Math.cos(sb.theta - sa.theta));
   out.pos.setFromSpherical(_s.set(THREE.MathUtils.lerp(sa.radius, sb.radius, e), THREE.MathUtils.lerp(sa.phi, sb.phi, e), sa.theta + dth * e)).add(pivot);
-  out.look.lerpVectors(from.look, lowLook, e);
-  out.fov = THREE.MathUtils.lerp(from.fov, LOW_FOV, e);
+  out.look.lerpVectors(src.look, lowLook, e);
+  out.fov = THREE.MathUtils.lerp(src.fov, LOW_FOV, e);
 
   // With the climb: in toward the axis first, then up after the suit
   followPose(head, yaw, _fp, _fl);
@@ -223,6 +237,7 @@ const _fl = new THREE.Vector3();
 const _s = new THREE.Spherical();
 const _sa = new THREE.Spherical();
 const _sb = new THREE.Spherical();
+const _cut = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 0 };
 
 /** Top of the shaft (world y) above a ceiling at `ceilingY`. */
 export const shaftTop = (ceilingY: number) => ceilingY + SHAFT_H;
