@@ -403,6 +403,10 @@ export class ShipPart implements Hostile {
     if (role === 'hull') this.span = [new THREE.Vector3(), new THREE.Vector3()];
   }
 
+  get whole(): Frigate {
+    return this.ship;
+  }
+
   get label(): string {
     return this.role === 'hull' && this.ship.armed ? 'HULL ARMD' : PART_STATS[this.role].label;
   }

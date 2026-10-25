@@ -65,7 +65,7 @@ export class FlightApp {
   hud!: Hud;
   /** The suit's R&D: points earned in the air, tiers fitted on the pad. */
   readonly upgrades = new Upgrades();
-  /** Opens the pause menu on the R&D tab (wired by the settings). */
+  /** Holds the sim and opens the R&D refit bay (wired by the settings). */
   refitMenu: () => void = () => {};
   /**
    * Keyboard / mouse / pad. Created only once the sim is shown: its window
@@ -411,7 +411,12 @@ export class FlightApp {
       if (this.opts.screens.touch) {
         // Touch screens: no pointer lock, the overlay drives the touch source
         this.input.touchMode = true;
-        this.touch = new TouchControls(this.input, this.opts.canvas.parentElement ?? document.body, () => this.pauseMenu());
+        this.touch = new TouchControls(
+          this.input,
+          this.opts.canvas.parentElement ?? document.body,
+          () => this.pauseMenu(),
+          () => this.refitMenu(),
+        );
         this.hud.waveKey = 'WAVE';
         this.hud.landKey = 'LAND';
         this.syncViewport(true);
@@ -500,6 +505,7 @@ export class FlightApp {
       this.touch.setActive(this.engaged && !this.paused && !director && !this.autopilot);
       this.touch.setWaveReady(game.combat.waveReady || game.combat.redeployReady);
       this.touch.setLandReady(game.autoLand || game.autoLandReady);
+      this.touch.setRefitReady(game.onPad || game.combat.redeployReady);
       hud.bottomInset = this.touch.bottomInset;
       hud.minScale = 0.55;
     }
@@ -514,7 +520,7 @@ export class FlightApp {
     // (between waves, off the pad with a tier to buy: called home to fit it)
     const home = live && !refit && game.combat.autoWaveIn !== null && this.upgrades.affordable;
     hud.refitHint = refit
-      ? `${this.touch ? 'II' : 'U'} — R&D REFIT · ${this.upgrades.state.rd} R&D`
+      ? `${this.touch ? 'REFIT' : 'U'} — R&D BAY · ${this.upgrades.state.rd} R&D`
       : home
         ? `RETURN TO THE PAD TO REFIT · ${this.upgrades.state.rd} R&D`
         : null;
@@ -538,7 +544,6 @@ export class FlightApp {
     let reserves = combat.reserves;
     let flares = combat.weapons.flares;
     const sync = () => {
-      game.mark = upgrades.mark;
       const W = combat.weapons;
       if (!combat.lost) combat.reserves = Math.max(0, Math.min(combat.maxReserves, combat.reserves + combat.maxReserves - reserves));
       W.flares = Math.max(0, Math.min(W.flareMag, W.flares + W.flareMag - flares));

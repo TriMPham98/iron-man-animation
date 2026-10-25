@@ -8,11 +8,12 @@ import { deviceProfile, type DeviceTier } from '../../scene/deviceProfile';
  * of the way the moment the suit is flying.
  *
  * The pause menu is a holographic panel: resume / restart / camera, the
- * R&D refit (the suit's upgrades, bought and switched on the pad), the
  * controls reference (ground and flight), audio levels (master, effects,
- * JARVIS's voice) and a graphics preset. Mouse, keyboard (arrows, Enter,
- * Esc) and gamepad (D-pad / left stick, A, B, Start) all drive it; every
- * setting persists in localStorage. Styles: ./screens.css.
+ * JARVIS's voice) and a graphics preset. The same glass opens as the R&D
+ * refit bay on the pad (or with the suit lost): the suit's upgrades,
+ * bought and switched with the sim held, and nothing else. Mouse, keyboard
+ * (arrows, Enter, Esc) and gamepad (D-pad / left stick, A, B, Start) drive
+ * both; every setting persists in localStorage. Styles: ./screens.css.
  */
 
 type Row = [key: string, action: string];
@@ -91,6 +92,7 @@ const TOUCH_ROWS: Row[] = [
   ['FLR / POD', 'flares · forearm launchers'],
   ['WAVE', 'call a wave (shows when the sky is clear)'],
   ['LAND', 'auto-land (shows near the pad)'],
+  ['REFIT', 'R&D refit (shows on the pad)'],
   ['CAM / II', 'camera · pause'],
 ];
 const STORE = 'mk3-flight-settings';
@@ -105,7 +107,7 @@ export interface PauseActions {
   forceResume?: () => void;
 }
 
-/** The R&D refit the pause menu shows (wired by the app). */
+/** The R&D refit bay's ledger and gate (wired by the app). */
 export interface RefitMenu {
   upgrades: Upgrades;
   /** Why the suit can't be refitted right now, or null when it can. */
@@ -154,6 +156,12 @@ export class Screens {
   onSettings: (s: Settings) => void = () => {};
   actions: PauseActions = {};
   private refitMenu: RefitMenu | null = null;
+  /** The glass shows the pause menu, or the refit bay. */
+  private mode: 'pause' | 'refit' = 'pause';
+  /** The bay was opened from the pause menu: Esc / B goes back to it. */
+  private refitFromPause = false;
+  /** The pause menu's open tab (kept while the bay is up). */
+  private tab = 'controls';
   /** The refit's last word (a refusal, a purchase), shown over the tracks. */
   private refitMsg = '';
   /** A touch-first device: tap copy, the touch settings and reference. */
@@ -219,18 +227,19 @@ export class Screens {
           <header class="fp-head">
             <div class="fp-reactor" aria-hidden="true"></div>
             <div>
-              <div class="fp-eyebrow">J.A.R.V.I.S. · FLIGHT SYSTEMS</div>
+              <div class="fp-eyebrow" data-eyebrow>J.A.R.V.I.S. · FLIGHT SYSTEMS</div>
               <h2 id="fp-title">PAUSED</h2>
-              <div class="fp-status"><span class="dot"></span>SIM HELD · MK <span data-mark>III</span> · <span data-cam-name></span> CAM</div>
+              <div class="fp-status"><span class="dot"></span>SIM HELD · MK III<span data-refit></span><span data-rd-sum hidden> · <span data-rd-pts></span> R&amp;D</span><span class="fp-cam"> · <span data-cam-name></span> CAM</span></div>
             </div>
+            <button class="fp-btn primary fp-done" data-act="done">DONE <kbd>U</kbd></button>
           </header>
           <div class="fp-body">
             <nav class="fp-nav" aria-label="Pause menu">
               <button class="fp-btn primary" data-act="resume">RESUME <kbd>ESC</kbd></button>
               <button class="fp-btn" data-act="restart">RESTART <small>at the house</small></button>
               <button class="fp-btn" data-act="camera">CAMERA <span class="val" data-cam-name></span></button>
+              <button class="fp-btn" data-act="refit" hidden>R&amp;D REFIT <span class="val" data-rd-pts></span></button>
               <div class="fp-sep"></div>
-              <button class="fp-btn" data-tab="rd" role="tab" aria-selected="false" aria-controls="fp-rd" hidden>R&amp;D <span class="val" data-rd-pts></span></button>
               <button class="fp-btn" data-tab="controls" role="tab" aria-selected="true" aria-controls="fp-controls">CONTROLS</button>
               <button class="fp-btn" data-tab="audio" role="tab" aria-selected="false" aria-controls="fp-audio">AUDIO</button>
               <button class="fp-btn" data-tab="graphics" role="tab" aria-selected="false" aria-controls="fp-graphics">GRAPHICS</button>
@@ -259,7 +268,7 @@ export class Screens {
                   ])}</div></section>
                 </div>
               </section>
-              <section class="fp-pane" id="fp-rd" role="tabpanel" data-pane="rd"></section>
+              <section class="fp-pane" id="fp-rd" aria-label="R&amp;D refit" data-pane="rd"></section>
               <section class="fp-pane" id="fp-audio" role="tabpanel" data-pane="audio">
                 <div class="fp-h">LEVELS</div>
                 ${pct('volume', 'MASTER', 'fp-vol')}
@@ -277,8 +286,10 @@ export class Screens {
             </div>
           </div>
           <footer class="fp-foot">
-            <span class="kb"><b>&#x2191;&#x2193;</b>navigate</span><span class="kb"><b>&#x2190;&#x2192;</b>adjust</span><span class="kb"><b>ENTER</b>select</span><span class="kb"><b>ESC</b>resume</span>
-            <span class="pad"><b>D-PAD</b>navigate · adjust</span><span class="pad"><b>A</b>select</span><span class="pad"><b>B</b>back</span><span class="pad"><b>START</b>resume</span>
+            <span class="kb p"><b>&#x2191;&#x2193;</b>navigate</span><span class="kb p"><b>&#x2190;&#x2192;</b>adjust</span><span class="kb p"><b>ENTER</b>select</span><span class="kb p"><b>ESC</b>resume</span>
+            <span class="pad p"><b>D-PAD</b>navigate · adjust</span><span class="pad p"><b>A</b>select</span><span class="pad p"><b>B</b>back</span><span class="pad p"><b>START</b>resume</span>
+            <span class="kb r"><b>&#x2191;&#x2193;</b>track</span><span class="kb r"><b>&#x2190;&#x2192;</b>switch tiers</span><span class="kb r"><b>ENTER</b>buy</span><span class="kb r"><b>U · ESC</b>done</span>
+            <span class="pad r"><b>D-PAD</b>track · switch tiers</span><span class="pad r"><b>A</b>buy</span><span class="pad r"><b>B</b>back</span><span class="pad r"><b>START</b>done</span>
           </footer>
         </div>
       </div>`;
@@ -382,7 +393,8 @@ export class Screens {
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
       if (!el) return;
       const act = el.dataset.act;
-      if (act === 'resume') this.resume();
+      if (act === 'resume' || act === 'done') this.resume();
+      else if (act === 'refit') this.showRefit(true);
       else if (act === 'restart') {
         this.actions.restart?.();
         this.resume();
@@ -399,19 +411,36 @@ export class Screens {
     p.addEventListener('pointermove', () => p.classList.remove('gamepad'));
   }
 
-  /** Hands the menu the suit's R&D ledger: the tab shows from here on. */
+  /** Hands the screens the suit's R&D ledger: the bay can open from here on. */
   setRefit(menu: RefitMenu): void {
     this.refitMenu = menu;
-    this.pause.querySelector<HTMLElement>('[data-tab="rd"]')!.hidden = false;
+    this.pause.querySelector<HTMLElement>('[data-rd-sum]')!.hidden = false;
     menu.upgrades.onChange(() => this.renderRefit());
     this.renderRefit();
   }
 
-  /** Opens the pause menu's R&D tab with the first track focused (the menu must be up). */
-  showRefit(): void {
-    if (!this.refitMenu || !this.paused) return;
-    this.showTab('rd');
-    requestAnimationFrame(() => this.focus(this.paneItems()[0], this.pause.classList.contains('gamepad')));
+  /**
+   * Turns the held glass into the refit bay, first track focused (the sim
+   * must be held, and the suit on the pad or lost).
+   * @param fromPause Opened from the pause menu: Esc / B goes back to it.
+   */
+  showRefit(fromPause = false): void {
+    if (!this.refitMenu || !this.paused || this.refitMenu.gate()) return;
+    this.refitFromPause = fromPause;
+    this.setMode('refit');
+    requestAnimationFrame(() => this.focus(this.firstItem(), this.pause.classList.contains('gamepad')));
+  }
+
+  /** The pause menu, or the refit bay: the head, the pane, the footer's keys. */
+  private setMode(mode: 'pause' | 'refit'): void {
+    this.mode = mode;
+    const refit = mode === 'refit';
+    this.pause.classList.toggle('refit', refit);
+    this.pause.querySelector('[data-eyebrow]')!.textContent = refit ? 'STARK INDUSTRIES · R&D' : 'J.A.R.V.I.S. · FLIGHT SYSTEMS';
+    this.pause.querySelector('#fp-title')!.textContent = refit ? 'REFIT' : 'PAUSED';
+    this.showPane(refit ? 'rd' : this.tab);
+    this.refitMsg = '';
+    this.renderRefit();
   }
 
   /** A refit, if the suit can take one here: refused, the reason shows. */
@@ -424,18 +453,19 @@ export class Screens {
     this.renderRefit();
   }
 
-  /** The R&D pane: points, Mark and power up top, then a row per track. */
+  /** The R&D pane: points, refit and power up top, then a row per track. */
   private renderRefit(): void {
     const m = this.refitMenu;
     if (!m) return;
     const u = m.upgrades;
     for (const el of this.pause.querySelectorAll('[data-rd-pts]')) el.textContent = `${u.state.rd}`;
-    for (const el of this.pause.querySelectorAll('[data-mark]')) el.textContent = u.mark;
+    for (const el of this.pause.querySelectorAll('[data-refit]')) el.textContent = u.refitLevel ? ` · ${u.refit}` : '';
+    const gate = m.gate();
+    this.pause.querySelector<HTMLElement>('[data-act="refit"]')!.hidden = !!gate;
     const pane = this.pause.querySelector<HTMLElement>('#fp-rd')!;
     const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.rd-row')?.dataset.up;
     const padFocus = !!pane.querySelector('.pad-focus');
-    const gate = m.gate();
-    const next = u.toNextMark;
+    const next = u.toNextRefit;
     const cells = Array.from({ length: u.power }, (_, i) => `<i class="${i < u.powerUsed ? 'on' : ''}"></i>`).join('');
     const rowsHtml = TRACKS.map((t) => {
       const owned = u.state.owned[t.id];
@@ -466,7 +496,7 @@ export class Screens {
     pane.innerHTML = `
       <div class="rd-top">
         <div class="rd-stat"><small>R&amp;D</small><b>${u.state.rd}</b></div>
-        <div class="rd-stat"><small>MARK</small><b>${u.mark}</b><i>${next === null ? 'FINAL MARK' : `${next} TIER${next === 1 ? '' : 'S'} TO THE NEXT`}</i></div>
+        <div class="rd-stat"><small>MARK III</small><b>${u.refit}</b><i>${next === null ? 'FULLY REFITTED' : `${next} TIER${next === 1 ? '' : 'S'} TO THE NEXT`}</i></div>
         <div class="rd-power"><small>POWER <b>${u.powerUsed}/${u.power}</b></small><span class="rd-cells">${cells}</span></div>
       </div>
       <p class="fp-note rd-gate${gate ? ' shut' : ''}">${esc(this.refitMsg || gate || '')}${this.refitMsg || gate ? '' : hint}</p>
@@ -475,12 +505,13 @@ export class Screens {
   }
 
   private showTab(tab: string): void {
-    for (const b of this.pause.querySelectorAll<HTMLElement>('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
-    for (const s of this.pause.querySelectorAll<HTMLElement>('[data-pane]')) s.classList.toggle('on', s.dataset.pane === tab);
-    if (tab === 'rd' && this.refitMsg) {
-      this.refitMsg = '';
-      this.renderRefit();
-    }
+    this.tab = tab;
+    this.showPane(tab);
+  }
+
+  private showPane(pane: string): void {
+    for (const b of this.pause.querySelectorAll<HTMLElement>('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === pane));
+    for (const s of this.pause.querySelectorAll<HTMLElement>('[data-pane]')) s.classList.toggle('on', s.dataset.pane === pane);
   }
 
   private showCamera(): void {
@@ -504,6 +535,11 @@ export class Screens {
     return [...this.pause.querySelectorAll<HTMLElement>('.fp-nav .fp-btn:not([hidden])')];
   }
 
+  /** Where focus lands on opening: Resume, or the bay's first track. */
+  private firstItem(): HTMLElement | undefined {
+    return this.mode === 'refit' ? this.paneItems()[0] : this.navItems()[0];
+  }
+
   /** The focusable controls of the open pane, in order (a radio group is one stop). */
   private paneItems(): HTMLElement[] {
     const pane = this.pause.querySelector<HTMLElement>('.fp-pane.on');
@@ -525,7 +561,8 @@ export class Screens {
     const active = document.activeElement as HTMLElement | null;
     const cur = active && this.pause.contains(active) ? active : this.lastFocus;
     const inPane = !!cur?.closest('.fp-panes');
-    const list = inPane ? this.paneItems() : this.navItems();
+    // The bay is one column: the tracks, then DONE
+    const list = this.mode === 'refit' ? [...this.paneItems(), this.pause.querySelector<HTMLElement>('.fp-done')!] : inPane ? this.paneItems() : this.navItems();
     const i = cur ? list.indexOf(cur) : -1;
     this.focus(list[i < 0 ? 0 : (i + dir + list.length) % list.length], pad);
   }
@@ -558,7 +595,7 @@ export class Screens {
     if (cur.dataset.up) {
       const id = cur.dataset.up as TrackId;
       const on = this.refitMenu?.upgrades.state.on[id] ?? 0;
-      if (dir < 0 && on === 0) return this.toNav(pad);
+      if (dir < 0 && on === 0) return this.mode === 'refit' || this.toNav(pad);
       this.refit((u) => u.setOn(id, on + dir));
       return true;
     }
@@ -580,9 +617,13 @@ export class Screens {
     return true;
   }
 
-  /** B / Esc / Backspace: out of a pane first, then resume. */
+  /** B / Esc / Backspace: out of a pane first (or the bay, back to the menu it came from), then resume. */
   private back(pad = false): void {
-    if ((document.activeElement as HTMLElement | null)?.closest('.fp-panes')) this.toNav(pad);
+    if (this.mode === 'refit') {
+      if (!this.refitFromPause) return this.resume();
+      this.setMode('pause');
+      this.focus(this.pause.querySelector<HTMLElement>('[data-act="refit"]') ?? this.navItems()[0], pad);
+    } else if ((document.activeElement as HTMLElement | null)?.closest('.fp-panes')) this.toNav(pad);
     else this.resume();
   }
 
@@ -596,6 +637,11 @@ export class Screens {
     else if (k === 'ArrowRight') handled = this.adjust(1);
     else if (k === 'ArrowLeft') handled = this.adjust(-1);
     else if (k === 'Escape' || k === 'Backspace') this.back();
+    // U: the bay's own key, both ways
+    else if (e.code === 'KeyU' && !e.repeat) {
+      if (this.mode === 'refit') this.resume();
+      else this.showRefit(true);
+    }
     else if (k === 'Enter' || k === ' ') {
       const el = document.activeElement as HTMLElement | null;
       if (el && this.pause.contains(el) && !(el instanceof HTMLInputElement)) el.click();
@@ -635,7 +681,7 @@ export class Screens {
         this.padRepeat = now + (this.padAxisHeld === held + 1 ? 110 : 380);
         this.padAxisHeld = held + 1;
         this.pause.classList.add('gamepad');
-        if (!this.pause.contains(document.activeElement)) this.focus(this.navItems()[0], true);
+        if (!this.pause.contains(document.activeElement)) this.focus(this.firstItem(), true);
         else dirs[held][1]();
       }
     } else {
@@ -645,7 +691,7 @@ export class Screens {
       this.pause.classList.add('gamepad');
       const el = document.activeElement as HTMLElement | null;
       if (el && this.pause.contains(el)) el.click();
-      else this.focus(this.navItems()[0], true);
+      else this.focus(this.firstItem(), true);
     }
     if (edge(1)) this.back(true);
     if (edge(9)) this.resume();
@@ -719,14 +765,16 @@ export class Screens {
       this.refitMsg = '';
       this.renderRefit();
       if (!was) {
+        // Opens as the pause menu (the bay is asked for after)
+        this.setMode('pause');
         this.padPrev = [];
         this.padAxisHeld = 0;
         this.pause.classList.toggle(
           'gamepad',
           [...(navigator.getGamepads?.() ?? [])].some((g) => g && g.connected),
         );
-        // Focus lands on Resume (drawn as focused only for keys / pad)
-        requestAnimationFrame(() => this.focus(this.navItems()[0], this.pause.classList.contains('gamepad')));
+        // Focus lands on Resume, or the bay's first track (drawn as focused only for keys / pad)
+        requestAnimationFrame(() => this.focus(this.firstItem(), this.pause.classList.contains('gamepad')));
       }
       this.padRaf = requestAnimationFrame(this.pollPad);
     } else if (this.pause.contains(document.activeElement)) {

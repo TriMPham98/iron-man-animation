@@ -186,6 +186,7 @@
 #flight-ui .fp-eyebrow { font-family: Michroma, sans-serif; font-size: 9px; letter-spacing: 0.42em; color: rgba(var(--fc-rgb),0.75); }
 #flight-ui .fp-head h2 { font-family: Michroma, sans-serif; font-weight: 400; letter-spacing: 0.42em; font-size: 22px; margin: 6px 0 4px; color: #fff; text-shadow: 0 0 22px rgba(var(--fc-rgb),0.45); }
 #flight-ui .fp-status { font-size: 10px; letter-spacing: 0.18em; color: var(--fc-dim); display: flex; align-items: center; gap: 8px; text-transform: uppercase; }
+#flight-ui .fp-status > span:empty:not(.dot) { display: none; }
 #flight-ui .fp-status .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fc-amber); box-shadow: 0 0 8px var(--fc-amber); animation: fp-breathe 1.6s ease-in-out infinite; }
 
 #flight-ui .fp-body { display: grid; grid-template-columns: 252px 1fr; min-height: 0; flex: 1 1 auto; }
@@ -292,6 +293,14 @@
 #flight-ui .fp-foot .pad { display: none; }
 #flight-ui .pause.gamepad .fp-foot .pad { display: inline; }
 #flight-ui .pause.gamepad .fp-foot .kb { display: none; }
+
+/* The refit bay: the same glass, narrower, the tracks alone and DONE in the head */
+#flight-ui .pause.refit .fp-panel { width: min(780px, 100%); }
+#flight-ui .pause.refit .fp-nav, #flight-ui .pause.refit .fp-cam { display: none; }
+#flight-ui .pause.refit .fp-body { grid-template-columns: 1fr; }
+#flight-ui .fp-done { display: none; }
+#flight-ui .pause.refit .fp-done { display: flex; margin-left: auto; flex: none; }
+#flight-ui .pause.refit .fp-foot .p, #flight-ui .pause:not(.refit) .fp-foot .r { display: none; }
 
 /* Content arrives a beat after the glass */
 #flight-ui .pause:not(.hidden) .fp-head, #flight-ui .pause:not(.hidden) .fp-nav > *, #flight-ui .pause:not(.hidden) .fp-panes { animation: fp-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; }

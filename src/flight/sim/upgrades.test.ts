@@ -18,7 +18,7 @@ describe('Upgrades', () => {
     const u = new Upgrades(memory());
     expect(u.spec).toEqual(STOCK_SPEC());
     expect(u.power).toBe(BASE_POWER);
-    expect(u.mark).toBe('III');
+    expect(u.refit).toBe('STOCK');
     for (const t of TRACKS) {
       const s = STOCK_SPEC();
       t.apply(s, 0);
@@ -32,7 +32,7 @@ describe('Upgrades', () => {
     expect(u.state.rd).toBe(0);
     expect(u.state.owned.repulsors).toBe(1);
     expect(u.state.on.repulsors).toBe(1);
-    expect(u.spec.repulsorDamage).toBeCloseTo(1.1);
+    expect(u.spec.repulsorDamage).toBeCloseTo(1.12);
     expect(u.buy('repulsors')).toBe('cost');
   });
 
@@ -45,7 +45,7 @@ describe('Upgrades', () => {
 
   it('holds the build to the power budget; reactor tiers raise it', () => {
     const u = rich();
-    // Fill the budget (Marks add a unit each as tiers are bought)
+    // Fill the budget (refits add a unit each as tiers are bought)
     const order = ['armour', 'repulsors', 'missiles', 'launchers', 'flares', 'propulsion', 'sensors'] as const;
     for (const id of order) for (let i = 0; i < MAX_TIER; i++) u.buy(id);
     expect(u.powerUsed).toBe(u.power);
@@ -71,11 +71,21 @@ describe('Upgrades', () => {
     expect(u.spec.flareMag).toBe(1);
   });
 
-  it('climbs the Marks as tiers are bought', () => {
+  it('refits the same Mark III as tiers are bought', () => {
     const u = rich();
     for (let i = 0; i < 5; i++) u.buy('armour');
-    expect(u.mark).toBe('IV');
+    expect(u.refit).toBe('REFIT I');
     expect(u.power).toBe(BASE_POWER + 1);
+  });
+
+  it('makes every tier of every track count', () => {
+    for (const t of TRACKS) {
+      for (let i = 1; i <= MAX_TIER; i++) {
+        const shown = t.stats.map((st) => st.show(i));
+        const before = t.stats.map((st) => st.show(i - 1));
+        expect(shown.some((v, k) => v !== before[k]), `${t.id} tier ${i}`).toBe(true);
+      }
+    }
   });
 
   it('keeps itself between sessions, and cleans up a bad save', () => {
@@ -96,7 +106,7 @@ describe('Upgrades', () => {
     expect(new Upgrades(store).state.rd).toBe(0);
   });
 
-  it('pays for kills, clears (double untouched), and decoys', () => {
+  it('pays for kills, clears (half again untouched), and decoys', () => {
     const u = new Upgrades(memory());
     const got: string[] = [];
     u.onAward = (p, why) => got.push(`${p} ${why}`);
@@ -109,7 +119,7 @@ describe('Upgrades', () => {
     u.event(ev('hitArmor', 0, { value: 5 }));
     u.event(ev('waveClear', 0, { value: 3 }));
     u.event(ev('missileDecoyed'));
-    expect(u.state.rd).toBe(AWARD.drone + AWARD.sam + AWARD.frigate + AWARD.wave * 2 * 2 + AWARD.wave * 3 + AWARD.decoy);
+    expect(u.state.rd).toBe(AWARD.drone + AWARD.sam + AWARD.frigate + Math.round((AWARD.waveBase + AWARD.wave * 2) * 1.5) + AWARD.waveBase + AWARD.wave * 3 + AWARD.decoy);
     expect(got[0]).toBe(`${AWARD.drone} DRONE DOWN`);
   });
 

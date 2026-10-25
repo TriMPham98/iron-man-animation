@@ -1,15 +1,13 @@
 import type { SimEvent } from './events';
 
 /**
- * R&D: the suit's upgrade progression. Points are earned in the air (kills,
- * cleared waves, clean pad landings, decoyed seekers) and spent on tiers in
- * eight systems, refitted on the pad. Every tier is bought for good, but
- * each one switched on draws a unit from the reactor's power budget, so a
- * build is a choice, not a grind to the top of every track.
+ * R&D: the suit's upgrades. Points are earned in the air (kills, cleared
+ * waves, clean pad landings, decoyed seekers) and spent on the pad: one
+ * upgrade per system, eight in all, each bought once and fitted for good.
  *
  * The systems read their numbers through a {@link SuitSpec}: multipliers on
- * their own tuning constants (1 = the stock Mark III), so tier 0 is exactly
- * the suit as it flew before any of this.
+ * their own tuning constants (1 = the stock Mark III), so a suit with
+ * nothing fitted is exactly the suit as it flew before any of this.
  */
 
 export interface SuitSpec {
@@ -71,150 +69,155 @@ export const STOCK_SPEC = (): SuitSpec => ({
   assistCone: 1,
 });
 
-export type TrackId = 'armour' | 'reactor' | 'repulsors' | 'missiles' | 'launchers' | 'flares' | 'propulsion' | 'sensors';
+export type UpgradeId = 'armour' | 'reactor' | 'repulsors' | 'missiles' | 'launchers' | 'flares' | 'propulsion' | 'sensors';
 
-/** One line of what a track does: its label, and the change at tier t shown as text. */
-interface Stat {
-  label: string;
-  show: (t: number) => string;
-}
+/** One line of what an upgrade does: its label, stock and fitted. */
+type Stat = [label: string, stock: string, fitted: string];
 
-export interface Track {
-  id: TrackId;
+export interface Upgrade {
+  id: UpgradeId;
   name: string;
   /** Where on the suit it lives. */
   part: string;
+  /** R&D price. */
+  cost: number;
   stats: Stat[];
-  /** Writes tier t's effect into the spec. */
-  apply: (spec: SuitSpec, t: number) => void;
+  /** Writes the upgrade's effect into the spec. */
+  apply: (spec: SuitSpec) => void;
 }
 
-export const MAX_TIER = 5;
-/** R&D cost of each tier (index 0 buys tier I). */
-export const TIER_COST = [50, 100, 175, 275, 400] as const;
-/** Power units the reactor gives with nothing upgraded, and each reactor tier switched on adds. */
-export const BASE_POWER = 10;
-export const REACTOR_POWER = 2;
-/** Tiers owned that bring each Mark (from III), each worth a unit of power. */
-export const MARK_AT = [0, 5, 10, 16, 23, 31, 40] as const;
-const MARK_NAMES = ['III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX'];
+/** Where the airfoils ice with the stock boots (m; flightModel's ICING_ALT, kept here to spare it a cycle). */
+const ICING_ALT = 9000;
 
-const pct = (k: number) => (Math.abs(k) < 1e-6 ? 'STOCK' : `${k > 0 ? '+' : '−'}${Math.round(Math.abs(k) * 100)}%`);
+const pct = (k: number) => `${k > 0 ? '+' : '−'}${Math.round(Math.abs(k) * 100)}%`;
+const km = (m: number) => `${m.toFixed(1)} km`;
+const sec = (v: number, d = 1) => `${v.toFixed(d)} s`;
 
-export const TRACKS: readonly Track[] = [
+/**
+ * The eight upgrades. A first wave or two pays for the cheap ones; the
+ * whole set takes a long run.
+ */
+export const UPGRADES: readonly Upgrade[] = [
   {
     id: 'armour',
     name: 'ARMOUR',
     part: 'PLATING',
+    cost: 300,
     stats: [
-      { label: 'DAMAGE TAKEN', show: (t) => pct(-0.07 * t) },
-      { label: 'RESERVES', show: (t) => `${1 + (t >= 3 ? 1 : 0)}` },
-      { label: 'REGEN AFTER', show: (t) => `${(6 * (1 - 0.08 * t)).toFixed(1)} s` },
+      ['DAMAGE TAKEN', 'STOCK', pct(-0.25)],
+      ['RESERVES', '1', '2'],
+      ['REGEN AFTER', sec(6), sec(6 * 0.7)],
     ],
-    apply: (s, t) => {
-      s.damageTaken = 1 - 0.07 * t;
-      s.reserves = t >= 3 ? 1 : 0;
-      s.regenDelay = 1 - 0.08 * t;
+    apply: (s) => {
+      s.damageTaken = 0.75;
+      s.reserves = 1;
+      s.regenDelay = 0.7;
     },
   },
   {
     id: 'reactor',
     name: 'ARC REACTOR',
     part: 'CHEST',
+    cost: 300,
     stats: [
-      { label: 'POWER', show: (t) => `+${t * REACTOR_POWER}` },
-      { label: 'UNIBEAM', show: (t) => `${(4 * (1 + 0.125 * t)).toFixed(1)} s` },
-      { label: 'BEAM COOL', show: (t) => `${(7 * (1 - 0.08 * t)).toFixed(1)} s` },
-      { label: 'ARMOUR REGEN', show: (t) => pct(0.15 * t) },
+      ['UNIBEAM', sec(4), sec(4 * 1.5)],
+      ['BEAM COOL', sec(7), sec(7 * 0.7)],
+      ['ARMOUR REGEN', 'STOCK', pct(0.5)],
     ],
-    apply: (s, t) => {
-      s.unibeamTime = 1 + 0.125 * t;
-      s.unibeamCool = 1 - 0.08 * t;
-      s.regenRate = 1 + 0.15 * t;
+    apply: (s) => {
+      s.unibeamTime = 1.5;
+      s.unibeamCool = 0.7;
+      s.regenRate = 1.5;
     },
   },
   {
     id: 'repulsors',
     name: 'REPULSORS',
     part: 'PALMS',
+    cost: 250,
     stats: [
-      { label: 'BOLT DAMAGE', show: (t) => pct(0.1 * t) },
-      { label: 'RATE OF FIRE', show: (t) => pct(1 / (1 - 0.06 * t) - 1) },
+      ['BOLT DAMAGE', 'STOCK', pct(0.35)],
+      ['RATE OF FIRE', 'STOCK', pct(1 / 0.75 - 1)],
     ],
-    apply: (s, t) => {
-      s.repulsorDamage = 1 + 0.1 * t;
-      s.repulsorInterval = 1 - 0.06 * t;
+    apply: (s) => {
+      s.repulsorDamage = 1.35;
+      s.repulsorInterval = 0.75;
     },
   },
   {
     id: 'missiles',
     name: 'MICRO-MISSILES',
     part: 'SHOULDERS',
+    cost: 250,
     stats: [
-      { label: 'PAINT TIME', show: (t) => pct(-0.08 * t) },
-      { label: 'REACH', show: (t) => `${(3.2 * (1 + 0.08 * t)).toFixed(1)} km` },
-      { label: 'POD RELOAD', show: (t) => pct(-0.1 * t) },
+      ['PAINT TIME', 'STOCK', pct(-0.3)],
+      ['REACH', km(3.2), km(3.2 * 1.3)],
+      ['POD RELOAD', 'STOCK', pct(-0.35)],
     ],
-    apply: (s, t) => {
-      s.missileLock = 1 - 0.08 * t;
-      s.missileRange = 1 + 0.08 * t;
-      s.rocketReload = 1 - 0.1 * t;
+    apply: (s) => {
+      s.missileLock = 0.7;
+      s.missileRange = 1.3;
+      s.rocketReload = 0.65;
     },
   },
   {
     id: 'launchers',
     name: 'FOREARM LAUNCHERS',
     part: 'FOREARMS',
+    cost: 250,
     stats: [
-      { label: 'BAY RELOAD', show: (t) => pct(-0.09 * t) },
-      { label: 'PAINT TIME', show: (t) => pct(-0.1 * t) },
-      { label: 'REACH', show: (t) => `${(4.5 * (1 + 0.06 * t)).toFixed(1)} km` },
+      ['BAY RELOAD', 'STOCK', pct(-0.35)],
+      ['PAINT TIME', 'STOCK', pct(-0.35)],
+      ['REACH', km(4.5), km(4.5 * 1.25)],
     ],
-    apply: (s, t) => {
-      s.launcherReload = 1 - 0.09 * t;
-      s.launcherLock = 1 - 0.1 * t;
-      s.launcherRange = 1 + 0.06 * t;
+    apply: (s) => {
+      s.launcherReload = 0.65;
+      s.launcherLock = 0.65;
+      s.launcherRange = 1.25;
     },
   },
   {
     id: 'flares',
     name: 'COUNTERMEASURES',
     part: 'HIPS',
+    cost: 150,
     stats: [
-      { label: 'FLARES', show: (t) => `${Math.round(64 * (1 + 0.1 * t))}` },
-      { label: 'RESTOCK', show: (t) => `${(1 - 0.1 * t).toFixed(1)} s` },
+      ['FLARES', '64', '96'],
+      ['RESTOCK', sec(1, 2), sec(0.65, 2)],
     ],
-    apply: (s, t) => {
-      s.flareMag = 1 + 0.1 * t;
-      s.flareRestock = 1 - 0.1 * t;
+    apply: (s) => {
+      s.flareMag = 1.5;
+      s.flareRestock = 0.65;
     },
   },
   {
     id: 'propulsion',
     name: 'PROPULSION',
     part: 'BOOTS',
+    cost: 400,
     stats: [
-      { label: 'BOOST THRUST', show: (t) => pct(0.05 * t) },
-      { label: 'TOP SPEED', show: (t) => `M ${(1.5 * (1 + 0.08 * t)).toFixed(2)}` },
-      { label: 'DE-ICING', show: (t) => (t >= 5 ? '11 km' : t >= 4 ? '10 km' : 'NONE') },
+      ['BOOST THRUST', 'STOCK', pct(0.2)],
+      ['TOP SPEED', 'M 1.50', `M ${(1.5 * 1.25).toFixed(2)}`],
+      ['ICES AT', km(ICING_ALT / 1000), km((ICING_ALT + 1500) / 1000)],
     ],
-    apply: (s, t) => {
-      s.boostThrust = 1 + 0.05 * t;
-      s.boostSpeed = 1 + 0.08 * t;
-      s.icingLift = t >= 5 ? 2000 : t >= 4 ? 1000 : 0;
+    apply: (s) => {
+      s.boostThrust = 1.2;
+      s.boostSpeed = 1.25;
+      s.icingLift = 1500;
     },
   },
   {
     id: 'sensors',
     name: 'SENSORS',
     part: 'HELMET',
+    cost: 150,
     stats: [
-      { label: 'ASSIST RANGE', show: (t) => `${(1.8 * (1 + 0.09 * t)).toFixed(1)} km` },
-      { label: 'ASSIST CONE', show: (t) => `${(4.5 * (1 + 0.07 * t)).toFixed(1)}°` },
+      ['ASSIST RANGE', km(1.8), km(1.8 * 1.35)],
+      ['ASSIST CONE', '4.5°', `${(4.5 * 1.35).toFixed(1)}°`],
     ],
-    apply: (s, t) => {
-      s.assistRange = 1 + 0.09 * t;
-      s.assistCone = 1 + 0.07 * t;
+    apply: (s) => {
+      s.assistRange = 1.35;
+      s.assistCone = 1.35;
     },
   },
 ];
@@ -226,8 +229,9 @@ export const AWARD = {
   /** Each part of a frigate shot off it, and the ship going under. */
   ship: 15,
   frigate: 100,
-  /** A cleared wave: this × its number, and as much again with no hit taken. */
-  wave: 50,
+  /** A cleared wave: the base plus this × its number, and half as much again with no hit taken. */
+  waveBase: 40,
+  wave: 30,
   /** Pad landings by grade, once the suit has been up long enough to have flown somewhere. */
   bullseye: 20,
   centred: 10,
@@ -241,16 +245,14 @@ export const LANDING_MIN_AIR = 30;
 
 export interface UpgradeState {
   rd: number;
-  /** Tiers bought, per track. */
-  owned: Record<TrackId, number>;
-  /** Tiers switched on (≤ owned), per track. */
-  on: Record<TrackId, number>;
+  /** Upgrades fitted. */
+  owned: Record<UpgradeId, boolean>;
   /** All the R&D ever earned (for the record). */
   earned: number;
 }
 
-const zero = (): Record<TrackId, number> => Object.fromEntries(TRACKS.map((t) => [t.id, 0])) as Record<TrackId, number>;
-export const FRESH_STATE = (): UpgradeState => ({ rd: 0, owned: zero(), on: zero(), earned: 0 });
+const none = (): Record<UpgradeId, boolean> => Object.fromEntries(UPGRADES.map((u) => [u.id, false])) as Record<UpgradeId, boolean>;
+export const FRESH_STATE = (): UpgradeState => ({ rd: 0, owned: none(), earned: 0 });
 
 /** The storage the ledger keeps itself in (localStorage in the page). */
 export interface Store {
@@ -260,8 +262,8 @@ export interface Store {
 
 const STORE = 'mk3-flight-rd';
 
-/** Why a refit was refused, or null when it went through. */
-export type RefitRefusal = 'cost' | 'max' | 'power' | 'owned' | 'reactor' | null;
+/** Why a purchase was refused, or null when it went through. */
+export type RefitRefusal = 'cost' | 'owned' | null;
 
 export class Upgrades {
   readonly state: UpgradeState;
@@ -278,83 +280,31 @@ export class Upgrades {
 
   constructor(private readonly store: Store | null = safeStorage()) {
     this.state = load(store);
-    // (a ledger saved over budget sheds tiers from the end of the list up)
-    for (const t of [...TRACKS].reverse()) while (this.powerUsed > this.power && this.state.on[t.id] > 0) this.state.on[t.id]--;
     this.resolve();
   }
 
-  /** Called whenever the points, the tiers or the spec change. */
+  /** Called whenever the points, the upgrades or the spec change. */
   onChange(fn: () => void): void {
     this.changed.push(fn);
   }
 
-  get power(): number {
-    return BASE_POWER + this.state.on.reactor * REACTOR_POWER + this.markIndex;
+  /** Upgrades fitted so far. */
+  get fitted(): number {
+    return UPGRADES.filter((u) => this.state.owned[u.id]).length;
   }
 
-  get powerUsed(): number {
-    return TRACKS.reduce((n, t) => n + this.state.on[t.id], 0);
-  }
-
-  get tiersOwned(): number {
-    return TRACKS.reduce((n, t) => n + this.state.owned[t.id], 0);
-  }
-
-  /** 0 = Mark III, and one more for each step on {@link MARK_AT}. */
-  get markIndex(): number {
-    const n = this.tiersOwned;
-    let i = 0;
-    while (i + 1 < MARK_AT.length && n >= MARK_AT[i + 1]) i++;
-    return i;
-  }
-
-  get mark(): string {
-    return MARK_NAMES[this.markIndex];
-  }
-
-  /** Some tier's next step is within the points banked. */
+  /** Some upgrade not yet fitted is within the points banked. */
   get affordable(): boolean {
-    return TRACKS.some((t) => {
-      const c = this.cost(t.id);
-      return c !== null && c <= this.state.rd;
-    });
+    return UPGRADES.some((u) => !this.state.owned[u.id] && u.cost <= this.state.rd);
   }
 
-  /** Tiers still to buy before the next Mark, or null at the last. */
-  get toNextMark(): number | null {
-    const next = MARK_AT[this.markIndex + 1];
-    return next === undefined ? null : next - this.tiersOwned;
-  }
-
-  /** The next tier's price on a track, or null when it's maxed. */
-  cost(id: TrackId): number | null {
-    const t = this.state.owned[id];
-    return t >= MAX_TIER ? null : TIER_COST[t];
-  }
-
-  /** Buys the next tier on a track, switching it on if the budget allows. */
-  buy(id: TrackId): RefitRefusal {
-    const cost = this.cost(id);
-    if (cost === null) return 'max';
-    if (this.state.rd < cost) return 'cost';
-    this.state.rd -= cost;
-    const wasFull = this.state.on[id] === this.state.owned[id];
-    this.state.owned[id]++;
-    // (a reactor tier pays for itself; anything else needs a spare unit)
-    if (wasFull && (id === 'reactor' || this.powerUsed < this.power)) this.state.on[id]++;
-    this.commit();
-    return null;
-  }
-
-  /** Switches a track to tier n (0 … owned), within the power budget. */
-  setOn(id: TrackId, n: number): RefitRefusal {
-    const cur = this.state.on[id];
-    if (n === cur) return null;
-    if (n < 0 || n > this.state.owned[id]) return 'owned';
-    const used = this.powerUsed - cur + n;
-    const power = this.power + (id === 'reactor' ? (n - cur) * REACTOR_POWER : 0);
-    if (used > power) return n > cur ? 'power' : 'reactor';
-    this.state.on[id] = n;
+  /** Buys and fits an upgrade. */
+  buy(id: UpgradeId): RefitRefusal {
+    const up = UPGRADES.find((u) => u.id === id)!;
+    if (this.state.owned[id]) return 'owned';
+    if (this.state.rd < up.cost) return 'cost';
+    this.state.rd -= up.cost;
+    this.state.owned[id] = true;
     this.commit();
     return null;
   }
@@ -384,7 +334,8 @@ export class Upgrades {
         break;
       case 'waveClear': {
         const n = e.value ?? 1;
-        this.earn(AWARD.wave * n * (this.hitThisWave ? 1 : 2), this.hitThisWave ? `WAVE ${n} CLEAR` : `WAVE ${n} · UNTOUCHED`);
+        const pts = AWARD.waveBase + AWARD.wave * n;
+        this.earn(this.hitThisWave ? pts : Math.round(pts * 1.5), this.hitThisWave ? `WAVE ${n} CLEAR` : `WAVE ${n} · UNTOUCHED`);
         break;
       }
       case 'takeoff':
@@ -424,7 +375,7 @@ export class Upgrades {
 
   private resolve(): void {
     Object.assign(this.spec, STOCK_SPEC());
-    for (const t of TRACKS) t.apply(this.spec, this.state.on[t.id]);
+    for (const u of UPGRADES) if (this.state.owned[u.id]) u.apply(this.spec);
   }
 
   private commit(): void {
@@ -446,22 +397,22 @@ function safeStorage(): Store | null {
   }
 }
 
-/** The saved ledger, cleaned up: unknown tracks dropped, tiers clamped, the budget respected. */
+/** The saved ledger, cleaned up: unknown upgrades dropped (a save from the tiered ledger keeps whatever had a tier bought). */
 function load(store: Store | null): UpgradeState {
   const s = FRESH_STATE();
-  let saved: Partial<UpgradeState> | null = null;
+  let saved: { rd?: unknown; earned?: unknown; owned?: Record<string, unknown> } | null = null;
   try {
     saved = JSON.parse(store?.getItem(STORE) ?? 'null');
   } catch {
     saved = null;
   }
   if (!saved || typeof saved !== 'object') return s;
-  const num = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.floor(v))) : lo);
-  s.rd = num(saved.rd, 0, 1e9);
-  s.earned = num(saved.earned, 0, 1e9);
-  for (const t of TRACKS) {
-    s.owned[t.id] = num(saved.owned?.[t.id], 0, MAX_TIER);
-    s.on[t.id] = num(saved.on?.[t.id], 0, s.owned[t.id]);
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(1e9, Math.max(0, Math.floor(v))) : 0);
+  s.rd = num(saved.rd);
+  s.earned = num(saved.earned);
+  for (const u of UPGRADES) {
+    const v = saved.owned?.[u.id];
+    s.owned[u.id] = v === true || (typeof v === 'number' && v > 0);
   }
   return s;
 }

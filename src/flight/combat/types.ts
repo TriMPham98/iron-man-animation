@@ -14,6 +14,8 @@ export interface Hostile {
   readonly span?: readonly [THREE.Vector3, THREE.Vector3];
   /** What the HUD calls it, when its kind isn't enough. */
   readonly label?: string;
+  /** The whole it's one piece of (a ship's parts share theirs). */
+  readonly whole?: object;
   hp: number;
   readonly maxHp: number;
   alive: boolean;

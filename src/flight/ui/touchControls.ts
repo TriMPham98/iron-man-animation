@@ -13,7 +13,7 @@ import { inBoostRing, sideRole, stickOrigin, stickVector, TOUCH_BINDINGS, type T
  */
 
 interface Button {
-  act: TouchAction | 'pause';
+  act: TouchAction | 'pause' | 'refit';
   label: string;
   /** Dragging a finger held on it aims too (fire while steering). */
   aims?: boolean;
@@ -35,6 +35,7 @@ const TOP: Button[] = [
   { act: 'pause', label: 'II' },
   { act: 'camera', label: 'CAM' },
   { act: 'land', label: 'LAND' },
+  { act: 'refit', label: 'REFIT' },
 ];
 const ALL = new Map([...CLUSTER, ...TOP].map((b) => [b.act, b]));
 
@@ -56,6 +57,7 @@ export class TouchControls {
     private readonly input: Input,
     parent: HTMLElement,
     private readonly onPause: () => void,
+    private readonly onRefit: () => void = () => {},
   ) {
     const btn = (b: Button) => `<button type="button" class="tc-btn tc-${b.act}" data-act="${b.act}" aria-label="${b.act}">${b.label}</button>`;
     this.root = document.createElement('div');
@@ -95,6 +97,11 @@ export class TouchControls {
   /** The LAND button shows only while auto-land can take the suit down (or is, to hand it back). */
   setLandReady(on: boolean): void {
     this.root.classList.toggle('tc-land-ready', on);
+  }
+
+  /** The REFIT button shows only while the suit can be refitted (on the pad, or lost). */
+  setRefitReady(on: boolean): void {
+    this.root.classList.toggle('tc-refit-ready', on);
   }
 
   setOpacity(v: number): void {
@@ -137,9 +144,10 @@ export class TouchControls {
       const b = ALL.get(el.dataset.act as Button['act'])!;
       buzz(b.act === 'fire' ? 6 : 10);
       el.classList.add('on');
-      if (b.act === 'pause') {
+      if (b.act === 'pause' || b.act === 'refit') {
         setTimeout(() => el.classList.remove('on'), 120);
-        this.onPause();
+        if (b.act === 'pause') this.onPause();
+        else this.onRefit();
         return;
       }
       this.input.queuePress(TOUCH_BINDINGS[b.act]);

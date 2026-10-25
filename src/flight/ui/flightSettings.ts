@@ -71,7 +71,7 @@ export function bindFlightSettings(app: FlightApp): void {
   };
   // The on-screen pause button
   app.pauseMenu = pause;
-  // U on the pad: straight to the R&D refit
+  // U (or REFIT) on the pad: the sim held, straight into the R&D refit bay
   app.refitMenu = () => {
     pause();
     screens.showRefit();

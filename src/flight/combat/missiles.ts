@@ -306,8 +306,11 @@ export class Missiles {
       // Hits: proximity fuse on the target, anything hostile in reach, or the ground
       let boom = false;
       if (m.team === 'player') {
+        // A seeker sent for one piece of a ship flies past the rest of it
+        // (the hull's capsule swallows the deck) to the piece it was sent for
+        const whole = isHostile(m.target) && m.target.alive ? m.target.whole : undefined;
         for (const h of hostiles) {
-          if (!h.alive) continue;
+          if (!h.alive || (whole && h.whole === whole && h !== m.target)) continue;
           if (coreDistance(h, m.pos) < h.radius + 3.5) {
             h.damage(m.damage, m.pos, m.heavy ? 'launcher' : 'missile');
             boom = true;
@@ -338,7 +341,7 @@ export class Missiles {
         if (m.team === 'player') {
           for (const h of hostiles) {
             if (!h.alive) continue;
-            const d = Math.max(0, coreDistance(h, m.pos) - (h.span ? h.radius : 0));
+            const d = Math.max(0, coreDistance(h, m.pos) - h.radius);
             if (d < m.blast * 3) h.damage(m.damage * 0.5 * (1 - d / (m.blast * 3)), m.pos, 'missile');
           }
         } else if (player.alive) {

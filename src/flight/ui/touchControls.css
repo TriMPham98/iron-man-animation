@@ -138,6 +138,8 @@
 .tc-top .tc-btn { width: 48px; height: 48px; border-radius: 12px; }
 .tc-top .tc-land { width: auto; padding: 0 12px; display: none; border-color: rgba(255, 184, 77, calc(0.8 * var(--tc-alpha))); color: rgba(255, 220, 160, var(--tc-alpha)); }
 .tc-land-ready .tc-top .tc-land { display: block; animation: tc-wave-pulse 1.6s ease-in-out infinite; }
+.tc-top .tc-refit { width: auto; padding: 0 12px; display: none; border-color: rgba(255, 184, 77, calc(0.8 * var(--tc-alpha))); color: rgba(255, 220, 160, var(--tc-alpha)); }
+.tc-refit-ready .tc-top .tc-refit { display: block; }
 .tc-top .tc-pause { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 13px; letter-spacing: 0.1em; }
 
 /* ── Left-handed: stick right, buttons left (fire at the left edge) ── */
