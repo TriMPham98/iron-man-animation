@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { FlightApp } from '../flight/app';
 import { createFrameStats } from './frameStats';
-import { burnAt, checkAt, CLIMB_SEC, climbAt, cycleAt, FOLLOW_FOV, followPose, launchPlan, roofAt, workshopLens, type LaunchFrom, type LaunchPlan } from './launchProfile';
+import { burnAt, checkAt, CLIMB_SEC, climbAt, cycleAt, FOLLOW_FOV, followPose, launchPlan, roofAt, workshopLens, type LaunchPlan } from './launchProfile';
 
 /**
  * Workshop → flight, in one page and without a load: the flight sim is
@@ -27,9 +27,10 @@ import { burnAt, checkAt, CLIMB_SEC, climbAt, cycleAt, FOLLOW_FOV, followPose, l
  *  6. HANDOVER the controls card slides in; a click takes the stick.
  *
  * With motion, the suit flies itself out instead (LAUNCH, see
- * launchProfile.ts), from anywhere in the cycle: the cycle runs (fast, eased)
- * to the check's settled hover — the build finished, or the doff and the
- * landing taken back — the roof iris
+ * launchProfile.ts), from anywhere in the cycle: a few seconds short of the
+ * check's settled hover the launch is armed and the check plays on to it
+ * (a click goes now, by the cut); further out the picture dips to black and
+ * cuts to the suit lighting its boots on the pad. From the hover the roof iris
  * opens on the launch shaft and daylight comes down it, the suit climbs
  * out with the lens low under it and then up after it, and the flight sim
  * takes the picture inside the shaft — the same framing on its suit, just
@@ -55,9 +56,9 @@ export interface WorkshopHandle {
   cycle(): { t: number; assembly: number } | null;
   /** Run the cycle to `t` (s), held there: the build, the check or the doff, posed. */
   seekCycle(t: number): void;
-  /** Hold back the suit's sparks and smoke while the cycle runs fast. */
+  /** Hold back the suit's sparks and smoke while the cycle is seeked under the dip. */
   muteFx(muted: boolean): void;
-  /** The launch frame: check clock, climb over the hover (m), boot burn floor, effects clock. */
+  /** The launch frame: check clock (its sounds as it plays on), climb over the hover (m), boot burn floor, effects clock. */
   poseLaunch(check: number, climb: number, burn: number, fx: number): void;
   /** Mast heads clear (0–1), roof iris (0–1), daylight down the shaft (0–1). */
   setRoof(s: { masts: number; iris: number; daylight: number }): void;
@@ -93,6 +94,7 @@ function buildOverlay(): HTMLElement {
   el.setAttribute('aria-hidden', 'true');
   const ticks = Array.from({ length: 13 }, (_, i) => `<i style="--i:${i}"></i>`).join('');
   el.innerHTML = `
+    <div class="ho-dip"></div>
     <div class="ho-flare"></div>
     <div class="ho-hud">
       <span class="ho-corner ho-tl"></span><span class="ho-corner ho-tr"></span>
@@ -194,17 +196,21 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
   /** Boots this far over the deck as the flight sim takes the picture (m). */
   const EXIT_BOOTS = 0.85;
   let cues: Array<{ at: number; run: () => void }> = [];
-  /** The run to the hover is over: the status line says what comes next. */
-  let armed = false;
-  /** The suit's sparks and smoke held back for the run. */
+  /** The suit's sparks and smoke held back under the dip. */
   let fxMuted = false;
+  /** The cut has been made. */
+  let cutDone = false;
+  /** Roof as far as it has got (a skip mid wait never takes it back). */
+  const roofNow = { masts: 0, iris: 0, daylight: 0 };
   const status = overlay.querySelector<HTMLElement>('.ho-status')!;
-  /** What JARVIS is doing first, by where the click came. */
-  const RUN_LINE: Record<LaunchFrom, string> = {
-    build: 'EXPEDITING SUIT-UP · ARMING FLIGHT SYSTEMS',
-    check: 'SKIPPING TO THE HOVER TEST',
-    hover: 'FLIGHT SYSTEMS ARMED · OPENING THE BAY',
-    after: 'REASSEMBLING · BACK INTO THE HOVER',
+  const setStatus = (line: string) => {
+    if (status.textContent !== line) status.textContent = line;
+  };
+  /** What JARVIS says through the run to the hover. */
+  const statusLine = (p: LaunchPlan) => {
+    if (t >= p.ready) return 'FLIGHT SYSTEMS ARMED · OPENING THE BAY';
+    if (p.mode === 'wait') return `LAUNCH ARMED · T−${String(Math.ceil(p.ready - t)).padStart(2, '0')} · CLICK TO GO NOW`;
+    return p.cut !== null && t >= p.cut ? 'BOOT THRUSTERS · LIFT-OFF' : 'ARMING FLIGHT SYSTEMS';
   };
 
   let active = false;
@@ -421,18 +427,27 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
     const p = plan!;
     while (cues.length && t >= cues[0].at) cues.shift()!.run();
     if (!retired) {
-      if (t < p.ready) {
+      if (p.cut !== null && t < p.cut) {
+        // The cycle plays on as the picture dips
         if (!fxMuted) w.muteFx((fxMuted = true));
         w.seekCycle(cycleAt(p, t));
       } else {
-        if (fxMuted) w.muteFx((fxMuted = false));
-        if (!armed) {
-          armed = true;
-          status.textContent = 'FLIGHT SYSTEMS ARMED · OPENING THE BAY';
+        if (p.cut !== null && !cutDone) {
+          // The cut: the suit on the pad, palms to the deck
+          cutDone = true;
+          w.seekCycle(p.assembly + p.check0);
+          overlay.classList.remove('is-dip');
         }
+        if (fxMuted) w.muteFx((fxMuted = false));
         w.poseLaunch(checkAt(p, t), climbAt(p, t), burnAt(p, t), p.from + t);
       }
-      w.setRoof(roofAt(p, t));
+      if (p.mode === 'wait' && t >= p.ready - 1.5) dropSkip();
+      setStatus(statusLine(p));
+      const r = roofAt(p, t);
+      roofNow.masts = Math.max(roofNow.masts, r.masts);
+      roofNow.iris = Math.max(roofNow.iris, r.iris);
+      roofNow.daylight = Math.max(roofNow.daylight, r.daylight);
+      w.setRoof(roofNow);
       w.headPoint(headNow);
       const cam = w.camera;
       workshopLens(p, t, headNow, yawW, lensFrom, lensOut);
@@ -587,6 +602,47 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
     }
   };
 
+  /** Take the launch from here on (`t` from 0), the lens from where it is now. */
+  const startPlan = (p: LaunchPlan) => {
+    const w = ws!;
+    const cam = w.camera;
+    plan = p;
+    t = 0;
+    cutDone = false;
+    setStatus(statusLine(p));
+    if (p.cut !== null) overlay.classList.add('is-dip');
+    lensFrom.pos.copy(cam.position);
+    w.headPoint(rootW);
+    lensFrom.look.copy(cam.position).addScaledVector(cam.getWorldDirection(tmp), cam.position.distanceTo(rootW));
+    lensFrom.fov = cam.fov;
+    // The library's own: mast heads, the iris unlatching and drawing back, the boots
+    cues = [
+      ...(roofNow.masts < 1 ? [{ at: p.masts, run: () => w.cue('metal-sliding.mp3', { duration: 0.7, volume: 0.45, fadeOut: 0.3 }) }] : []),
+      { at: p.irisFrom, run: () => w.cue('unclamp.mp3', { duration: 0.9, volume: 0.6, fadeOut: 0.3 }) },
+      { at: p.irisFrom + 0.2, run: () => w.cue('metal-sliding.mp3', { duration: 1.4, volume: 0.6, fadeOut: 0.5 }) },
+      { at: p.irisOpen - 0.3, run: () => w.cue('steam-release.mp3', { duration: 1.6, volume: 0.4, fadeOut: 0.8 }) },
+      { at: p.climb - 0.35, run: () => w.cue('thruster-ignite.mp3', { duration: 1.2, volume: 0.8, fadeOut: 0.4 }) },
+      { at: p.climb - 0.05, run: () => w.cue('thruster-burn.mp3', { duration: CLIMB_SEC + 1.2, volume: 0.9, fadeIn: 0.15, fadeOut: 0.9 }) },
+    ];
+    if (p.mode === 'wait') {
+      window.addEventListener('pointerdown', skip);
+      window.addEventListener('keydown', skip);
+    }
+  };
+
+  /** Armed and waiting on the check: a click (or a key) goes now, by the cut. */
+  const skip = (e: Event) => {
+    if (e instanceof KeyboardEvent && (e.repeat || !['Enter', ' ', 'Spacebar'].includes(e.key))) return;
+    const p = plan;
+    dropSkip();
+    if (!p || p.mode !== 'wait' || retired || t >= p.ready - 1.5) return;
+    startPlan(launchPlan(cycleAt(p, t), p.assembly, true));
+  };
+  const dropSkip = () => {
+    window.removeEventListener('pointerdown', skip);
+    window.removeEventListener('keydown', skip);
+  };
+
   const begin = () => {
     if (active || !ws) return;
     active = true;
@@ -601,28 +657,7 @@ export function createFlightHandoff(opts: { reducedMotion: boolean }) {
     ws.freeze();
     const cam = ws.camera;
     const cyc = rm ? null : ws.cycle();
-    if (cyc) {
-      plan = launchPlan(cyc.t, cyc.assembly);
-      status.textContent = RUN_LINE[plan.kind];
-      armed = plan.kind === 'hover';
-      lensFrom.pos.copy(cam.position);
-      ws.headPoint(rootW);
-      lensFrom.look.copy(cam.position).addScaledVector(cam.getWorldDirection(tmp), cam.position.distanceTo(rootW));
-      lensFrom.fov = cam.fov;
-      const p = plan;
-      const w = ws;
-      // The library's own: mast heads, the iris unlatching and drawing back, the boots
-      cues = [
-        // A long run (the build or the doff): the cell's motors under it
-        ...(p.ready > 1.2 && p.kind !== 'hover' ? [{ at: 0.1, run: () => w.cue('robot-movement.mp3', { duration: p.ready, volume: 0.45, fadeIn: 0.3, fadeOut: 0.6 }) }] : []),
-        { at: p.masts, run: () => w.cue('metal-sliding.mp3', { duration: 0.7, volume: 0.45, fadeOut: 0.3 }) },
-        { at: p.irisFrom, run: () => w.cue('unclamp.mp3', { duration: 0.9, volume: 0.6, fadeOut: 0.3 }) },
-        { at: p.irisFrom + 0.2, run: () => w.cue('metal-sliding.mp3', { duration: 1.4, volume: 0.6, fadeOut: 0.5 }) },
-        { at: p.irisOpen - 0.3, run: () => w.cue('steam-release.mp3', { duration: 1.6, volume: 0.4, fadeOut: 0.8 }) },
-        { at: p.climb - 0.35, run: () => w.cue('thruster-ignite.mp3', { duration: 1.2, volume: 0.8, fadeOut: 0.4 }) },
-        { at: p.climb - 0.05, run: () => w.cue('thruster-burn.mp3', { duration: CLIMB_SEC + 1.2, volume: 0.9, fadeIn: 0.15, fadeOut: 0.9 }) },
-      ];
-    }
+    if (cyc) startPlan(launchPlan(cyc.t, cyc.assembly));
     camFrom.copy(cam.position);
     ws.headPoint(rootW);
     lookFrom.copy(cam.position).addScaledVector(cam.getWorldDirection(tmp), cam.position.distanceTo(rootW));

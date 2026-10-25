@@ -190,6 +190,7 @@ export interface AssemblySession {
    * The flight handoff's launch, with the session off the clock: the check
    * posed at `t` (the doff prep with it), the suit `climb` m higher and the
    * boots burning at least `burn`; `fx` is the effects clock (flicker).
+   * The check's sounds fire as its clock plays on.
    */
   poseLaunch: (t: number, climb: number, burn: number, fx: number) => void;
 }
@@ -1352,6 +1353,9 @@ export function createAssemblySession(
       f.thrusterL = Math.max(f.thrusterL, burn);
       f.thrusterR = Math.max(f.thrusterR, burn);
       suit.setFlightCheck(f, fx);
+      // The check's own sounds as it plays on (a seek onto it starts the run clean)
+      cues.between(flightSfx, lastFlightT, t);
+      lastFlightT = t;
       workshop?.prepareDoff(Math.max(0, (t - DOFF_PREP_FROM) / (SHOWCASE_TURN_SEC - DOFF_PREP_FROM)));
     },
   };
