@@ -226,9 +226,9 @@ export class Combat {
     return d;
   }
 
-  /** A frigate on patrol offshore of the suit. */
-  spawnFrigate(): Frigate {
-    const f = new Frigate(this.field, this.model.pos);
+  /** A frigate on patrol offshore of the suit (or of another stretch of coast). */
+  spawnFrigate(near: THREE.Vector3 = this.model.pos): Frigate {
+    const f = new Frigate(this.field, near);
     this.ships.push(f);
     this.hostiles.push(...f.parts);
     hazeAll(f.mesh, this.hazeUniforms);

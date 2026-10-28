@@ -9,7 +9,8 @@ import './render/shaderGuards';
 import { portraitZoom, viewportSize, wideZoom } from './render/viewport';
 import { Game } from './sim/game';
 import { DEFAULT_CAMERA } from './sim/cameraRig';
-import { Director } from './sim/director';
+import { Director, type Reel } from './sim/director';
+import { FrigateReel } from './sim/frigateReel';
 import { Input, type Controls } from './sim/input';
 import { Upgrades } from './sim/upgrades';
 import { Hud } from './ui/hud';
@@ -42,6 +43,8 @@ export interface FlightAppOptions {
   embedded?: boolean;
   /** Cap on the drawing-buffer pixel ratio. */
   maxPixelRatio?: number;
+  /** A fixed drawing-buffer pixel ratio (captures: supersampled, never gauged down). */
+  pixelRatio?: number;
 }
 
 /** Main-thread cost of each build step (ms), for the boot log and the handoff stats. */
@@ -77,7 +80,7 @@ export class FlightApp {
   touch: TouchControls | null = null;
   /** Opens the pause menu (wired by src/flight/ui/flightSettings.ts). */
   pauseMenu: () => void = () => {};
-  director: Director | null = null;
+  director: Reel | null = null;
   lens!: LensState;
   /** The pilot has the stick (title / handoff are over). */
   engaged = false;
@@ -135,7 +138,7 @@ export class FlightApp {
         return d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : '';
       })(),
     );
-    this.maxDpr = Math.min(window.devicePixelRatio, opts.maxPixelRatio ?? 1.5);
+    this.maxDpr = opts.pixelRatio ?? Math.min(window.devicePixelRatio, opts.maxPixelRatio ?? 1.5);
     r.setPixelRatio(this.maxDpr);
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -239,7 +242,8 @@ export class FlightApp {
     // ?demo plays the directed reel live; ?capture steps it frame by frame
     if (!this.opts.embedded) {
       const capture = q.has('capture');
-      this.director = capture || q.has('demo') ? new Director(game) : null;
+      const reel = q.get('reel') === 'frigate' ? FrigateReel : Director;
+      this.director = capture || q.has('demo') ? new reel(game) : null;
       this.engaged = q.has('fly') || !!this.director;
     }
     game.rig.mode = this.engaged && !this.director ? DEFAULT_CAMERA : 'attract';
@@ -325,7 +329,7 @@ export class FlightApp {
       await this.step(`settle${i}`, () => this.frame(1 / 60));
       console.info(`[flight] settle frame ${i}: ${this.timings[`settle${i}`]} ms`);
     }
-    await this.step('gauge', () => this.gaugeResolution());
+    if (!this.opts.pixelRatio) await this.step('gauge', () => this.gaugeResolution());
   }
 
   /**

@@ -1,6 +1,6 @@
 import './screens.css';
 import { isTouchDevice } from '../sim/touchMath';
-import { UPGRADES, type RefitRefusal, type Upgrades } from '../sim/upgrades';
+import { MAX_LEVEL, UPGRADES, type RefitRefusal, type Upgrades } from '../sim/upgrades';
 import { deviceProfile, type DeviceTier } from '../../scene/deviceProfile';
 
 /**
@@ -11,7 +11,7 @@ import { deviceProfile, type DeviceTier } from '../../scene/deviceProfile';
  * controls reference (ground and flight), audio levels (master, effects,
  * JARVIS's voice) and a graphics preset. The same glass opens as the R&D
  * refit bay on the pad (or with the suit lost): the suit's upgrades,
- * bought with the sim held, and nothing else. Mouse, keyboard
+ * bought a level at a time with the sim held, and nothing else. Mouse, keyboard
  * (arrows, Enter, Esc) and gamepad (D-pad / left stick, A, B, Start) drive
  * both; every setting persists in localStorage. Styles: ./screens.css.
  */
@@ -116,7 +116,8 @@ export interface RefitMenu {
 
 const REFUSAL: Record<Exclude<RefitRefusal, null>, string> = {
   cost: 'NOT ENOUGH R&D',
-  owned: 'ALREADY FITTED',
+  max: 'FULLY UPGRADED',
+  locked: 'CLEAR A DEEPER WAVE TO UNLOCK THE NEXT LEVEL',
 };
 
 /** The title's quick start: enough to get off the pad (ESC has the rest). */
@@ -374,7 +375,7 @@ export class Screens {
       if (!row || !this.refitMenu) return;
       if (target.closest('[data-buy]') || t.detail === 0) {
         const up = UPGRADES.find((x) => x.id === row.dataset.up)!;
-        this.refit((u) => u.buy(up.id), `${up.name} FITTED`);
+        this.refit((u) => u.buy(up.id), `${up.name} · LEVEL ${this.refitMenu.upgrades.state.level[up.id] + 1} FITTED`);
       }
       row.focus();
     });
@@ -442,7 +443,7 @@ export class Screens {
     this.renderRefit();
   }
 
-  /** The R&D pane: points and upgrades fitted up top, then a row per upgrade. */
+  /** The R&D pane: points, levels fitted and the wave record up top, then a row per system. */
   private renderRefit(): void {
     const m = this.refitMenu;
     if (!m) return;
@@ -454,24 +455,39 @@ export class Screens {
     const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.rd-row')?.dataset.up;
     const padFocus = !!pane.querySelector('.pad-focus');
     const rowsHtml = UPGRADES.map((up) => {
-      const owned = u.state.owned[up.id];
-      // Each line: stock → fitted, or what it is now once fitted
+      const level = u.state.level[up.id];
+      const cost = u.cost(up.id);
+      const lock = u.lockedUntil(up.id);
+      const pips = Array.from({ length: MAX_LEVEL }, (_, i) => `<i class="rd-pip${i < level ? ' on' : ''}"></i>`).join('');
+      // Each line: now → what the next level would make it
       const stats = up.stats
-        .map(([label, stock, fitted]) => `<span><small>${esc(label)}</small>${owned ? esc(fitted) : `${esc(stock)}${stock !== fitted ? `<em>&#x2192; ${esc(fitted)}</em>` : ''}`}</span>`)
+        .map(([label, show]) => {
+          const now = show(level);
+          const then = cost !== null ? show(level + 1) : null;
+          return `<span><small>${esc(label)}</small>${esc(now)}${then && then !== now ? `<em>&#x2192; ${esc(then)}</em>` : ''}</span>`;
+        })
         .join('');
-      const afford = u.state.rd >= up.cost;
-      const buy = owned ? '<span class="rd-max">FITTED</span>' : `<button class="rd-buy${afford && !gate ? '' : ' dim'}" data-buy tabindex="-1">${up.cost}<small>R&amp;D</small></button>`;
-      return `<div class="rd-row${owned ? ' owned' : ''}" tabindex="0" data-up="${up.id}" aria-label="${esc(up.name)}: ${owned ? 'fitted' : `${up.cost} R&D`}">
+      const afford = cost !== null && lock === null && u.state.rd >= cost;
+      const buy =
+        cost === null
+          ? '<span class="rd-max">MAX</span>'
+          : lock !== null
+            ? `<span class="rd-lock">CLEAR WAVE ${lock}</span>`
+            : `<button class="rd-buy${afford && !gate ? '' : ' dim'}" data-buy tabindex="-1">${cost}<small>R&amp;D</small></button>`;
+      const label = cost === null ? 'maxed' : lock !== null ? `next level needs wave ${lock} cleared` : `next level ${cost} R&D`;
+      return `<div class="rd-row${cost === null ? ' owned' : ''}" tabindex="0" data-up="${up.id}" aria-label="${esc(up.name)}: level ${level} of ${MAX_LEVEL}, ${label}">
         <div class="rd-name">${esc(up.name)}<small>${esc(up.part)}</small></div>
+        <div class="rd-pips">${pips}</div>
         <div class="rd-buyc">${buy}</div>
         <div class="rd-stats">${stats}</div>
       </div>`;
     }).join('');
-    const hint = this.touch ? 'TAP THE PRICE TO BUY' : 'ENTER BUYS';
+    const hint = this.touch ? 'TAP THE PRICE TO BUY THE NEXT LEVEL' : 'ENTER BUYS THE NEXT LEVEL';
     pane.innerHTML = `
       <div class="rd-top">
         <div class="rd-stat"><small>R&amp;D</small><b>${u.state.rd}</b></div>
-        <div class="rd-stat"><small>FITTED</small><b>${u.fitted}/${UPGRADES.length}</b></div>
+        <div class="rd-stat"><small>LEVELS</small><b>${u.fitted}/${UPGRADES.length * MAX_LEVEL}</b></div>
+        <div class="rd-stat"><small>BEST WAVE</small><b>${u.state.best}</b></div>
       </div>
       <p class="fp-note rd-gate${gate ? ' shut' : ''}">${esc(this.refitMsg || gate || '')}${this.refitMsg || gate ? '' : hint}</p>
       <div class="rd-rows">${rowsHtml}</div>`;

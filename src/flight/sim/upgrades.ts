@@ -2,8 +2,10 @@ import type { SimEvent } from './events';
 
 /**
  * R&D: the suit's upgrades. Points are earned in the air (kills, cleared
- * waves, clean pad landings, decoyed seekers) and spent on the pad: one
- * upgrade per system, eight in all, each bought once and fitted for good.
+ * waves, clean pad landings, decoyed seekers) and spent on the pad: eight
+ * systems, each fitted a level at a time up to five. Every level costs more
+ * than the last, and the higher ones stay locked until the pilot has cleared
+ * a deep enough wave.
  *
  * The systems read their numbers through a {@link SuitSpec}: multipliers on
  * their own tuning constants (1 = the stock Mark III), so a suit with
@@ -71,153 +73,190 @@ export const STOCK_SPEC = (): SuitSpec => ({
 
 export type UpgradeId = 'armour' | 'reactor' | 'repulsors' | 'missiles' | 'launchers' | 'flares' | 'propulsion' | 'sensors';
 
-/** One line of what an upgrade does: its label, stock and fitted. */
-type Stat = [label: string, stock: string, fitted: string];
+/** One line of what an upgrade does: its label, and the value at a level (0 = stock). */
+type Stat = [label: string, show: (level: number) => string];
 
 export interface Upgrade {
   id: UpgradeId;
   name: string;
   /** Where on the suit it lives. */
   part: string;
-  /** R&D price. */
-  cost: number;
+  /** R&D price of each level, first to last. */
+  costs: readonly number[];
   stats: Stat[];
-  /** Writes the upgrade's effect into the spec. */
-  apply: (spec: SuitSpec) => void;
+  /** Writes the upgrade's effect at a level (1 to {@link MAX_LEVEL}) into the spec. */
+  apply: (spec: SuitSpec, level: number) => void;
 }
+
+/** Levels in every system. */
+export const MAX_LEVEL = 5;
+/**
+ * The best wave the pilot must have cleared before each level can be fitted:
+ * points alone don't buy a Mark V, it has to be earned the hard way.
+ */
+export const LEVEL_GATE: readonly number[] = [0, 2, 4, 6, 8];
+/** Each level's price, as a multiple of the first. */
+const LADDER = [1, 1.8, 3, 4.5, 6.5];
+const ladder = (base: number) => LADDER.map((k) => Math.round((base * k) / 10) * 10);
+/** Stock at level 0 to `max` at the top level, in even steps. */
+const step = (stock: number, max: number) => (level: number) => stock + ((max - stock) * level) / MAX_LEVEL;
 
 /** Where the airfoils ice with the stock boots (m; flightModel's ICING_ALT, kept here to spare it a cycle). */
 const ICING_ALT = 9000;
 
-const pct = (k: number) => `${k > 0 ? '+' : '−'}${Math.round(Math.abs(k) * 100)}%`;
+const pct = (k: number) => (Math.abs(k) < 0.005 ? 'STOCK' : `${k > 0 ? '+' : '−'}${Math.round(Math.abs(k) * 100)}%`);
 const km = (m: number) => `${m.toFixed(1)} km`;
 const sec = (v: number, d = 1) => `${v.toFixed(d)} s`;
 
+const armourTaken = step(1, 0.6);
+const armourDelay = step(1, 0.6);
+/** Reboots on top of the stock one, by level. */
+const ARMOUR_RESERVES = [0, 0, 1, 1, 1, 2];
+const beamTime = step(1, 1.8);
+const beamCool = step(1, 0.6);
+const regen = step(1, 1.8);
+const boltDamage = step(1, 1.6);
+const boltInterval = step(1, 0.65);
+const missileLock = step(1, 0.6);
+const missileRange = step(1, 1.45);
+const podReload = step(1, 0.55);
+const bayReload = step(1, 0.55);
+const bayLock = step(1, 0.55);
+const bayRange = step(1, 1.4);
+/** Flares carried, by level (the stock drum holds 64). */
+const FLARES = [64, 72, 80, 96, 112, 128];
+const flareRestock = step(1, 0.5);
+const thrust = step(1, 1.3);
+const topSpeed = step(1, 1.35);
+const icing = step(0, 3000);
+const assist = step(1, 1.6);
+
 /**
- * The eight upgrades. A first wave or two pays for the cheap ones; the
- * whole set takes a long run.
+ * The eight systems, five levels each. A first wave buys a first level of
+ * something cheap; maxing the suit takes many long runs and a record of
+ * deep waves to show for them.
  */
 export const UPGRADES: readonly Upgrade[] = [
   {
     id: 'armour',
     name: 'ARMOUR',
     part: 'PLATING',
-    cost: 300,
+    costs: ladder(300),
     stats: [
-      ['DAMAGE TAKEN', 'STOCK', pct(-0.25)],
-      ['RESERVES', '1', '2'],
-      ['REGEN AFTER', sec(6), sec(6 * 0.7)],
+      ['DAMAGE TAKEN', (l) => pct(armourTaken(l) - 1)],
+      ['RESERVES', (l) => `${1 + ARMOUR_RESERVES[l]}`],
+      ['REGEN AFTER', (l) => sec(6 * armourDelay(l))],
     ],
-    apply: (s) => {
-      s.damageTaken = 0.75;
-      s.reserves = 1;
-      s.regenDelay = 0.7;
+    apply: (s, l) => {
+      s.damageTaken = armourTaken(l);
+      s.reserves = ARMOUR_RESERVES[l];
+      s.regenDelay = armourDelay(l);
     },
   },
   {
     id: 'reactor',
     name: 'ARC REACTOR',
     part: 'CHEST',
-    cost: 300,
+    costs: ladder(300),
     stats: [
-      ['UNIBEAM', sec(4), sec(4 * 1.5)],
-      ['BEAM COOL', sec(7), sec(7 * 0.7)],
-      ['ARMOUR REGEN', 'STOCK', pct(0.5)],
+      ['UNIBEAM', (l) => sec(4 * beamTime(l))],
+      ['BEAM COOL', (l) => sec(7 * beamCool(l))],
+      ['ARMOUR REGEN', (l) => pct(regen(l) - 1)],
     ],
-    apply: (s) => {
-      s.unibeamTime = 1.5;
-      s.unibeamCool = 0.7;
-      s.regenRate = 1.5;
+    apply: (s, l) => {
+      s.unibeamTime = beamTime(l);
+      s.unibeamCool = beamCool(l);
+      s.regenRate = regen(l);
     },
   },
   {
     id: 'repulsors',
     name: 'REPULSORS',
     part: 'PALMS',
-    cost: 250,
+    costs: ladder(250),
     stats: [
-      ['BOLT DAMAGE', 'STOCK', pct(0.35)],
-      ['RATE OF FIRE', 'STOCK', pct(1 / 0.75 - 1)],
+      ['BOLT DAMAGE', (l) => pct(boltDamage(l) - 1)],
+      ['RATE OF FIRE', (l) => pct(1 / boltInterval(l) - 1)],
     ],
-    apply: (s) => {
-      s.repulsorDamage = 1.35;
-      s.repulsorInterval = 0.75;
+    apply: (s, l) => {
+      s.repulsorDamage = boltDamage(l);
+      s.repulsorInterval = boltInterval(l);
     },
   },
   {
     id: 'missiles',
     name: 'MICRO-MISSILES',
     part: 'SHOULDERS',
-    cost: 250,
+    costs: ladder(250),
     stats: [
-      ['PAINT TIME', 'STOCK', pct(-0.3)],
-      ['REACH', km(3.2), km(3.2 * 1.3)],
-      ['POD RELOAD', 'STOCK', pct(-0.35)],
+      ['PAINT TIME', (l) => pct(missileLock(l) - 1)],
+      ['REACH', (l) => km(3.2 * missileRange(l))],
+      ['POD RELOAD', (l) => pct(podReload(l) - 1)],
     ],
-    apply: (s) => {
-      s.missileLock = 0.7;
-      s.missileRange = 1.3;
-      s.rocketReload = 0.65;
+    apply: (s, l) => {
+      s.missileLock = missileLock(l);
+      s.missileRange = missileRange(l);
+      s.rocketReload = podReload(l);
     },
   },
   {
     id: 'launchers',
     name: 'FOREARM LAUNCHERS',
     part: 'FOREARMS',
-    cost: 250,
+    costs: ladder(250),
     stats: [
-      ['BAY RELOAD', 'STOCK', pct(-0.35)],
-      ['PAINT TIME', 'STOCK', pct(-0.35)],
-      ['REACH', km(4.5), km(4.5 * 1.25)],
+      ['BAY RELOAD', (l) => pct(bayReload(l) - 1)],
+      ['PAINT TIME', (l) => pct(bayLock(l) - 1)],
+      ['REACH', (l) => km(4.5 * bayRange(l))],
     ],
-    apply: (s) => {
-      s.launcherReload = 0.65;
-      s.launcherLock = 0.65;
-      s.launcherRange = 1.25;
+    apply: (s, l) => {
+      s.launcherReload = bayReload(l);
+      s.launcherLock = bayLock(l);
+      s.launcherRange = bayRange(l);
     },
   },
   {
     id: 'flares',
     name: 'COUNTERMEASURES',
     part: 'HIPS',
-    cost: 150,
+    costs: ladder(150),
     stats: [
-      ['FLARES', '64', '96'],
-      ['RESTOCK', sec(1, 2), sec(0.65, 2)],
+      ['FLARES', (l) => `${FLARES[l]}`],
+      ['RESTOCK', (l) => sec(flareRestock(l), 2)],
     ],
-    apply: (s) => {
-      s.flareMag = 1.5;
-      s.flareRestock = 0.65;
+    apply: (s, l) => {
+      s.flareMag = FLARES[l] / FLARES[0];
+      s.flareRestock = flareRestock(l);
     },
   },
   {
     id: 'propulsion',
     name: 'PROPULSION',
     part: 'BOOTS',
-    cost: 400,
+    costs: ladder(400),
     stats: [
-      ['BOOST THRUST', 'STOCK', pct(0.2)],
-      ['TOP SPEED', 'M 1.50', `M ${(1.5 * 1.25).toFixed(2)}`],
-      ['ICES AT', km(ICING_ALT / 1000), km((ICING_ALT + 1500) / 1000)],
+      ['BOOST THRUST', (l) => pct(thrust(l) - 1)],
+      ['TOP SPEED', (l) => `M ${(1.5 * topSpeed(l)).toFixed(2)}`],
+      ['ICES AT', (l) => km((ICING_ALT + icing(l)) / 1000)],
     ],
-    apply: (s) => {
-      s.boostThrust = 1.2;
-      s.boostSpeed = 1.25;
-      s.icingLift = 1500;
+    apply: (s, l) => {
+      s.boostThrust = thrust(l);
+      s.boostSpeed = topSpeed(l);
+      s.icingLift = icing(l);
     },
   },
   {
     id: 'sensors',
     name: 'SENSORS',
     part: 'HELMET',
-    cost: 150,
+    costs: ladder(150),
     stats: [
-      ['ASSIST RANGE', km(1.8), km(1.8 * 1.35)],
-      ['ASSIST CONE', '4.5°', `${(4.5 * 1.35).toFixed(1)}°`],
+      ['ASSIST RANGE', (l) => km(1.8 * assist(l))],
+      ['ASSIST CONE', (l) => `${(4.5 * assist(l)).toFixed(1)}°`],
     ],
-    apply: (s) => {
-      s.assistRange = 1.35;
-      s.assistCone = 1.35;
+    apply: (s, l) => {
+      s.assistRange = assist(l);
+      s.assistCone = assist(l);
     },
   },
 ];
@@ -245,14 +284,16 @@ export const LANDING_MIN_AIR = 30;
 
 export interface UpgradeState {
   rd: number;
-  /** Upgrades fitted. */
-  owned: Record<UpgradeId, boolean>;
+  /** Each system's level fitted (0 = stock). */
+  level: Record<UpgradeId, number>;
   /** All the R&D ever earned (for the record). */
   earned: number;
+  /** The deepest wave ever cleared: what unlocks the higher levels. */
+  best: number;
 }
 
-const none = (): Record<UpgradeId, boolean> => Object.fromEntries(UPGRADES.map((u) => [u.id, false])) as Record<UpgradeId, boolean>;
-export const FRESH_STATE = (): UpgradeState => ({ rd: 0, owned: none(), earned: 0 });
+const none = (): Record<UpgradeId, number> => Object.fromEntries(UPGRADES.map((u) => [u.id, 0])) as Record<UpgradeId, number>;
+export const FRESH_STATE = (): UpgradeState => ({ rd: 0, level: none(), earned: 0, best: 0 });
 
 /** The storage the ledger keeps itself in (localStorage in the page). */
 export interface Store {
@@ -263,7 +304,7 @@ export interface Store {
 const STORE = 'mk3-flight-rd';
 
 /** Why a purchase was refused, or null when it went through. */
-export type RefitRefusal = 'cost' | 'owned' | null;
+export type RefitRefusal = 'cost' | 'max' | 'locked' | null;
 
 export class Upgrades {
   readonly state: UpgradeState;
@@ -288,25 +329,44 @@ export class Upgrades {
     this.changed.push(fn);
   }
 
-  /** Upgrades fitted so far. */
+  /** Levels fitted so far, across every system. */
   get fitted(): number {
-    return UPGRADES.filter((u) => this.state.owned[u.id]).length;
+    return UPGRADES.reduce((n, u) => n + this.state.level[u.id], 0);
   }
 
-  /** Some upgrade not yet fitted is within the points banked. */
+  /** Some system's next level is unlocked and within the points banked. */
   get affordable(): boolean {
-    return UPGRADES.some((u) => !this.state.owned[u.id] && u.cost <= this.state.rd);
+    return UPGRADES.some((u) => this.why(u.id) === null);
   }
 
-  /** Buys and fits an upgrade. */
+  /** The next level's price, or null with the system maxed. */
+  cost(id: UpgradeId): number | null {
+    const l = this.state.level[id];
+    return l < MAX_LEVEL ? UPGRADES.find((u) => u.id === id)!.costs[l] : null;
+  }
+
+  /** The wave still to clear before the next level unlocks, or null when it's open (or maxed). */
+  lockedUntil(id: UpgradeId): number | null {
+    const l = this.state.level[id];
+    return l < MAX_LEVEL && this.state.best < LEVEL_GATE[l] ? LEVEL_GATE[l] : null;
+  }
+
+  /** Buys and fits a system's next level. */
   buy(id: UpgradeId): RefitRefusal {
-    const up = UPGRADES.find((u) => u.id === id)!;
-    if (this.state.owned[id]) return 'owned';
-    if (this.state.rd < up.cost) return 'cost';
-    this.state.rd -= up.cost;
-    this.state.owned[id] = true;
+    const no = this.why(id);
+    if (no) return no;
+    this.state.rd -= this.cost(id)!;
+    this.state.level[id]++;
     this.commit();
     return null;
+  }
+
+  /** Why the next level can't be bought now, or null when it can. */
+  private why(id: UpgradeId): RefitRefusal {
+    const cost = this.cost(id);
+    if (cost === null) return 'max';
+    if (this.lockedUntil(id) !== null) return 'locked';
+    return this.state.rd < cost ? 'cost' : null;
   }
 
   earn(points: number, reason: string): void {
@@ -334,6 +394,8 @@ export class Upgrades {
         break;
       case 'waveClear': {
         const n = e.value ?? 1;
+        // (the record moves before the payout, so the bay sees it as the points land)
+        this.state.best = Math.max(this.state.best, n);
         const pts = AWARD.waveBase + AWARD.wave * n;
         this.earn(this.hitThisWave ? pts : Math.round(pts * 1.5), this.hitThisWave ? `WAVE ${n} CLEAR` : `WAVE ${n} · UNTOUCHED`);
         break;
@@ -375,7 +437,7 @@ export class Upgrades {
 
   private resolve(): void {
     Object.assign(this.spec, STOCK_SPEC());
-    for (const u of UPGRADES) if (this.state.owned[u.id]) u.apply(this.spec);
+    for (const u of UPGRADES) if (this.state.level[u.id] > 0) u.apply(this.spec, this.state.level[u.id]);
   }
 
   private commit(): void {
@@ -397,10 +459,10 @@ function safeStorage(): Store | null {
   }
 }
 
-/** The saved ledger, cleaned up: unknown upgrades dropped (a save from the tiered ledger keeps whatever had a tier bought). */
+/** The saved ledger, cleaned up: unknown upgrades dropped, levels clamped (a save from the buy-once ledger keeps each upgrade as its first level). */
 function load(store: Store | null): UpgradeState {
   const s = FRESH_STATE();
-  let saved: { rd?: unknown; earned?: unknown; owned?: Record<string, unknown> } | null = null;
+  let saved: { rd?: unknown; earned?: unknown; best?: unknown; level?: Record<string, unknown>; owned?: Record<string, unknown> } | null = null;
   try {
     saved = JSON.parse(store?.getItem(STORE) ?? 'null');
   } catch {
@@ -410,9 +472,10 @@ function load(store: Store | null): UpgradeState {
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(1e9, Math.max(0, Math.floor(v))) : 0);
   s.rd = num(saved.rd);
   s.earned = num(saved.earned);
+  s.best = num(saved.best);
   for (const u of UPGRADES) {
-    const v = saved.owned?.[u.id];
-    s.owned[u.id] = v === true || (typeof v === 'number' && v > 0);
+    const v = saved.level ? saved.level[u.id] : saved.owned?.[u.id];
+    s.level[u.id] = v === true ? 1 : Math.min(MAX_LEVEL, num(v));
   }
   return s;
 }

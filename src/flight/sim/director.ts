@@ -36,7 +36,17 @@ type Phase =
 
 const UP = new THREE.Vector3(0, 1, 0);
 
-export class Director {
+/** A directed reel: flies the suit by itself (?demo live, ?capture frame by frame). */
+export interface Reel {
+  readonly phase: string;
+  /** HUD visibility the reel wants. */
+  readonly hud: number;
+  /** Seconds the reel has run past its last beat (main stops it). */
+  readonly tail: number;
+  update(dt: number, c: Controls): void;
+}
+
+export class Director implements Reel {
   phase: Phase = 'title';
   private t = 0;
   private phaseT = 0;

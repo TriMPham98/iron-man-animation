@@ -96,12 +96,14 @@ export class GameAudio {
   private decoded = false;
   private paused = false;
   volume = 0.9;
+  /** Makes the context (a frame-stepped capture renders into an offline one). */
+  makeContext: () => BaseAudioContext = () => new AudioContext({ latencyHint: 'interactive' });
 
   constructor() {
     // Any gesture wakes a context the browser suspended (autoplay policy,
     // a context first made outside a gesture, an interrupted session)
     const wake = () => {
-      if (this.ctx && !this.paused && this.ctx.state !== 'running') void this.ctx.resume();
+      if (this.ctx instanceof AudioContext && !this.paused && this.ctx.state !== 'running') void this.ctx.resume();
     };
     for (const ev of ['pointerdown', 'keydown', 'touchend']) window.addEventListener(ev, wake, true);
   }
@@ -145,7 +147,7 @@ export class GameAudio {
 
   /** Create the context inside a user gesture, then decode everything. */
   unlock(): Promise<void> {
-    if (this.ctx && !this.paused && this.ctx.state !== 'running') void this.ctx.resume();
+    if (this.ctx instanceof AudioContext && !this.paused && this.ctx.state !== 'running') void this.ctx.resume();
     this.unlocking ??= this.create();
     return this.unlocking;
   }
@@ -159,7 +161,7 @@ export class GameAudio {
   }
 
   private async create(): Promise<void> {
-    const ctx = new AudioContext({ latencyHint: 'interactive' });
+    const ctx = this.makeContext() as AudioContext;
     this.ctx = ctx;
     this.master = ctx.createGain();
     this.master.gain.value = this.volume;

@@ -86,14 +86,14 @@ export class CameraRig {
   /** A fixed camera (directed shots): stays put until released. */
   private planted: THREE.Vector3 | null = null;
 
-  /** Hold the camera at a point, watching the suit (null releases it). */
-  plant(at: THREE.Vector3 | null): void {
+  /** Hold the camera at a point, watching the suit at `frac` of the frame (null releases it). */
+  plant(at: THREE.Vector3 | null, frac = 0.1): void {
     this.planted = at ? at.clone() : null;
     this.cut = true;
     if (at) {
       this.mode = 'flyby';
       this.flybyAt.copy(at);
-      this.frac = 0.1;
+      this.frac = frac;
       this.passedAt = -1;
       this.shotAge = 0;
     } else {
