@@ -31,6 +31,9 @@ FROM_KIT = {
     'ping-3': 'tap/kenney-impact-impact-metal-light-001',
     'ping-4': 'tap/kenney-impact-impact-metal-light-004',
     'flare-pop': 'thump/fs-405537-thud-2-wav-1',
+    # A seeker ripping past within a few tens of metres: a bright, fast air
+    # tear (hiss up to 12 kHz, peak at 0.13 s), laid over its motor's Doppler
+    'missile-pass': 'whoosh/fs-449988-whoosh-med-high-1',
 }
 # Openverse (Freesound CC0) finds from `sfx.py search`: prepared cut or raw
 # (source, start, length[, filter chain replacing the default fade + loudnorm])
@@ -40,6 +43,8 @@ FROM_SEARCH = {
     'splash-big': ('hit/ov-fce993b0.wav', 0, None),
     'sam-launch': ('whoosh/_raw/ov-86fcafec.mp3', 0.42, 5.2),
     'jet': ('transition/_raw/ov-7de6124e.mp3', 31.0, 8.5),
+    # "Missile firing": the motor lighting off the rail, a drone's seeker leaving
+    'missile-ignite': ('transition/_raw/ov-66c91db2.mp3', 0.0, 1.6),
 }
 # Cuts from the DCS World sonic boom video (game audio, not CC0: credited by
 # hand in CREDITS.md). Fetch its audio first:
@@ -114,6 +119,9 @@ LOOPS = {
     'trees': ('transition/_raw/ov-52de0164.mp3', 10.0, 22.0, 2.0),
     # Boots skimming the sea: white water thrashed up under the jets
     'spray': ('transition/_raw/ov-3295e370.mp3', 4.0, 12.0, 1.0),
+    # The same take's steady middle: a seeker's motor roaring in flight, its
+    # pitch steered by the closing speed as it comes in and goes by
+    'missile-motor': ('transition/_raw/ov-66c91db2.mp3', 0.4, 1.7, 0.4),
 }
 
 

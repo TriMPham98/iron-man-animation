@@ -21,11 +21,13 @@ deploy) come from the project library in `public/sounds/`.
 - `ping-3.mp3` — Kenney (kenney.nl), Impact Sounds (sound-layer kit id `tap/kenney-impact-impact-metal-light-001`, CC0)
 - `ping-4.mp3` — Kenney (kenney.nl), Impact Sounds (sound-layer kit id `tap/kenney-impact-impact-metal-light-004`, CC0)
 - `flare-pop.mp3` — "Thud 2.wav" by nebulasnails (sound-layer kit id `thump/fs-405537-thud-2-wav-1`, CC0)
+- `missile-pass.mp3` — "whoosh_med_high" by DJT4NN3R (sound-layer kit id `whoosh/fs-449988-whoosh-med-high-1`, CC0)
 - `gun.mp3` — "Machine Guns#1.wav" by ctobin (https://freesound.org/people/ctobin/sounds/436585), CC0
 - `splash.mp3` — "Big Splash.wav" by Bird_man (https://freesound.org/people/Bird_man/sounds/316744), CC0
 - `splash-big.mp3` — "5 meters dive.wav" by bruno.auzet (https://freesound.org/people/bruno.auzet/sounds/529794), CC0
 - `sam-launch.mp3` — "Tomahawk Missile Rocket Launch 2" by qubodup (https://freesound.org/people/qubodup/sounds/162379), CC0
 - `jet.mp3` — "Jet Flyby 1" by unfa (https://freesound.org/people/unfa/sounds/168079), CC0
+- `missile-ignite.mp3` — "Missile firing fl.mp3" by NHMWretched (https://freesound.org/people/NHMWretched/sounds/151858), CC0
 - `lock-tick.mp3` — "lock on" by SamsterBirdies (https://freesound.org/people/SamsterBirdies/sounds/467881), CC0
 - `rwr-pulse.mp3` — "Missile Lock Detected" by ryanconway (https://freesound.org/people/ryanconway/sounds/165504), CC0
 - `kill-confirm.mp3` — "Select, Granted 06.wav" by MATRIXXX_ (https://freesound.org/people/MATRIXXX_/sounds/523763), CC0
@@ -57,6 +59,7 @@ deploy) come from the project library in `public/sounds/`.
 - `surf.mp3` (looped) — "Waves of Hawaii" by florianreichelt (https://freesound.org/people/florianreichelt/sounds/450755), CC0
 - `trees.mp3` (looped) — "Wind forest slow shifts fairly strong trees bright Irving Nature Park 190929.flac" by TRP (https://freesound.org/people/TRP/sounds/574549), CC0
 - `spray.mp3` (looped) — "Huge Waterfall 2" by deleted_user_7146007 (https://freesound.org/people/deleted_user_7146007/sounds/383733), CC0
+- `missile-motor.mp3` (looped) — "Missile firing fl.mp3" by NHMWretched (https://freesound.org/people/NHMWretched/sounds/151858), CC0
 
 ## Not CC0
 

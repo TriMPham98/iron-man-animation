@@ -73,6 +73,11 @@ export const SFX = {
   splash: `${KIT}splash.mp3`,
   splashBig: `${KIT}splash-big.mp3`,
   samLaunch: `${KIT}sam-launch.mp3`,
+  // An enemy seeker: the motor lighting off the rail, its roar in flight,
+  // and the air torn open as one goes by close
+  missileIgnite: `${KIT}missile-ignite.mp3`,
+  missileMotor: `${KIT}missile-motor.mp3`,
+  missilePass: `${KIT}missile-pass.mp3`,
   wind: `${KIT}wind.mp3`,
   jet: `${KIT}jet.mp3`,
   jetLoop: `${KIT}jet-loop.mp3`,
@@ -89,6 +94,19 @@ export const SFX = {
 const BULLET_HITS = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `${KIT}bullet-hit-${i}.mp3`);
 /** A round going by within a few metres: its supersonic snap (whip cracks). */
 const BULLET_CRACKS = [1, 2, 3, 4].map((i) => `${KIT}bullet-crack-${i}.mp3`);
+
+type Seeker = Combat['missiles']['live'][number];
+
+/** Seekers heard by their motors past this (m): the nearest {@link MOTORS}. */
+const MOTOR_RANGE = 2000;
+const MOTORS = 3;
+/** A seeker going by inside this (m) tears the air past the ears. */
+const PASS_MISS = 45;
+/** Peaks into the pass takes (s): the bright tear, and the long body under it. */
+const PASS_PEAK = 0.135;
+const FLYBY_PEAK = 0.5;
+const FLYBY_RATE = 1.3;
+const ZERO = new THREE.Vector3();
 
 /** Points on the ring sampled round the ear for sea vs land. */
 const RING = 8;
@@ -157,6 +175,12 @@ export class Soundscape {
   /** The airstream shaking the flared brakes (X). */
   private buffet: Loop | null = null;
   private engines: Array<{ loop: Loop; id: number }> = [];
+  /** Motors on the nearest enemy seekers. */
+  private motors: Array<{ loop: Loop; s: Seeker | null }> = [];
+  /** Seekers already heard going by (one pass each). */
+  private readonly passed = new WeakSet<Seeker>();
+  private readonly _s = new THREE.Vector3();
+  private readonly _sv = new THREE.Vector3();
   /** The seeker painting targets (missiles, launchers): growl, then the solid tone. */
   private growl: Loop | null = null;
   private lockTone: Loop | null = null;
@@ -464,7 +488,7 @@ export class Soundscape {
         break;
       case 'enemyMissile':
         if (e.value === 1) A.play(SFX.samLaunch, { at, gain: 1, ref: 60, echo: 0.4 });
-        else A.play(SFX.rocket2, { at, gain: 0.9, rate: 0.85, ref: 40 });
+        else A.play(SFX.missileIgnite, { at, gain: 0.9, vary: 0.05, ref: 40, echo: 0.2 });
         break;
       case 'droneFlyby':
         A.play(SFX.flyby, { at, vel: this._v.set(0, 0, 0), gain: 0.9, ref: 25, vary: 0.05 });
@@ -584,6 +608,66 @@ export class Soundscape {
     this.lastClear = below;
   }
 
+  /**
+   * Enemy seekers heard for themselves, not only through the RWR: the
+   * motor's roar on the nearest three, louder and brighter as each closes,
+   * its pitch riding the closing speed — it climbs on the way in and drops
+   * as it goes by — and a near miss tearing the air past the ears, the peak
+   * of the tear laid on the closest approach.
+   */
+  private seekers(m: FlightModel, combat: Combat, cam: THREE.Camera): void {
+    const A = this.audio;
+    const ear = cam.position;
+    // (the ears ride the suit in its own views; a camera standing off is still)
+    const earVel = this.helmet ? m.vel : ZERO;
+    const near = combat.missiles.live
+      .filter((s) => s.team === 'enemy' && s.age > s.coast * 0.5)
+      .map((s) => ({ s, dist: s.pos.distanceTo(ear) }))
+      .filter((x) => x.dist < MOTOR_RANGE)
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, MOTORS);
+    for (const e of this.motors) {
+      if (!near.some((x) => x.s === e.s)) {
+        e.loop.stop();
+        e.s = null;
+      }
+    }
+    this.motors = this.motors.filter((e) => e.s);
+    for (const { s, dist } of near) {
+      let e = this.motors.find((x) => x.s === s);
+      if (!e) {
+        const loop = A.loop(SFX.missileMotor, { spatial: true, ref: 30 });
+        if (!loop) continue;
+        e = { loop, s };
+        this.motors.push(e);
+      }
+      // Doppler from both ends: the seeker running at the ears, the ears
+      // running from it (a chase from behind barely shifts)
+      const dir = this._s.copy(ear).sub(s.pos).divideScalar(Math.max(dist, 1e-3));
+      const toward = s.vel.dot(dir);
+      const fleeing = earVel.dot(dir);
+      const rate = THREE.MathUtils.clamp((SPEED_OF_SOUND - fleeing) / Math.max(60, SPEED_OF_SOUND - toward), 0.65, 1.6);
+      e.loop.place(s.pos);
+      e.loop.set(1.1 * (1 - dist / MOTOR_RANGE), rate, 18000 * Math.exp(-dist / 700) + 600);
+      // A near miss: where it passes closest, and how soon
+      if (this.passed.has(s)) continue;
+      const r = this._s.copy(s.pos).sub(ear);
+      const v = this._sv.copy(s.vel).sub(earVel);
+      const vv = v.lengthSq();
+      if (vv < 1) continue;
+      const tca = -r.dot(v) / vv;
+      if (tca < 0 || tca > FLYBY_PEAK / FLYBY_RATE) continue;
+      const miss = r.addScaledVector(v, tca).length();
+      // (a hit is the blast's to sound)
+      if (miss > PASS_MISS || miss < 3.5) continue;
+      this.passed.add(s);
+      const k = 1 - miss / PASS_MISS;
+      const at = this._s.copy(s.pos).addScaledVector(s.vel, tca);
+      A.play(SFX.missilePass, { at, propagate: false, ref: 8, gain: 0.5 + 0.7 * k, vary: 0.06, delay: Math.max(0, tca - PASS_PEAK), offset: Math.max(0, PASS_PEAK - tca) });
+      A.play(SFX.flyby, { at, propagate: false, ref: 8, gain: 0.6 * k, rate: FLYBY_RATE, offset: FLYBY_PEAK - tca * FLYBY_RATE });
+    }
+  }
+
   update(dt: number, m: FlightModel, combat: Combat, cam: THREE.Camera, helmet: boolean, beamOn: boolean): void {
     const A = this.audio;
     if (!A.ready) return;
@@ -696,6 +780,7 @@ export class Soundscape {
         this.lockT = 0;
       }
     }
+    this.seekers(m, combat, cam);
     // Engines on the nearest drones
     const near3 = combat.drones
       .filter((d) => d.alive)
