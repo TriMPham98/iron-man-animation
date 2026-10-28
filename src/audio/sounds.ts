@@ -48,8 +48,6 @@ export const SOUNDS: SoundDef[] = [
   { id: 'touchdown', label: 'Touchdown', file: 'touchdown.mp3' },
   { id: 'spark-crackle', label: 'Spark Crackle', file: 'spark-crackle.mp3' },
   { id: 'unclamp', label: 'Unclamp', file: 'unclamp.mp3' },
-  // The flight sim's chime for a JARVIS line, shared so both read the same
-  { id: 'jarvis-blip', label: 'JARVIS Blip', file: 'flight/jarvis-blip.mp3' },
 ];
 
 /**

@@ -4,7 +4,6 @@ import { STAND_RETRACT_SEC } from '../workshop/cradleStands';
 import { DOFF_ARM_STOW_SEC, doffArmStowAt, doffStandSinkAt, type DoffEvent } from '../animation/doffSequence';
 import { robotStation, type RobotId } from '../workshop/fittingProgram';
 import type { PlayRequest } from './engine';
-import { BINARY_INTERFACE_CLIP, BINARY_INTERFACE_CUES } from './binaryInterfaceCues';
 
 /**
  * Action sound layer: one-shots tied to what is moving on screen, on top
@@ -64,7 +63,6 @@ export const SFX_LENGTH: Record<string, number> = {
   'touchdown.mp3': 1.15,
   'spark-crackle.mp3': 0.84,
   'unclamp.mp3': 1.33,
-  'flight/jarvis-blip.mp3': 0.6,
 };
 
 /** Stable per-robot pitch so each arm has its own servo voice. */
@@ -120,14 +118,7 @@ export function assemblyCues(plan: SuitUpPlan): SfxCue[] {
     if (b.kind === 'sparks') cues.push({ t: b.t, file: 'spark-crackle.mp3', volume: 0.28 });
     else cues.push({ t: b.t, file: 'steam-hiss.mp3', volume: 0.3, pitch: 0.95 });
   }
-  // JARVIS's lines on the bottom ticker each land with the flight sim's
-  // text blip (unthinned: the scan train is one blip per line)
-  const jarvis = BINARY_INTERFACE_CUES.map((c) => ({
-    t: BINARY_INTERFACE_CLIP.seedStart + c.t,
-    file: 'flight/jarvis-blip.mp3',
-    volume: 0.3,
-  }));
-  return [...thin(cues), ...jarvis];
+  return thin(cues);
 }
 
 /**

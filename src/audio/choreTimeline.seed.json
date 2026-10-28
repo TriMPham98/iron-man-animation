@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "choreVersion": 10,
-  "note": "Director mix promoted 2026-10-20 — Binary Code Interface chatter removed (JARVIS ticker lines now carry the flight sim's text blip, see actionSfx); JARVIS Startup plays on INITIATE one-shot; clasp-long-conveyor −2.8 dB.",
+  "choreVersion": 11,
+  "note": "Director mix restored 2026-10-27 — Binary Code Interface chatter back under the JARVIS ticker (v10 blip reverted); JARVIS Startup removed from timeline (plays on INITIATE one-shot); clasp-long-conveyor −2.8 dB.",
   "clips": [
     {
       "id": "clip-seed-v5-01",
@@ -241,6 +241,21 @@
       "volume": 1,
       "fadeIn": 0,
       "fadeOut": 0,
+      "pitch": 1
+    },
+    {
+      "id": "clip-seed-v5-17",
+      "soundId": "binary-code-interface",
+      "label": "Binary Code Interface",
+      "file": "binary-code-interface.mp3",
+      "start": 12.075,
+      "cropIn": 0,
+      "cropOut": 5.925,
+      "sourceDuration": 98.037531,
+      "lane": 0,
+      "volume": 1,
+      "fadeIn": 0,
+      "fadeOut": 0.069,
       "pitch": 1
     },
     {
