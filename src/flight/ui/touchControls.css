@@ -140,7 +140,12 @@
 .tc-land-ready .tc-top .tc-land { display: block; animation: tc-wave-pulse 1.6s ease-in-out infinite; }
 .tc-top .tc-refit { width: auto; padding: 0 12px; display: none; border-color: rgba(255, 184, 77, calc(0.8 * var(--tc-alpha))); color: rgba(255, 220, 160, var(--tc-alpha)); }
 .tc-refit-ready .tc-top .tc-refit { display: block; }
-.tc-top .tc-pause { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 13px; letter-spacing: 0.1em; }
+.tc-top .tc-pause { display: flex; align-items: center; justify-content: center; }
+/* Drawn pause glyph (a text "II" read as the Roman numeral): two solid rounded bars, gap wider than a bar */
+.tc-pause-icon { position: relative; display: block; width: 16px; height: 18px; pointer-events: none; }
+.tc-pause-icon::before, .tc-pause-icon::after { content: ''; position: absolute; top: 0; width: 5px; height: 100%; border-radius: 1.5px; background: currentColor; }
+.tc-pause-icon::before { left: 0; }
+.tc-pause-icon::after { right: 0; }
 
 /* ── Left-handed: stick right, buttons left (fire at the left edge) ── */
 .tc-lh .tc-cluster { right: auto; left: calc(var(--tc-edge) + env(safe-area-inset-left, 0px)); direction: rtl; }
