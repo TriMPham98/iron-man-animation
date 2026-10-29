@@ -133,7 +133,7 @@ const FLARE_MAG = 64;
 const FLARE_RESTOCK = 1;
 /** Flares: a salvo, the pause after F is released (s), the beat between rounds (alternating hips), ports round each drum. */
 const FLARE_SALVO = 8;
-const FLARE_SALVO_COOL = 2;
+const FLARE_SALVO_COOL = 1.5;
 const FLARE_INTERVAL = 0.075;
 const FLARE_PORTS = 10;
 /** A drum turns its next port onto the station this fast (s). */
