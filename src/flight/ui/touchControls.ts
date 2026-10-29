@@ -32,7 +32,7 @@ const CLUSTER: Button[] = [
   { act: 'fire', label: 'FIRE', hold: true, aims: true },
 ];
 const TOP: Button[] = [
-  { act: 'pause', label: 'II' },
+  { act: 'pause', label: '<span class="tc-pause-icon"></span>' },
   { act: 'camera', label: 'CAM' },
   { act: 'land', label: 'LAND' },
   { act: 'refit', label: 'REFIT' },

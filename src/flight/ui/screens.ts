@@ -93,7 +93,7 @@ const TOUCH_ROWS: Row[] = [
   ['WAVE', 'call a wave (shows when the sky is clear)'],
   ['LAND', 'auto-land (shows near the pad)'],
   ['REFIT', 'R&D refit (shows on the pad)'],
-  ['CAM / II', 'camera · pause'],
+  ['CAM / ❚❚', 'camera · pause'],
 ];
 const STORE = 'mk3-flight-settings';
 
